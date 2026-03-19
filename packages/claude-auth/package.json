@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "installation.md"
   ],
   "scripts": {
     "build": "tsc && cp src/anthropic-prompt.txt dist/",

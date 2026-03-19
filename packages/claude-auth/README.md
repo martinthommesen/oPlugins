@@ -42,6 +42,16 @@ Then add to your `opencode.json`:
 }
 ```
 
+### AI-assisted install
+
+If you're using an AI coding tool (Claude Code, Cursor, etc.), point it at the install guide:
+
+```
+Read node_modules/opencode-claude-auth/installation.md and follow the steps
+```
+
+Or paste the URL: `https://github.com/gmartin/opencode-claude-auth/blob/main/installation.md`
+
 ## Usage
 
 Just run OpenCode. The plugin reads your Claude Code credentials automatically and handles token refresh in the background.

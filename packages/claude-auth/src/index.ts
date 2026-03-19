@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { readClaudeCredentials, type ClaudeCredentials } from "./keychain.js"
 
-async function refreshViaCli(): Promise<void> {
+function refreshViaCli(): void {
   try {
     execSync("claude -p . --model claude-haiku-4-5-20250514", {
       timeout: 60_000,
@@ -14,14 +14,14 @@ async function refreshViaCli(): Promise<void> {
       stdio: "ignore",
     })
   } catch {
-    // Non-fatal: Claude CLI may not be available or may fail
+    // Non-fatal: Claude CLI may not be available
   }
 }
 
 function loadSessionPrompt(): string {
   try {
-    const __dirname = dirname(fileURLToPath(import.meta.url))
-    const promptPath = join(__dirname, "anthropic-prompt.txt")
+    const dir = dirname(fileURLToPath(import.meta.url))
+    const promptPath = join(dir, "anthropic-prompt.txt")
     return readFileSync(promptPath, "utf-8")
   } catch {
     return "You are Claude Code, Anthropic's official CLI for Claude."
@@ -34,14 +34,14 @@ function createAuthFetch(
 ): (...args: Parameters<typeof fetch>) => Promise<Response> {
   let current = initial
 
-  return async (pluginFetchInput, init): Promise<Response> => {
+  return async (fetchInput, init): Promise<Response> => {
     if (current.expiresAt < Date.now() + 60_000) {
       const fresh = readClaudeCredentials()
       if (fresh && fresh.expiresAt > Date.now() + 60_000) {
         current = fresh
         onRefresh(current)
       } else {
-        await refreshViaCli()
+        refreshViaCli()
         const afterRefresh = readClaudeCredentials()
         if (afterRefresh && afterRefresh.expiresAt > Date.now() + 60_000) {
           current = afterRefresh
@@ -57,7 +57,7 @@ function createAuthFetch(
 
     const headers = new Headers(init?.headers)
     headers.set("Authorization", `Bearer ${current.accessToken}`)
-    return fetch(pluginFetchInput, { ...init, headers })
+    return fetch(fetchInput, { ...init, headers })
   }
 }
 
@@ -109,7 +109,7 @@ const plugin: Plugin = async (input) => {
   return {
     auth,
     async "experimental.chat.system.transform"(hookInput, output) {
-      if (hookInput.model?.providerID !== "anthropic") return
+      if (hookInput.model.providerID !== "anthropic") return
       const prompt = loadSessionPrompt()
       output.system.unshift(prompt)
     },

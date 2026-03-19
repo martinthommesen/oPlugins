@@ -6,21 +6,29 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "bun test",
-    "prepublishOnly": "bun run build && bun test"
+    "test": "node --test --experimental-strip-types src/**/*.test.ts",
+    "prepublishOnly": "npm run build && npm test"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "latest",
-    "typescript": "^5.0.0",
-    "@types/bun": "latest"
+    "@types/node": "^25.5.0",
+    "typescript": "^5.0.0"
   },
-  "keywords": ["opencode", "claude", "anthropic", "plugin", "auth"],
+  "keywords": [
+    "opencode",
+    "claude",
+    "anthropic",
+    "plugin",
+    "auth"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

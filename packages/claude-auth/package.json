@@ -1,0 +1,29 @@
+{
+  "name": "opencode-claude-auth",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that uses your Claude Code credentials — no separate login needed.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "bun test",
+    "prepublishOnly": "bun run build && bun test"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "typescript": "^5.0.0",
+    "@types/bun": "latest"
+  },
+  "keywords": ["opencode", "claude", "anthropic", "plugin", "auth"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gmartin/opencode-claude-auth"
+  }
+}

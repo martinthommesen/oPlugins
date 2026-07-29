@@ -3,6 +3,7 @@ import crypto from "node:crypto"
 import { config } from "./model-config.ts"
 import { readAllClaudeAccounts, type ClaudeAccount } from "./keychain.ts"
 import { initLogger, log } from "./logger.ts"
+import { fetchWithRetry } from "./http.ts"
 import {
   addExcludedBeta,
   getExcludedBetas,
@@ -39,6 +40,7 @@ export {
   LONG_CONTEXT_BETAS,
 } from "./betas.ts"
 export { resetExcludedBetas } from "./betas.ts"
+export { fetchWithRetry, type FetchFn } from "./http.ts"
 export {
   stripToolPrefix,
   SYSTEM_IDENTITY,
@@ -101,60 +103,6 @@ function buildRequestUrl(input: RequestInfo | URL): string | URL {
 
 // Stable per-process session ID, matching Claude Code's X-Claude-Code-Session-Id
 const sessionId = crypto.randomUUID()
-
-type FetchFn = typeof fetch
-
-// Maximum delay before we give up retrying and surface the error.
-// A retry-after longer than this signals a quota/usage-limit reset (hours away)
-// rather than a transient rate limit — retrying would hang indefinitely.
-// Override with OPENCODE_CLAUDE_AUTH_MAX_RETRY_MS for longer retry windows.
-const DEFAULT_MAX_RETRY_DELAY_MS = 30_000
-
-function getMaxRetryDelayMs(): number {
-  const env = process.env.OPENCODE_CLAUDE_AUTH_MAX_RETRY_MS
-  if (env) {
-    const parsed = parseInt(env, 10)
-    if (!Number.isNaN(parsed) && parsed > 0) return parsed
-  }
-  return DEFAULT_MAX_RETRY_DELAY_MS
-}
-
-export async function fetchWithRetry(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-  retries = 3,
-  fetchImpl: FetchFn = fetch,
-): Promise<Response> {
-  for (let i = 0; i < retries; i++) {
-    const res = await fetchImpl(input, init)
-    if ((res.status === 429 || res.status === 529) && i < retries - 1) {
-      const retryAfter = res.headers.get("retry-after")
-      const parsed = retryAfter ? parseInt(retryAfter, 10) : NaN
-      const delay = Number.isNaN(parsed) ? (i + 1) * 2000 : parsed * 1000
-      // If delay exceeds the cap, the server is signalling a quota/usage-limit
-      // reset far in the future. Return immediately so the error surfaces to
-      // the user rather than silently hanging until the reset time.
-      if (delay > getMaxRetryDelayMs()) {
-        log("fetch_rate_limited_quota", {
-          status: res.status,
-          retryAfter: retryAfter ?? "none",
-          delayMs: delay,
-        })
-        return res
-      }
-      log("fetch_rate_limited", {
-        status: res.status,
-        attempt: i + 1,
-        retryAfter: retryAfter ?? "none",
-        delayMs: delay,
-      })
-      await new Promise((r) => setTimeout(r, delay))
-      continue
-    }
-    return res
-  }
-  return fetchImpl(input, init)
-}
 
 export function buildRequestHeaders(
   input: RequestInfo | URL,
@@ -254,7 +202,7 @@ const plugin: Plugin = async () => {
       activeSource: defaultAccount.source,
     })
 
-    const initialCreds = getCachedCredentials()
+    const initialCreds = await getCachedCredentials()
     if (initialCreds) {
       syncAuthJson(initialCreds)
     } else {
@@ -273,7 +221,7 @@ const plugin: Plugin = async () => {
     // This prevents the "run `claude` to re-authenticate" message from
     // appearing mid-session when the token silently expires.
     let proactiveRefreshWarned = false
-    const syncTimer = setInterval(() => {
+    const syncTimer = setInterval(async () => {
       try {
         const account = getActiveAccount()
         log("proactive_refresh_check", {
@@ -282,7 +230,10 @@ const plugin: Plugin = async () => {
           thresholdMs: PROACTIVE_REFRESH_THRESHOLD_MS,
         })
 
-        const creds = refreshIfNeeded(undefined, PROACTIVE_REFRESH_THRESHOLD_MS)
+        const creds = await refreshIfNeeded(
+          undefined,
+          PROACTIVE_REFRESH_THRESHOLD_MS,
+        )
         if (creds) {
           syncAuthJson(creds)
           if (proactiveRefreshWarned) {
@@ -354,7 +305,7 @@ const plugin: Plugin = async () => {
           apiKey: "",
           baseURL: "https://api.anthropic.com/v1",
           async fetch(input: RequestInfo | URL, init?: RequestInit) {
-            const latest = getCachedCredentials()
+            const latest = await getCachedCredentials()
             if (!latest) {
               log("fetch_no_credentials", { modelId: "unknown" })
               throw new Error(
@@ -470,7 +421,7 @@ const plugin: Plugin = async () => {
               })
 
               // Rebuild headers without the excluded beta and retry
-              const currentCreds = getCachedCredentials()
+              const currentCreds = await getCachedCredentials()
               const retryToken = currentCreds?.accessToken ?? latest.accessToken
               const newExcluded = getExcludedBetas(modelId)
               const newHeaders = buildRequestHeaders(
@@ -550,7 +501,7 @@ const plugin: Plugin = async () => {
               accounts[0]
 
             setActiveAccountSource(chosen.source)
-            const creds = getCachedCredentials() ?? chosen.credentials
+            const creds = (await getCachedCredentials()) ?? chosen.credentials
 
             syncAuthJson(creds)
             saveAccountSource(chosen.source)

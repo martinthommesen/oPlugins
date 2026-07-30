@@ -1186,7 +1186,7 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
     }
   })
 
-  it("auth fetch does not retry a 401 when the source token is unchanged", async () => {
+  it("auth fetch force-refreshes on a 401 when the source token is unchanged", async () => {
     const originalNow = Date.now
     const originalSetInterval = globalThis.setInterval
     const originalHome = process.env.HOME
@@ -1198,15 +1198,100 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
       unref() {},
     })) as unknown as typeof setInterval
 
-    let requestCount = 0
+    let apiCalls = 0
+    let oauthCalls = 0
+
+    try {
+      const { helpersModule } = await loadHelpersWithCountingKeychain(
+        Date.now() + 10 * 60_000,
+      )
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : String(input)
+        if (url.includes("/oauth/token")) {
+          oauthCalls += 1
+          return new Response(
+            JSON.stringify({
+              access_token: "recovered-token",
+              refresh_token: "rt-recovered",
+              expires_in: 36_000,
+            }),
+            { status: 200 },
+          )
+        }
+        apiCalls += 1
+        return apiCalls === 1
+          ? new Response('{"error":"expired"}', { status: 401 })
+          : new Response("data: {}\n\n", { status: 200 })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 200)
+      assert.equal(oauthCalls, 1, "the unchanged token must force a refresh")
+      assert.equal(apiCalls, 2, "the refreshed token must be retried once")
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch surfaces the 401 unchanged when recovery cannot progress", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    let apiCalls = 0
     const errorBody = '{"name":"mcp_UnchangedToken"}'
 
     try {
       const { helpersModule } = await loadHelpersWithCountingKeychain(
         Date.now() + 10 * 60_000,
       )
-      globalThis.fetch = (async () => {
-        requestCount += 1
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : String(input)
+        if (url.includes("/oauth/token")) {
+          // A 429 from the token endpoint must read as a failed refresh, not
+          // as something that loops account recovery. retry-after beyond the
+          // 30s cap makes fetchWithRetry return instead of backing off.
+          return new Response('{"error":"rate_limited"}', {
+            status: 429,
+            headers: { "retry-after": "3600" },
+          })
+        }
+        apiCalls += 1
         return new Response(errorBody, {
           status: 401,
           headers: { "x-request-id": "unchanged-token-401" },
@@ -1215,7 +1300,6 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
 
       const plugin = await helpersModule.default({} as never)
       const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
-      assert.equal(typeof typedPlugin.auth?.loader, "function")
       const authConfig = await typedPlugin.auth!.loader!(
         async () => ({
           type: "oauth",
@@ -1237,7 +1321,88 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
       assert.equal(response.status, 401)
       assert.equal(response.headers.get("x-request-id"), "unchanged-token-401")
       assert.equal(await response.text(), errorBody)
-      assert.equal(requestCount, 1)
+      assert.equal(apiCalls, 1, "no retry without a different token")
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch makes a second recovery attempt when the first retry is also rejected", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    let apiCalls = 0
+    let oauthCalls = 0
+
+    try {
+      const { helpersModule, keychainModule } =
+        await loadHelpersWithCountingKeychain(Date.now() + 10 * 60_000)
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : String(input)
+        if (url.includes("/oauth/token")) {
+          oauthCalls += 1
+          return new Response(
+            JSON.stringify({
+              access_token: "second-stage-token",
+              refresh_token: "rt-second-stage",
+              expires_in: 36_000,
+            }),
+            { status: 200 },
+          )
+        }
+        apiCalls += 1
+        // Calls 1 and 2 are rejected; only the force-refreshed token works.
+        return apiCalls <= 2
+          ? new Response('{"error":"expired"}', { status: 401 })
+          : new Response("data: {}\n\n", { status: 200 })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      // Attempt 1's reload finds a different, still-valid-looking token.
+      keychainModule.__setCredentials({
+        accessToken: "concurrently-rotated",
+        refreshToken: "rt-concurrent",
+        expiresAt: Date.now() + 10 * 60_000,
+      })
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 200)
+      assert.equal(apiCalls, 3, "original, reload retry, force-refresh retry")
+      assert.equal(oauthCalls, 1, "only the second attempt force-refreshes")
     } finally {
       Date.now = originalNow
       globalThis.setInterval = originalSetInterval
@@ -1262,7 +1427,8 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
       unref() {},
     })) as unknown as typeof setInterval
 
-    let requestCount = 0
+    let apiCalls = 0
+    let oauthCalls = 0
     const errorBody = '{"name":"mcp_ReloadFailure"}'
 
     try {
@@ -1270,8 +1436,16 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
         Date.now() + 10 * 60_000,
         { throwOnReload: true },
       )
-      globalThis.fetch = (async () => {
-        requestCount += 1
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : String(input)
+        // A thrown reload leaves no candidate, so the loop falls through to
+        // the force refresh. Rejecting it here is what makes recovery
+        // terminal and surfaces the original 401 untouched.
+        if (url.includes("/oauth/token")) {
+          oauthCalls += 1
+          return new Response('{"error":"invalid_grant"}', { status: 401 })
+        }
+        apiCalls += 1
         return new Response(errorBody, {
           status: 401,
           statusText: "Unauthorized",
@@ -1308,7 +1482,8 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
       assert.equal(response.headers.get("content-type"), "text/plain")
       assert.equal(response.headers.get("x-request-id"), "request-401")
       assert.equal(await response.text(), errorBody)
-      assert.equal(requestCount, 1)
+      assert.equal(apiCalls, 1, "no retry once recovery cannot progress")
+      assert.equal(oauthCalls, 1, "a thrown reload still forces a refresh")
     } finally {
       Date.now = originalNow
       globalThis.setInterval = originalSetInterval
@@ -1398,6 +1573,375 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
       globalThis.setInterval = originalSetInterval
       globalThis.fetch = originalFetch
       console.warn = originalWarn
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch stops at the recovery attempt cap when the store rotates on every read", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    // Against a store rotated on every read, every candidate differs from the
+    // token in use, so the no-progress break never fires and the attempt cap
+    // is the only thing stopping the loop. Nothing else pins that ceiling —
+    // the two-attempt test exits via success, so it constrains the floor.
+    const authorizationHeaders: string[] = []
+
+    try {
+      const { helpersModule, keychainModule } =
+        await loadHelpersWithCountingKeychain(Date.now() + 10 * 60_000)
+
+      globalThis.fetch = (async (_input, init) => {
+        authorizationHeaders.push(
+          new Headers(init?.headers).get("authorization") ?? "",
+        )
+        // Rotate the store before answering, so the next reload always finds
+        // a token it has not seen.
+        keychainModule.__setCredentials({
+          accessToken: `rotated-${authorizationHeaders.length}`,
+          refreshToken: `rt-${authorizationHeaders.length}`,
+          expiresAt: Date.now() + 10 * 60_000,
+        })
+        return new Response('{"error":"expired"}', { status: 401 })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 401)
+      assert.equal(
+        authorizationHeaders.length,
+        3,
+        "original request plus two capped recovery attempts, and no more",
+      )
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch compares the 429 re-read against the recovered token, not the original", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    // 401 -> recover -> the retry comes back 429. The 429 block must compare
+    // the source against the token it just recovered with. Comparing against
+    // the original `latest` instead still compiles and passes every other
+    // test, while retrying a quota error on a token the source already agrees
+    // is current — the exact hazard the block's own comment predicts.
+    const authorizationHeaders: string[] = []
+
+    try {
+      const { helpersModule, keychainModule } =
+        await loadHelpersWithCountingKeychain(Date.now() + 10 * 60_000)
+
+      globalThis.fetch = (async (_input, init) => {
+        authorizationHeaders.push(
+          new Headers(init?.headers).get("authorization") ?? "",
+        )
+        if (authorizationHeaders.length === 1) {
+          return new Response('{"error":"expired"}', { status: 401 })
+        }
+        return new Response('{"error":"rate_limited"}', {
+          status: 429,
+          headers: { "retry-after": "3600" },
+        })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      // The store already holds the token the 401 recovery will adopt, so
+      // once recovered there is nothing further to rotate to.
+      keychainModule.__setCredentials({
+        accessToken: "recovered-token",
+        refreshToken: "rt-recovered",
+        expiresAt: Date.now() + 10 * 60_000,
+      })
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 429)
+      assert.deepEqual(
+        authorizationHeaders,
+        ["Bearer token", "Bearer recovered-token"],
+        "the 429 must not be retried once the source agrees with the token in use",
+      )
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch retries a 429 once when the source token changed", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    // Captured per call, not just counted: a count alone cannot tell a
+    // retry that carried the rotated token from one that replayed the
+    // exhausted token, which is the whole behavior under test.
+    const authorizationHeaders: string[] = []
+
+    try {
+      const { helpersModule, keychainModule } =
+        await loadHelpersWithCountingKeychain(Date.now() + 10 * 60_000)
+
+      globalThis.fetch = (async (_input, init) => {
+        authorizationHeaders.push(
+          new Headers(init?.headers).get("authorization") ?? "",
+        )
+        if (authorizationHeaders.length === 1) {
+          // retry-after beyond the 30s cap: quota exhaustion, not a
+          // transient limit, so fetchWithRetry returns immediately.
+          return new Response('{"error":"rate_limited"}', {
+            status: 429,
+            headers: { "retry-after": "3600" },
+          })
+        }
+        return new Response("data: {}\n\n", { status: 200 })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      // An external switch lands while this session is still on the
+      // exhausted account.
+      keychainModule.__setCredentials({
+        accessToken: "switched-token",
+        refreshToken: "rt-switched",
+        expiresAt: Date.now() + 10 * 60_000,
+      })
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 200)
+      assert.deepEqual(
+        authorizationHeaders,
+        ["Bearer token", "Bearer switched-token"],
+        "the retry must carry the rotated token, not replay the exhausted one",
+      )
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch does not retry a 429 when the source token is unchanged", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    let apiCalls = 0
+
+    try {
+      const { helpersModule } = await loadHelpersWithCountingKeychain(
+        Date.now() + 10 * 60_000,
+      )
+
+      globalThis.fetch = (async () => {
+        apiCalls += 1
+        return new Response('{"error":"rate_limited"}', {
+          status: 429,
+          headers: { "retry-after": "3600" },
+        })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 429)
+      assert.equal(apiCalls, 1, "an unchanged token must not be retried")
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
+      if (typeof originalHome === "string") {
+        process.env.HOME = originalHome
+      } else {
+        delete process.env.HOME
+      }
+    }
+  })
+
+  it("auth fetch does not retry a 429 when the source is unreadable", async () => {
+    const originalNow = Date.now
+    const originalSetInterval = globalThis.setInterval
+    const originalHome = process.env.HOME
+    const originalFetch = globalThis.fetch
+    const tempHome = await mkdtemp(join(tmpdir(), "opencode-claude-auth-home-"))
+    process.env.HOME = tempHome
+    Date.now = () => 1_700_000_000_000
+    globalThis.setInterval = (() => ({
+      unref() {},
+    })) as unknown as typeof setInterval
+
+    let apiCalls = 0
+
+    try {
+      const { helpersModule, keychainModule } =
+        await loadHelpersWithCountingKeychain(Date.now() + 10 * 60_000)
+
+      globalThis.fetch = (async () => {
+        apiCalls += 1
+        return new Response('{"error":"rate_limited"}', {
+          status: 429,
+          headers: { "retry-after": "3600" },
+        })
+      }) as typeof fetch
+
+      const plugin = await helpersModule.default({} as never)
+      const typedPlugin = plugin as { auth?: { loader?: TestAuthLoader } }
+      const authConfig = await typedPlugin.auth!.loader!(
+        async () => ({
+          type: "oauth",
+          refresh: "refresh",
+          access: "access",
+          expires: Date.now() + 60_000,
+        }),
+        { models: {} },
+      )
+
+      // Distinct from the unchanged-token arm: the token DID change, but
+      // reloadCredentialsFromSource rejects anything expiring within 60s,
+      // so it yields null. Retrying with a token the reload refused to
+      // vouch for would burn a request on a credential already known bad.
+      keychainModule.__setCredentials({
+        accessToken: "expiring-token",
+        refreshToken: "rt-expiring",
+        expiresAt: Date.now() + 30_000,
+      })
+
+      const response = await authConfig.fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }),
+        },
+      )
+
+      assert.equal(response.status, 429)
+      assert.equal(apiCalls, 1, "an unusable reload must not be retried")
+    } finally {
+      Date.now = originalNow
+      globalThis.setInterval = originalSetInterval
+      globalThis.fetch = originalFetch
       if (typeof originalHome === "string") {
         process.env.HOME = originalHome
       } else {

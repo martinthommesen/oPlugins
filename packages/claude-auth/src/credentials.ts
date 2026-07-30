@@ -323,14 +323,55 @@ export async function refreshIfNeeded(
   const target = account ?? getActiveAccount()
   if (!target) return null
 
-  // Pick up external updates to .credentials.json (e.g. switch_claude_account
-  // on Windows). Bounded by getCachedCredentials's 30s TTL: fires at most
-  // ~2x/min under load. macOS keychain sources stay on the in-memory path;
-  // their state is mutated only by our own writeBackCredentials, so no
-  // external-update vector exists for them.
-  if (target.source === "file") {
-    const onDisk = refreshAccount(target.source)
-    if (onDisk) target.credentials = onDisk
+  // Pick up credentials replaced externally — cswap switching accounts, the
+  // claude CLI in another terminal, or a second OpenCode instance. This was
+  // once limited to file sources, on the false assumption that a keychain
+  // entry is only ever mutated by our own writeBackCredentials. Bounded by
+  // getCachedCredentials's 30s TTL, so it fires at most ~2x/min under load.
+  //
+  // A keychain read shells out to `security`, which throws when the keychain
+  // is locked, access is denied, or the call times out. Degrade to the
+  // in-memory credentials rather than take down the request path.
+  //
+  // Adopt a usable stored blob always; an unusable one only when what we
+  // already hold is unusable too. Do not simplify this to an unconditional
+  // adopt: performRefresh ignores writeBackCredentials's return value, and
+  // that write can fail while the read before it succeeded (malformed blob,
+  // or an ACL allowing read but not add-generic-password), leaving memory
+  // freshly refreshed and the store holding the orphaned pre-refresh blob.
+  // On the reactive path that blob has under 60s left — that window is the
+  // only reason we refreshed — so adopting it re-enters performRefresh with
+  // a refresh token our own refresh just rotated dead: OAuth fails and we
+  // fall through to two 60s claude spawns, on every cache miss, forever.
+  //
+  // Two accepted residuals. An external switch installing an already-expired
+  // token while ours is usable is ignored until ours expires; cswap freshens
+  // a target before activating it, so that is rare. And the proactive timer
+  // refreshes an hour ahead (index.ts), where a failed write-back orphans a
+  // blob that is still usable — so it IS adopted, costing wasted background
+  // refreshes rather than failed requests until it drops under 60s and the
+  // CLI fallback recovers. No guard here closes that one: the re-read cannot
+  // tell "stale because our write failed" from "changed because cswap
+  // switched", as both present as store-disagrees-with-memory-and-usable.
+  // Only the return value performRefresh discards carries the distinction.
+  try {
+    const stored = refreshAccount(target.source, target.configDir)
+    const now = Date.now()
+    if (
+      stored &&
+      (stored.expiresAt > now + 60_000 ||
+        target.credentials.expiresAt <= now + 60_000)
+    ) {
+      target.credentials = stored
+      // Read from this account's own source, so what it returned is this
+      // account's own credentials — it is no longer running on a lender's.
+      borrowedCredentialAccounts.delete(target)
+    }
+  } catch (err) {
+    log("source_reread_failed", {
+      source: target.source,
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 
   const creds = target.credentials
@@ -373,7 +414,22 @@ async function performRefresh(
     const oauthCreds = await refreshViaOAuth(creds.refreshToken)
     if (oauthCreds && oauthCreds.expiresAt > Date.now() + 60_000) {
       target.credentials = oauthCreds
-      writeBackCredentials(target.source, oauthCreds, target.configDir)
+      if (
+        !writeBackCredentials(
+          target.source,
+          oauthCreds,
+          target.configDir,
+          creds.accessToken,
+        )
+      ) {
+        // Mirrors force_refresh_writeback_failed on the forced path. The
+        // session continues from memory either way, so this stays a log
+        // rather than a control-flow change: acting on the two causes
+        // (I/O failure vs. CAS mismatch) differs, and the proactive-path
+        // consequence — a still-usable orphaned blob being re-adopted by
+        // the validated re-read — is tracked as a follow-up.
+        log("refresh_writeback_failed", { source: target.source })
+      }
       return oauthCreds
     }
   }
@@ -396,8 +452,14 @@ async function performRefresh(
   // Every OpenCode instance refreshes independently, and a rotation
   // invalidates the refresh token the others are holding. When ours is
   // rejected, the instance that won may already have written usable
-  // credentials to the shared store — far cheaper to re-read than to spawn
-  // the CLI. (File sources are re-read up front by refreshIfNeeded.)
+  // credentials to the shared store during the OAuth round trip — far
+  // cheaper to re-read than to spawn the CLI.
+  //
+  // The file-source exclusion below is a leftover from when refreshIfNeeded
+  // re-read file sources only. That rationale is gone and the exclusion now
+  // has none: a sibling process can write a file source mid-round-trip
+  // exactly as it can a keychain entry. Left in place only to keep this
+  // change off the file path; removing it is tracked as a follow-up.
   if (target.source !== "file") {
     let stored: ClaudeCredentials | null = null
     try {
@@ -496,7 +558,12 @@ async function refreshBorrowedAccount(
     if (oauthCreds && oauthCreds.expiresAt > Date.now() + 60_000) {
       borrowedCredentialAccounts.delete(target)
       target.credentials = oauthCreds
-      writeBackCredentials(target.source, oauthCreds, target.configDir)
+      writeBackCredentials(
+        target.source,
+        oauthCreds,
+        target.configDir,
+        own.accessToken,
+      )
       log("refresh_borrowed_recovered", { source: target.source, via: "oauth" })
       return oauthCreds
     }
@@ -578,15 +645,21 @@ export function getCredentialsForSync(): ClaudeCredentials | null {
 
 /**
  * Re-read only the active account's credentials from its source (single
- * keychain service read or credentials file) and update them in place.
- * Used on 401 so an externally refreshed token is picked up without a
- * full multi-account keychain rescan.
+ * keychain service read or credentials file) and update them in place,
+ * so an externally refreshed token is picked up without a full
+ * multi-account keychain rescan.
+ *
+ * Currently has no call sites: the 401 path uses
+ * reloadCredentialsFromSource, which additionally validates the result
+ * and refreshes the cache. Wiring this up or deleting it is tracked as a
+ * follow-up; until then it must stay consistent with the read paths that
+ * are live, hence the configDir below.
  */
 export function reloadActiveAccount(): void {
   const account = getActiveAccount()
   if (!account) return
   try {
-    const fresh = refreshAccount(account.source)
+    const fresh = refreshAccount(account.source, account.configDir)
     if (fresh) account.credentials = fresh
   } catch (err) {
     log("account_reload_failed", {
@@ -619,12 +692,24 @@ export async function forceRefreshActiveAccount(
     return null
   }
 
+  const priorAccessToken = account.credentials.accessToken
   const oauthCreds = await refresh(account.credentials.refreshToken)
   if (oauthCreds && oauthCreds.expiresAt > Date.now() + 60_000) {
     account.credentials = oauthCreds
-    if (!writeBackCredentials(account.source, oauthCreds)) {
-      // Session continues from memory/cache; a later source re-read may
-      // resurrect the rejected token and trigger another refresh.
+    if (
+      !writeBackCredentials(
+        account.source,
+        oauthCreds,
+        account.configDir,
+        priorAccessToken,
+      )
+    ) {
+      // Session continues from memory/cache either way, but the two causes
+      // diverge on a later source re-read. An I/O failure leaves our own
+      // rejected token in the store, so the re-read resurrects it and
+      // triggers another refresh. A CAS mismatch means the store now holds
+      // another account's token, so the re-read adopts that instead and this
+      // account stops using the credentials it just refreshed.
       log("force_refresh_writeback_failed", { source: account.source })
     }
     accountCacheMap.set(account.source, {
@@ -692,7 +777,9 @@ export function reloadCredentialsFromSource(): ClaudeCredentials | null {
 
   let reloaded: ClaudeCredentials | null
   try {
-    reloaded = refreshAccount(account.source)
+    // Same configDir the write path resolves, so the compare-and-swap in
+    // writeBackCredentials compares against the file this read came from.
+    reloaded = refreshAccount(account.source, account.configDir)
   } catch {
     accountCacheMap.delete(account.source)
     log("credentials_source_reload", {
@@ -722,6 +809,13 @@ export function reloadCredentialsFromSource(): ClaudeCredentials | null {
   }
 
   account.credentials = reloaded
+  // Read from this account's own source, so what it returned is this
+  // account's own credentials — it is no longer running on a lender's.
+  // Same invariant as refreshIfNeeded's up-front re-read: leaving the flag
+  // set here makes forceRefreshActiveAccount decline to exchange a token
+  // that is legitimately this account's, which strands the 401 recovery
+  // loop's second attempt on a credential it could have refreshed.
+  borrowedCredentialAccounts.delete(account)
   accountCacheMap.set(account.source, { creds: reloaded, cachedAt: now })
   log("credentials_source_reload", {
     source: account.source,

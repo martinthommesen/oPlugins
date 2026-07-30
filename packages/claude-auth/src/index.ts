@@ -20,6 +20,7 @@ import {
 import {
   getCachedCredentials,
   reloadCredentialsFromSource,
+  forceRefreshActiveAccount,
   getActiveAccount,
   syncAuthJson,
   initAccounts,
@@ -365,29 +366,167 @@ const plugin: Plugin = async () => {
               retryAttempt: 0,
             })
 
-            // On 401, bypass the in-memory cache to pick up credentials rotated by
-            // another client, then retry once only when the access token changed.
-            let preserveResponseUnchanged = false
-            if (response.status === 401) {
-              let refreshed: ClaudeCredentials | null = null
+            // Recover from a rejected token: first by adopting credentials
+            // rotated externally (cswap switching accounts, the claude CLI,
+            // another OpenCode instance), then by forcing an OAuth refresh
+            // when the store still holds the token that was just rejected.
+            //
+            // Most cases resolve on the first attempt: a cold or unreadable
+            // store yields null from the reload (reloadCredentialsFromSource
+            // rejects anything expiring within 60s), so the force refresh runs
+            // immediately. The second attempt covers the narrower race where
+            // the reload returns a valid-looking token that a concurrent
+            // writer has itself just rotated again.
+            //
+            // The cap is the real bound. Against a store being rotated on
+            // every read, every candidate differs from tokenInUse, so the
+            // no-progress break never fires and the cap alone stops the loop.
+            // The break is the fast path out of the common cases, not the
+            // guarantee of termination.
+            //
+            // tokenInUse deliberately tracks only the last token tried rather
+            // than the set of all of them: a store cycling A->B->A wastes one
+            // request on the second attempt, which is a better trade than
+            // threading extra state through a loop whose whole virtue is a
+            // hard ceiling of three API calls.
+            const MAX_AUTH_RECOVERY_ATTEMPTS = 2
+            let tokenInUse = latest.accessToken
+
+            for (
+              let attempt = 0;
+              response.status === 401 && attempt < MAX_AUTH_RECOVERY_ATTEMPTS;
+              attempt++
+            ) {
+              let candidate: ClaudeCredentials | null = null
+              // reloadCredentialsFromSource already catches its own source
+              // read and returns null, so this is unreachable today. It stays
+              // because the guarantee worth keeping is that no reload failure
+              // turns a well-formed 401 into an exception thrown out of
+              // fetch() — degrading to the original response beats crashing
+              // the request. It logs so a future reload that does throw is
+              // diagnosable rather than silently null-coalesced.
               try {
-                refreshed = reloadCredentialsFromSource()
-              } catch {}
-              if (refreshed && refreshed.accessToken !== latest.accessToken) {
-                const retryHeaders = buildRequestHeaders(
+                candidate = reloadCredentialsFromSource()
+              } catch (err) {
+                log("auth_recovery_reload_threw", {
+                  modelId,
+                  attempt: attempt + 1,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              }
+
+              if (!candidate || candidate.accessToken === tokenInUse) {
+                try {
+                  candidate = await forceRefreshActiveAccount()
+                } catch (err) {
+                  // A rejected refresh and a refresh that returned null are
+                  // different operator-facing diagnoses; auth_recovery_
+                  // exhausted below collapses them, so record this one here.
+                  log("auth_recovery_force_refresh_threw", {
+                    modelId,
+                    attempt: attempt + 1,
+                    error: err instanceof Error ? err.message : String(err),
+                  })
+                }
+              }
+
+              // Re-checked, not copy-pasted: the guard above decides whether
+              // to force a refresh, this one decides whether that refresh
+              // actually produced a token worth retrying with.
+              if (!candidate || candidate.accessToken === tokenInUse) {
+                log("auth_recovery_exhausted", {
+                  modelId,
+                  attempt: attempt + 1,
+                })
+                break
+              }
+
+              tokenInUse = candidate.accessToken
+              log("auth_recovery_retry", { modelId, attempt: attempt + 1 })
+              response = await fetchWithRetry(requestUrl, {
+                ...requestInit,
+                body,
+                headers: buildRequestHeaders(
                   input,
                   requestInit,
-                  refreshed.accessToken,
+                  tokenInUse,
                   modelId,
                   excluded,
-                )
+                ),
+              })
+            }
+
+            // An external switch — cswap rotating off an exhausted account —
+            // leaves this session on the old token until the 30s credential
+            // cache expires. Re-read once so a rate limit that has already
+            // been resolved elsewhere is not surfaced. A changed token is the
+            // signal that a switch happened; when nothing changed this costs
+            // one source read and no retry.
+            //
+            // Ordered AFTER the 401 recovery loop, and that is a real
+            // dependency, not incidental sequencing: it must compare against
+            // the token the loop last tried, so a 401 recovered into a 429 is
+            // measured against the recovered token rather than the rejected
+            // one. Only half of this is compiler-enforced — hoisting the block
+            // above `let tokenInUse` is a TDZ error, but moving it between
+            // that declaration and the loop still compiles and still passes,
+            // while silently comparing against a stale token on the
+            // 401 -> retry -> 429 path.
+            //
+            // Ordered before the long-context beta loop deliberately. A
+            // long-context 429 is a header problem, not an account one, so it
+            // rotates no token and falls through here untouched. In the rare
+            // case a switch lands on the same 429, this spends one retry that
+            // comes back with the same long-context error and the beta loop
+            // then handles it off the fresh response — one wasted request,
+            // same outcome.
+            if (response.status === 429) {
+              let rotated: ClaudeCredentials | null = null
+              // Unreachable today for the same reason as the 401 loop's
+              // reload catch: reloadCredentialsFromSource swallows its own
+              // source read and returns null. Kept, and logged, on the same
+              // grounds — no reload failure should turn a readable 429 into
+              // an exception thrown out of fetch(), and a future reload that
+              // does throw should be diagnosable rather than silently
+              // coalesced to "nothing rotated".
+              try {
+                rotated = reloadCredentialsFromSource()
+              } catch (err) {
+                log("rate_limit_reload_threw", {
+                  modelId,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              }
+
+              if (rotated && rotated.accessToken !== tokenInUse) {
+                // Named for what was observed, not for what it implies. A
+                // changed token is not proof of an account switch: a routine
+                // refresh of this same exhausted account by another instance
+                // or the claude CLI changes the token too, and that retry hits
+                // the same quota. Accepted cost — one request — but the log
+                // must not tell a quota investigation "we switched accounts"
+                // when all it saw was a different token.
+                log("rate_limit_token_changed", { modelId })
+                tokenInUse = rotated.accessToken
                 response = await fetchWithRetry(requestUrl, {
                   ...requestInit,
                   body,
-                  headers: retryHeaders,
+                  headers: buildRequestHeaders(
+                    input,
+                    requestInit,
+                    tokenInUse,
+                    modelId,
+                    excluded,
+                  ),
                 })
-              } else {
-                preserveResponseUnchanged = true
+                // Whether rotating resolved the limit is the question this
+                // whole block exists to answer, so record it outright rather
+                // than leaving success to be inferred from the absence of a
+                // fetch_error_response line.
+                log("rate_limit_retry_response", {
+                  modelId,
+                  status: response.status,
+                })
               }
             }
 
@@ -421,8 +560,10 @@ const plugin: Plugin = async () => {
               })
 
               // Rebuild headers without the excluded beta and retry
+              // Falls back to tokenInUse, not latest: after a 401 recovery the
+              // latter is the token the API already rejected.
               const currentCreds = await getCachedCredentials()
-              const retryToken = currentCreds?.accessToken ?? latest.accessToken
+              const retryToken = currentCreds?.accessToken ?? tokenInUse
               const newExcluded = getExcludedBetas(modelId)
               const newHeaders = buildRequestHeaders(
                 input,
@@ -459,7 +600,10 @@ const plugin: Plugin = async () => {
                 .catch(() => {})
             }
 
-            return preserveResponseUnchanged
+            // A 401 that survived recovery carries an error body, not an SSE
+            // stream. Deciding here rather than from a flag set mid-flight
+            // makes the retried and non-retried paths behave identically.
+            return response.status === 401
               ? response
               : transformResponseStream(response)
           },

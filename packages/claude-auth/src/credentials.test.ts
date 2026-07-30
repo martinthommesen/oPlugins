@@ -57,14 +57,25 @@ async function loadCredentialsWithCountingKeychain(
     __getReadCount: () => number
     __getWriteCount: () => number
     __setCredentials: (c: Creds | null) => void
+    __setCredentialsForSource: (source: string, c: Creds | null) => void
     __setAccounts: (list: unknown[]) => void
     __setReadError: (enabled: boolean) => void
     __setReadHook: (hook: (() => void) | null) => void
-    __getWrites: () => Array<{ source: string; creds: Creds }>
+    __getWrites: () => Array<{
+      source: string
+      creds: Creds
+      configDir?: string
+      expectedPriorAccessToken?: string
+    }>
+    __getReads: () => Array<{ source: string; configDir?: string }>
+    __setWriteResult: (v: boolean) => void
   }
   childProcessModule: {
     __getExecFileSyncCount: () => number
     __getExecSyncCount: () => number
+  }
+  loggerModule: {
+    __getLogs: () => Array<{ event: string; data?: unknown }>
   }
 }> {
   const tempDir = await mkdtemp(join(tmpdir(), "opencode-claude-auth-creds-"))
@@ -93,7 +104,16 @@ async function loadCredentialsWithCountingKeychain(
 
   await writeFile(
     tempLogger,
-    `export function log() {}\nexport function initLogger() {}\nexport function closeLogger() {}\n`,
+    `const logs = []
+export function log(event, data) {
+  logs.push({ event, data })
+}
+export function __getLogs() {
+  return logs
+}
+export function initLogger() {}
+export function closeLogger() {}
+`,
     "utf8",
   )
 
@@ -128,6 +148,8 @@ export function __getExecSyncCount() {
     `let readCount = 0
 let writeCount = 0
 const writes = []
+const reads = []
+let writeResult = true
 let accounts = null // null = derive a single account from the credentials var
 let readError = false
 let readHook = null
@@ -136,6 +158,7 @@ let credentials = {
   refreshToken: "refresh",
   expiresAt: ${initialExpiresAt}
 }
+const bySource = {}
 
 export const PRIMARY_SERVICE = "Claude Code-credentials"
 
@@ -145,10 +168,14 @@ export function readAllClaudeAccounts() {
   return [{ label: "Account 1", source: "keychain", credentials }]
 }
 
-export function refreshAccount(source) {
+export function refreshAccount(source, configDir) {
   readCount += 1
+  reads.push({ source, configDir })
   if (readError) throw new Error("Keychain read denied")
   if (readHook) readHook()
+  if (Object.prototype.hasOwnProperty.call(bySource, source)) {
+    return bySource[source]
+  }
   return credentials
 }
 
@@ -160,14 +187,22 @@ export function __setReadHook(hook) {
   readHook = hook
 }
 
-export function writeBackCredentials(source, creds) {
+export function writeBackCredentials(source, creds, configDir, expectedPriorAccessToken) {
   writeCount += 1
-  writes.push({ source, creds })
-  return true
+  writes.push({ source, creds, configDir, expectedPriorAccessToken })
+  return writeResult
+}
+
+export function __setWriteResult(v) {
+  writeResult = v
 }
 
 export function __getWrites() {
   return writes
+}
+
+export function __getReads() {
+  return reads
 }
 
 export function __getReadCount() {
@@ -180,6 +215,10 @@ export function __getWriteCount() {
 
 export function __setCredentials(c) {
   credentials = c
+}
+
+export function __setCredentialsForSource(source, c) {
+  bySource[source] = c
 }
 
 export function __setAccounts(list) {
@@ -202,6 +241,7 @@ export function __setAccounts(list) {
       import(pathToFileURL(tempKeychain).href),
       import(pathToFileURL(tempChildProcess).href),
     ])
+  const loggerModule = await import(pathToFileURL(tempLogger).href)
 
   return {
     credentialsModule: credentialsModule as {
@@ -228,14 +268,25 @@ export function __setAccounts(list) {
       __getReadCount: () => number
       __getWriteCount: () => number
       __setCredentials: (c: Creds | null) => void
+      __setCredentialsForSource: (source: string, c: Creds | null) => void
       __setAccounts: (list: unknown[]) => void
       __setReadError: (enabled: boolean) => void
       __setReadHook: (hook: (() => void) | null) => void
-      __getWrites: () => Array<{ source: string; creds: Creds }>
+      __getWrites: () => Array<{
+        source: string
+        creds: Creds
+        configDir?: string
+        expectedPriorAccessToken?: string
+      }>
+      __getReads: () => Array<{ source: string; configDir?: string }>
+      __setWriteResult: (v: boolean) => void
     },
     childProcessModule: childProcessModule as {
       __getExecFileSyncCount: () => number
       __getExecSyncCount: () => number
+    },
+    loggerModule: loggerModule as {
+      __getLogs: () => Array<{ event: string; data?: unknown }>
     },
   }
 }
@@ -262,12 +313,20 @@ describe("credential caching", () => {
         },
       ])
 
+      // The source agrees with memory to begin with, so priming the cache
+      // (which re-reads the source) leaves the account on "old-token".
+      keychainModule.__setCredentialsForSource("keychain", {
+        accessToken: "old-token",
+        refreshToken: "old-refresh",
+        expiresAt: now + 10 * 60_000,
+      })
+
       assert.equal(
         (await credentialsModule.getCachedCredentials())?.accessToken,
         "old-token",
       )
 
-      keychainModule.__setCredentials({
+      keychainModule.__setCredentialsForSource("keychain", {
         accessToken: "new-token",
         refreshToken: "new-refresh",
         expiresAt: now + 8 * 60 * 60_000,
@@ -277,7 +336,11 @@ describe("credential caching", () => {
       const readCountAfterReload = keychainModule.__getReadCount()
 
       assert.equal(reloaded?.accessToken, "new-token")
-      assert.equal(readCountAfterReload, 1)
+      assert.equal(
+        readCountAfterReload,
+        2,
+        "one re-read while priming the cache, one for the explicit reload",
+      )
       assert.equal(
         (await credentialsModule.getCachedCredentials())?.accessToken,
         "new-token",
@@ -312,7 +375,7 @@ describe("credential caching", () => {
       keychainModule.__setReadError(true)
 
       assert.equal(credentialsModule.reloadCredentialsFromSource(), null)
-      assert.equal(keychainModule.__getReadCount(), 1)
+      assert.equal(keychainModule.__getReadCount(), 2)
     } finally {
       Date.now = originalNow
     }
@@ -434,7 +497,11 @@ describe("credential caching", () => {
 
       assert.ok(first)
       assert.ok(second)
-      assert.equal(keychainModule.__getReadCount(), 0)
+      assert.equal(
+        keychainModule.__getReadCount(),
+        1,
+        "cache miss re-reads the source once; the cached call does not",
+      )
     } finally {
       Date.now = originalNow
     }
@@ -724,17 +791,27 @@ describe("credential caching", () => {
         },
       ])
 
+      // Pin the expired account's own stored value so the up-front re-read is
+      // a no-op rather than swapping in the other account's blob.
+      keychainModule.__setCredentialsForSource(
+        "Claude Code-credentials-aabbccdd",
+        {
+          accessToken: "stale-suffixed",
+          refreshToken: "rt-suffixed",
+          expiresAt: now - 1_000,
+        },
+      )
+
       const readsBefore = keychainModule.__getReadCount()
       const result = await credentialsModule.refreshIfNeeded()
 
       assert.equal(result?.accessToken, "fresh-in-memory")
-      // One read only: the target re-reading its OWN source to see whether
-      // another process rotated it. The fallback account is still borrowed
-      // straight from memory rather than re-read.
+      // The fallback account is still borrowed straight from memory rather
+      // than re-read.
       assert.equal(
         keychainModule.__getReadCount(),
-        readsBefore + 1,
-        "valid in-memory fallback credentials must not trigger a keychain read",
+        readsBefore + 2,
+        "one up-front re-read of the target's own source, one after the failed OAuth refresh",
       )
     } finally {
       Date.now = originalNow
@@ -746,8 +823,8 @@ describe("credential caching", () => {
     const { credentialsModule, keychainModule } =
       await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
 
-    // Keychain source: refreshIfNeeded never re-reads these while the local
-    // copy looks valid, so a 401 needs an explicit source reload.
+    // A 401 must reload the source immediately rather than waiting for the
+    // next refreshIfNeeded, which the 30s credential cache can defer.
     const account = {
       label: "Account 1",
       source: "keychain",
@@ -768,6 +845,73 @@ describe("credential caching", () => {
     credentialsModule.reloadActiveAccount()
 
     assert.equal(account.credentials.accessToken, "rotated")
+  })
+
+  // Every other refreshAccount call site in credentials.ts forwards the
+  // account's configDir; these two re-read paths did not. Unreachable while
+  // readAllClaudeAccounts assigns every file account
+  // `CLAUDE_CONFIG_DIR ?? ~/.claude` — exactly what readCredentialsFile
+  // recomputes by default — but the CAS guard added here compares a read
+  // against a write, so the two must resolve the same file by construction
+  // rather than by coincidence.
+  it("reloadCredentialsFromSource reads the account's own configDir", async () => {
+    const now = Date.now()
+    const { credentialsModule, keychainModule } =
+      await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+    credentialsModule.initAccounts([
+      {
+        label: "Account 1",
+        source: "file",
+        configDir: "/custom/config/dir",
+        credentials: {
+          accessToken: "token",
+          refreshToken: "refresh",
+          expiresAt: now + 10 * 60_000,
+        },
+      },
+    ])
+
+    const readsBefore = keychainModule.__getReads().length
+    credentialsModule.reloadCredentialsFromSource()
+
+    const reads = keychainModule.__getReads().slice(readsBefore)
+    assert.ok(reads.length > 0, "expected a source read")
+    assert.equal(
+      reads[reads.length - 1].configDir,
+      "/custom/config/dir",
+      "the re-read must target the account's own config directory",
+    )
+  })
+
+  it("reloadActiveAccount reads the account's own configDir", async () => {
+    const now = Date.now()
+    const { credentialsModule, keychainModule } =
+      await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+    credentialsModule.initAccounts([
+      {
+        label: "Account 1",
+        source: "file",
+        configDir: "/custom/config/dir",
+        credentials: {
+          accessToken: "token",
+          refreshToken: "refresh",
+          expiresAt: now + 10 * 60_000,
+        },
+      },
+    ])
+
+    const readsBefore = keychainModule.__getReads().length
+    credentialsModule.reloadActiveAccount()
+
+    const reads = keychainModule.__getReads().slice(readsBefore)
+    assert.ok(reads.length > 0, "expected a source read")
+    assert.equal(
+      reads[reads.length - 1].configDir,
+      "/custom/config/dir",
+      "the re-read must target the account's own config directory",
+    )
   })
 
   it("forceRefreshActiveAccount swaps in OAuth-refreshed credentials and writes back", async () => {
@@ -815,6 +959,45 @@ describe("credential caching", () => {
       cached?.accessToken,
       "oauth-refreshed",
       "cache must serve the refreshed token immediately",
+    )
+  })
+
+  // The token must be captured before the await: account.credentials is
+  // reassigned to the refreshed pair before write-back runs, so reading it at
+  // the call site would compare the new token against the store and skip
+  // every write.
+  it("forceRefreshActiveAccount guards write-back with the pre-refresh token", async () => {
+    const now = Date.now()
+    const { credentialsModule, keychainModule } =
+      await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+    const account = {
+      label: "Account 1",
+      source: "keychain",
+      credentials: {
+        accessToken: "rejected-token",
+        refreshToken: "refresh-token",
+        expiresAt: now + 10 * 60_000,
+      },
+    }
+    credentialsModule.initAccounts([account])
+
+    const writesBefore = keychainModule.__getWrites().length
+
+    await credentialsModule.forceRefreshActiveAccount(async () => ({
+      accessToken: "oauth-refreshed",
+      refreshToken: "new-refresh",
+      expiresAt: now + 10 * 60_000,
+    }))
+
+    const writes = keychainModule.__getWrites()
+    assert.equal(writes.length, writesBefore + 1)
+    const write = writes[writes.length - 1]
+    assert.equal(write.creds.accessToken, "oauth-refreshed")
+    assert.equal(
+      write.expectedPriorAccessToken,
+      "rejected-token",
+      "the guard must carry the token the refresh was issued against",
     )
   })
 
@@ -933,6 +1116,283 @@ describe("credential caching", () => {
       )
     } finally {
       Date.now = originalNow
+    }
+  })
+
+  it("refreshIfNeeded adopts credentials rotated externally in a keychain source", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+      credentialsModule.initAccounts([
+        {
+          label: "Account 1",
+          source: "keychain",
+          credentials: {
+            accessToken: "before-switch",
+            refreshToken: "rt-before",
+            expiresAt: now + 10 * 60_000,
+          },
+        },
+      ])
+
+      // An external process (cswap, the claude CLI, a second OpenCode)
+      // replaces the stored credential with a different account's.
+      keychainModule.__setCredentials({
+        accessToken: "after-switch",
+        refreshToken: "rt-after",
+        expiresAt: now + 10 * 60_000,
+      })
+
+      const result = await credentialsModule.refreshIfNeeded()
+
+      assert.equal(result?.accessToken, "after-switch")
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  // writeBackCredentials can fail while the read that precedes it succeeds:
+  // a malformed stored blob makes updateCredentialBlob return null, and an
+  // ACL can permit reads but not add-generic-password. performRefresh
+  // discards that false, so memory ends up holding freshly refreshed
+  // credentials while the store still holds the pre-refresh blob — which,
+  // because we only refresh inside the 60s window, has under 60s left.
+  // Adopting it would re-enter performRefresh with a refresh token our own
+  // successful refresh just rotated dead, failing over to two 60s claude
+  // spawns on every cache miss, forever.
+  it("refreshIfNeeded does not adopt a stale stored blob over valid in-memory credentials", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+
+    try {
+      const { credentialsModule, keychainModule, childProcessModule } =
+        await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+      credentialsModule.initAccounts([
+        {
+          label: "Account 1",
+          source: "keychain",
+          credentials: {
+            accessToken: "fresh-in-memory",
+            refreshToken: "rt-fresh",
+            expiresAt: now + 10 * 60_000,
+          },
+        },
+      ])
+
+      // The store still holds the pre-refresh blob the failed write-back
+      // never replaced.
+      keychainModule.__setCredentials({
+        accessToken: "stale-in-store",
+        refreshToken: "rt-stale",
+        expiresAt: now + 30_000,
+      })
+
+      const result = await credentialsModule.refreshIfNeeded()
+
+      assert.equal(result?.accessToken, "fresh-in-memory")
+      assert.equal(
+        childProcessModule.__getExecSyncCount(),
+        0,
+        "adopting the stale blob would fail OAuth and fall through to the CLI",
+      )
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  // Complement of the test above: the guard must decline only the unusable
+  // blob. If it declined whenever memory was valid, external rotation would
+  // stop being picked up and this task's whole premise would regress.
+  it("refreshIfNeeded adopts a usable stored blob even when memory is still valid", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+      const account = {
+        label: "Account 1",
+        source: "keychain",
+        credentials: {
+          accessToken: "in-memory-valid",
+          refreshToken: "rt-memory",
+          expiresAt: now + 10 * 60_000,
+        },
+      }
+      credentialsModule.initAccounts([account])
+
+      keychainModule.__setCredentials({
+        accessToken: "rotated-in-store",
+        refreshToken: "rt-rotated",
+        expiresAt: now + 8 * 60 * 60_000,
+      })
+
+      const result = await credentialsModule.refreshIfNeeded()
+
+      assert.equal(result?.accessToken, "rotated-in-store")
+      assert.equal(
+        account.credentials.accessToken,
+        "rotated-in-store",
+        "the adoption must land on the account so later calls see it",
+      )
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  it("refreshIfNeeded keeps in-memory credentials when the source read throws", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now + 10 * 60_000)
+
+      credentialsModule.initAccounts([
+        {
+          label: "Account 1",
+          source: "keychain",
+          credentials: {
+            accessToken: "in-memory",
+            refreshToken: "rt",
+            expiresAt: now + 10 * 60_000,
+          },
+        },
+      ])
+
+      keychainModule.__setReadError(true)
+
+      const result = await credentialsModule.refreshIfNeeded()
+
+      assert.equal(result?.accessToken, "in-memory")
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  it("performRefresh passes the pre-refresh token as the write-back guard", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    const originalFetch = globalThis.fetch
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now - 60_000)
+
+      keychainModule.__setCredentials({
+        accessToken: "stale-token",
+        refreshToken: "rt-stale",
+        expiresAt: now - 60_000,
+      })
+
+      credentialsModule.initAccounts([
+        {
+          label: "Account 1",
+          source: "keychain",
+          credentials: {
+            accessToken: "stale-token",
+            refreshToken: "rt-stale",
+            expiresAt: now - 60_000,
+          },
+        },
+      ])
+
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            access_token: "rotated-token",
+            refresh_token: "rt-rotated",
+            expires_in: 36_000,
+          }),
+          { status: 200 },
+        )) as typeof fetch
+
+      await credentialsModule.refreshIfNeeded()
+
+      const writes = keychainModule.__getWrites()
+      assert.equal(writes.length, 1)
+      assert.equal(writes[0].creds.accessToken, "rotated-token")
+      assert.equal(writes[0].expectedPriorAccessToken, "stale-token")
+    } finally {
+      Date.now = originalNow
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  // forceRefreshActiveAccount logs force_refresh_writeback_failed on the same
+  // condition; performRefresh discarded the return value entirely, so a
+  // rejected write-back left no trace anywhere in the debug log. The session
+  // continues from memory either way — this pins the observability, not a
+  // control-flow change.
+  it("performRefresh logs a rejected write-back", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    const originalFetch = globalThis.fetch
+
+    try {
+      const { credentialsModule, keychainModule, loggerModule } =
+        await loadCredentialsWithCountingKeychain(now - 60_000)
+
+      keychainModule.__setCredentials({
+        accessToken: "stale-token",
+        refreshToken: "rt-stale",
+        expiresAt: now - 60_000,
+      })
+
+      credentialsModule.initAccounts([
+        {
+          label: "Account 1",
+          source: "keychain",
+          credentials: {
+            accessToken: "stale-token",
+            refreshToken: "rt-stale",
+            expiresAt: now - 60_000,
+          },
+        },
+      ])
+
+      // An external switch landed inside the OAuth round trip, so the CAS in
+      // writeBackCredentials rejects the write.
+      keychainModule.__setWriteResult(false)
+
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            access_token: "rotated-token",
+            refresh_token: "rt-rotated",
+            expires_in: 36_000,
+          }),
+          { status: 200 },
+        )) as typeof fetch
+
+      const result = await credentialsModule.refreshIfNeeded()
+
+      assert.equal(
+        result?.accessToken,
+        "rotated-token",
+        "the caller still receives the refreshed credentials",
+      )
+      assert.ok(
+        loggerModule
+          .__getLogs()
+          .some((entry) => entry.event === "refresh_writeback_failed"),
+        "a rejected write-back must be visible in the debug log",
+      )
+    } finally {
+      Date.now = originalNow
+      globalThis.fetch = originalFetch
     }
   })
 })
@@ -1317,10 +1777,18 @@ describe("refreshIfNeeded CLI fallback scope", () => {
     }) as typeof fetch
 
     try {
-      const { credentialsModule, childProcessModule } =
+      const { credentialsModule, keychainModule, childProcessModule } =
         await loadCredentialsWithCountingKeychain(now + 30 * 60_000)
       const target = makeAccount(now + 30 * 60_000)
       credentialsModule.initAccounts([target])
+
+      // Pin the target's own stored value so the up-front re-read is a no-op
+      // and the assertion below speaks to the CLI, not to source adoption.
+      keychainModule.__setCredentialsForSource("keychain", {
+        accessToken: "existing-token",
+        refreshToken: "existing-refresh",
+        expiresAt: now + 30 * 60_000,
+      })
 
       const result = await credentialsModule.refreshIfNeeded(
         target,
@@ -1497,8 +1965,11 @@ describe("refreshIfNeeded CLI fallback scope", () => {
       const target = makeAccount(now + 30_000)
       credentialsModule.initAccounts([target])
 
-      // The store initially matches memory, so the pre-CLI re-read finds
-      // nothing new. Only once the CLI has run does the entry rotate.
+      // The store initially matches memory, so neither the up-front re-read
+      // nor the pre-CLI re-read finds anything new. Only once the CLI has run
+      // does the entry rotate — hence the third read, not the second:
+      // 1) refreshIfNeeded's up-front re-read, 2) the re-read after OAuth
+      // fails, 3) the read after the CLI has rotated the entry.
       keychainModule.__setCredentials({
         accessToken: "existing-token",
         refreshToken: "existing-refresh",
@@ -1507,7 +1978,7 @@ describe("refreshIfNeeded CLI fallback scope", () => {
       let reads = 0
       keychainModule.__setReadHook(() => {
         reads += 1
-        if (reads >= 2) {
+        if (reads >= 3) {
           keychainModule.__setCredentials({
             accessToken: "cli-rotated-token",
             refreshToken: "cli-rotated-refresh",
@@ -1623,6 +2094,98 @@ describe("borrowed fallback credentials", () => {
         lender.credentials.refreshToken,
         "rt-lender",
         "the lender's stored token must not be rotated by the borrower",
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalNow
+    }
+  })
+
+  // While borrowed, target.credentials holds the LENDER's token, so guarding
+  // write-back with it would fail the comparison every time and silently stop
+  // persisting refreshes for exactly the accounts that are recovering. The
+  // guard must use this account's own stored token.
+  it("guards a recovering borrower's write-back with its own token, not the lender's", async () => {
+    const originalFetch = globalThis.fetch
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+
+    let oauthFails = true
+    globalThis.fetch = (async () => {
+      if (oauthFails) throw new Error("network unreachable")
+      return new Response(
+        JSON.stringify({
+          access_token: "at-recovered",
+          refresh_token: "rt-recovered",
+          expires_in: 28_800,
+        }),
+        { status: 200 },
+      )
+    }) as typeof fetch
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now - 1_000)
+
+      const borrower = {
+        label: "Account 1",
+        source: "Claude Code-credentials-aabbccdd",
+        credentials: {
+          accessToken: "at-borrower",
+          refreshToken: "rt-borrower",
+          expiresAt: now - 1_000,
+        },
+      }
+      const lender = {
+        label: "Account 2",
+        source: "Claude Code-credentials",
+        credentials: {
+          accessToken: "at-lender",
+          refreshToken: "rt-lender",
+          expiresAt: now + 30 * 60_000,
+        },
+      }
+      credentialsModule.initAccounts([borrower, lender])
+
+      // The borrower's own store holds an expired credential distinct from
+      // anything it has ever had in memory, so the assertion below can only
+      // pass if the guard came from the store rather than from memory.
+      keychainModule.__setCredentialsForSource(borrower.source, {
+        accessToken: "at-borrower-own",
+        refreshToken: "rt-borrower-own",
+        expiresAt: now - 1_000,
+      })
+
+      // OAuth and the CLI both fail (suffixed source, no configDir), so the
+      // borrower falls back to the lender's credentials.
+      assert.equal(
+        (await credentialsModule.refreshIfNeeded(borrower))?.accessToken,
+        "at-lender",
+        "borrow should succeed",
+      )
+
+      const writesBefore = keychainModule.__getWrites().length
+      oauthFails = false
+
+      // A threshold wider than the borrowed credential's remaining life
+      // forces a refresh while leaving it usable, so the up-front re-read
+      // does not adopt the expired stored blob and clear the borrowed flag.
+      await credentialsModule.refreshIfNeeded(borrower, 60 * 60_000)
+
+      const writes = keychainModule.__getWrites()
+      assert.equal(writes.length, writesBefore + 1)
+      const write = writes[writes.length - 1]
+      assert.equal(write.creds.accessToken, "at-recovered")
+      assert.equal(
+        write.expectedPriorAccessToken,
+        "at-borrower-own",
+        "the guard must be the borrower's own stored token",
+      )
+      assert.notEqual(
+        write.expectedPriorAccessToken,
+        "at-lender",
+        "guarding with the lender's token would fail every CAS",
       )
     } finally {
       globalThis.fetch = originalFetch
@@ -1771,6 +2334,179 @@ describe("borrowed credentials after exhaustion", () => {
         "rt-lender",
         "a rebuilt account must hold its own tokens, never the lender's",
       )
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalNow
+    }
+  })
+
+  // refreshIfNeeded's up-front re-read pulls from the account's OWN source,
+  // so anything it adopts is the account's own credentials — it is no longer
+  // borrowing. Leaving the flag set would make forceRefreshActiveAccount
+  // refuse to exchange tokens that are legitimately the account's.
+  it("clears the borrowed flag once the up-front re-read adopts its own credentials", async () => {
+    const originalFetch = globalThis.fetch
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    globalThis.fetch = (async () => {
+      throw new Error("network unreachable")
+    }) as typeof fetch
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now - 1_000)
+
+      const borrower = {
+        label: "Account 1",
+        source: "Claude Code-credentials-aabbccdd",
+        credentials: {
+          accessToken: "at-borrower",
+          refreshToken: "rt-borrower",
+          expiresAt: now - 1_000,
+        },
+      }
+      const lender = {
+        label: "Account 2",
+        source: "Claude Code-credentials",
+        credentials: {
+          accessToken: "at-lender",
+          refreshToken: "rt-lender",
+          expiresAt: now + 60 * 60_000,
+        },
+      }
+      credentialsModule.initAccounts([borrower, lender])
+
+      // Its own entry is expired, so it ends up on the lender's tokens.
+      keychainModule.__setCredentialsForSource(borrower.source, {
+        accessToken: "at-borrower-own",
+        refreshToken: "rt-borrower-own",
+        expiresAt: now - 1_000,
+      })
+      await credentialsModule.refreshIfNeeded(borrower)
+      assert.equal(
+        borrower.credentials.accessToken,
+        "at-lender",
+        "precondition: the account is running on borrowed tokens",
+      )
+
+      // An external process repairs its entry.
+      keychainModule.__setCredentialsForSource(borrower.source, {
+        accessToken: "at-borrower-fresh",
+        refreshToken: "rt-borrower-fresh",
+        expiresAt: now + 8 * 60 * 60_000,
+      })
+      await credentialsModule.refreshIfNeeded(borrower)
+      assert.equal(borrower.credentials.accessToken, "at-borrower-fresh")
+
+      const seen: string[] = []
+      const forced = await credentialsModule.forceRefreshActiveAccount(
+        async (token: string) => {
+          seen.push(token)
+          return {
+            accessToken: "at-forced",
+            refreshToken: "rt-forced",
+            expiresAt: now + 8 * 60 * 60_000,
+          }
+        },
+      )
+
+      assert.deepEqual(
+        seen,
+        ["rt-borrower-fresh"],
+        "a recovered account must be free to force-refresh its own token",
+      )
+      assert.equal(forced?.accessToken, "at-forced")
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalNow
+    }
+  })
+
+  // The 401 recovery loop reaches its second attempt only through
+  // reloadCredentialsFromSource, so that adoption site has to clear the flag
+  // for the same reason refreshIfNeeded's does — matching the invariant
+  // refreshBorrowedAccount maintains at every other adoption site. Without
+  // it, a borrower whose own entry has since been repaired reloads onto its
+  // own credentials, gets rejected again, and then force-refresh declines on
+  // a flag that is false in fact: a recoverable 401 reaches the user.
+  it("clears the borrowed flag once a source reload adopts its own credentials", async () => {
+    const originalFetch = globalThis.fetch
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    globalThis.fetch = (async () => {
+      throw new Error("network unreachable")
+    }) as typeof fetch
+
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now - 1_000)
+
+      const borrower = {
+        label: "Account 1",
+        source: "Claude Code-credentials-aabbccdd",
+        credentials: {
+          accessToken: "at-borrower",
+          refreshToken: "rt-borrower",
+          expiresAt: now - 1_000,
+        },
+      }
+      const lender = {
+        label: "Account 2",
+        source: "Claude Code-credentials",
+        credentials: {
+          accessToken: "at-lender",
+          refreshToken: "rt-lender",
+          expiresAt: now + 60 * 60_000,
+        },
+      }
+      credentialsModule.initAccounts([borrower, lender])
+
+      // Its own entry is expired, so it ends up on the lender's tokens.
+      keychainModule.__setCredentialsForSource(borrower.source, {
+        accessToken: "at-borrower-own",
+        refreshToken: "rt-borrower-own",
+        expiresAt: now - 1_000,
+      })
+      await credentialsModule.refreshIfNeeded(borrower)
+      assert.equal(
+        borrower.credentials.accessToken,
+        "at-lender",
+        "precondition: the account is running on borrowed tokens",
+      )
+
+      // An external process repairs its entry, and the 401 handler picks that
+      // up through the reload rather than through refreshIfNeeded.
+      keychainModule.__setCredentialsForSource(borrower.source, {
+        accessToken: "at-borrower-fresh",
+        refreshToken: "rt-borrower-fresh",
+        expiresAt: now + 8 * 60 * 60_000,
+      })
+      assert.equal(
+        credentialsModule.reloadCredentialsFromSource()?.accessToken,
+        "at-borrower-fresh",
+        "precondition: the reload adopts the account's own credentials",
+      )
+
+      const seen: string[] = []
+      const forced = await credentialsModule.forceRefreshActiveAccount(
+        async (token: string) => {
+          seen.push(token)
+          return {
+            accessToken: "at-forced",
+            refreshToken: "rt-forced",
+            expiresAt: now + 8 * 60 * 60_000,
+          }
+        },
+      )
+
+      assert.deepEqual(
+        seen,
+        ["rt-borrower-fresh"],
+        "an account reloaded onto its own token must be free to force-refresh it",
+      )
+      assert.equal(forced?.accessToken, "at-forced")
     } finally {
       globalThis.fetch = originalFetch
       Date.now = originalNow

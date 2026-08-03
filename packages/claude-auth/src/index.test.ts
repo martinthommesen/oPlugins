@@ -3,6 +3,7 @@ import {
   existsSync,
   writeFileSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
 } from "node:fs"
@@ -11,6 +12,11 @@ import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { before, describe, it } from "node:test"
 import { pathToFileURL } from "node:url"
+
+// Keep the cross-process refresh lock off the real OpenCode data dir in tests.
+process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR = mkdtempSync(
+  join(tmpdir(), "opencode-claude-auth-locktest-"),
+)
 
 interface ClaudeCredentials {
   accessToken: string
@@ -125,6 +131,8 @@ const SOURCE_FILES = [
   "signing.ts",
   "transforms.ts",
   "credentials.ts",
+  "refresh-backoff.ts",
+  "refresh-lock.ts",
   "logger.ts",
   "http.ts",
 ] as const

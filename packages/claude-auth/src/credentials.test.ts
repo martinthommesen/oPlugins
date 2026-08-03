@@ -3,11 +3,16 @@ import assert from "node:assert/strict"
 import {
   refreshViaOAuth,
   parseOAuthResponse,
+  extractOAuthError,
   OAUTH_TOKEN_URL,
 } from "./credentials.ts"
+import { Writable } from "node:stream"
+import { closeLogger, initLogger } from "./logger.ts"
+import { acquireRefreshLock } from "./refresh-lock.ts"
 import {
   chmodSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   statSync,
   writeFileSync,
@@ -16,6 +21,12 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
+
+// Keep the cross-process refresh lock off the real OpenCode data dir during
+// tests, and isolated to this test process.
+process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR = mkdtempSync(
+  join(tmpdir(), "opencode-claude-auth-locktest-"),
+)
 
 type Creds = {
   accessToken: string
@@ -52,6 +63,15 @@ async function loadCredentialsWithCountingKeychain(
     forceRefreshActiveAccount: (
       refresh?: (refreshToken: string) => Promise<Creds | null>,
     ) => Promise<Creds | null>
+    getCredentialsWithBackoff: (opts?: {
+      maxWaitMs?: number
+      pollMs?: number
+      signal?: AbortSignal
+      now?: () => number
+      sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
+      rng?: () => number
+    }) => Promise<Creds | null>
+    getActiveRefreshFailureKind: () => "transient" | "terminal" | null
   }
   keychainModule: {
     __getReadCount: () => number
@@ -93,6 +113,16 @@ async function loadCredentialsWithCountingKeychain(
   await writeFile(
     tempHttp,
     await readFile(new URL("./http.ts", import.meta.url), "utf8"),
+    "utf8",
+  )
+  await writeFile(
+    join(tempDir, "refresh-backoff.ts"),
+    await readFile(new URL("./refresh-backoff.ts", import.meta.url), "utf8"),
+    "utf8",
+  )
+  await writeFile(
+    join(tempDir, "refresh-lock.ts"),
+    await readFile(new URL("./refresh-lock.ts", import.meta.url), "utf8"),
     "utf8",
   )
   const rewritten = sourceCredentials
@@ -1424,6 +1454,19 @@ describe("syncAuthJson file permissions", () => {
         await readFile(new URL("./http.ts", import.meta.url), "utf8"),
         "utf8",
       )
+      await writeFile(
+        join(tempDir, "refresh-backoff.ts"),
+        await readFile(
+          new URL("./refresh-backoff.ts", import.meta.url),
+          "utf8",
+        ),
+        "utf8",
+      )
+      await writeFile(
+        join(tempDir, "refresh-lock.ts"),
+        await readFile(new URL("./refresh-lock.ts", import.meta.url), "utf8"),
+        "utf8",
+      )
       const rewritten = sourceCredentials.replace(
         /from\s+["']\.\/(\w+)\.js["']/g,
         'from "./$1.ts"',
@@ -1512,6 +1555,19 @@ export function buildAccountLabels(creds) { return creds.map((_, i) => \`Account
       await writeFile(
         join(tempDir, "http.ts"),
         await readFile(new URL("./http.ts", import.meta.url), "utf8"),
+        "utf8",
+      )
+      await writeFile(
+        join(tempDir, "refresh-backoff.ts"),
+        await readFile(
+          new URL("./refresh-backoff.ts", import.meta.url),
+          "utf8",
+        ),
+        "utf8",
+      )
+      await writeFile(
+        join(tempDir, "refresh-lock.ts"),
+        await readFile(new URL("./refresh-lock.ts", import.meta.url), "utf8"),
         "utf8",
       )
       const rewritten = sourceCredentials.replace(
@@ -1712,6 +1768,111 @@ describe("refreshViaOAuth", () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it("logs the token endpoint's failure reason on a rejected refresh", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          error: "invalid_grant",
+          error_description: "Refresh token not found or invalid",
+        }),
+        { status: 400 },
+      )) as typeof fetch
+
+    const lines: string[] = []
+    initLogger({
+      stream: new Writable({
+        write(chunk, _enc, cb) {
+          lines.push(chunk.toString())
+          cb()
+        },
+      }),
+    })
+
+    try {
+      assert.equal(await refreshViaOAuth("sk-ant-ort01-stale"), null)
+      const entry = lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .find((e) => e.event === "refresh_failed")
+      assert.ok(entry, "expected a refresh_failed log line")
+      assert.equal(entry.error, "HTTP 400")
+      assert.equal(entry.oauthError, "invalid_grant")
+      assert.equal(
+        entry.oauthErrorDescription,
+        "Refresh token not found or invalid",
+      )
+    } finally {
+      closeLogger()
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
+describe("extractOAuthError", () => {
+  it("extracts the OAuth error and description", () => {
+    assert.deepEqual(
+      extractOAuthError(
+        JSON.stringify({
+          error: "invalid_grant",
+          error_description: "Refresh token not found or invalid",
+        }),
+      ),
+      {
+        oauthError: "invalid_grant",
+        oauthErrorDescription: "Refresh token not found or invalid",
+      },
+    )
+  })
+
+  it("handles Anthropic's nested error envelope", () => {
+    assert.deepEqual(
+      extractOAuthError(
+        JSON.stringify({
+          error: { type: "rate_limit_error", message: "Rate limited." },
+        }),
+      ),
+      {
+        oauthError: "rate_limit_error",
+        oauthErrorDescription: "Rate limited.",
+      },
+    )
+  })
+
+  it("returns an empty object for non-JSON bodies", () => {
+    assert.deepEqual(extractOAuthError("<html>gateway error</html>"), {})
+  })
+
+  it("returns an empty object when no error field is present", () => {
+    assert.deepEqual(extractOAuthError(JSON.stringify({ ok: true })), {})
+  })
+
+  it("truncates overly long descriptions", () => {
+    const long = "x".repeat(1000)
+    const result = extractOAuthError(
+      JSON.stringify({ error: "server_error", error_description: long }),
+    )
+    assert.equal(result.oauthError, "server_error")
+    assert.equal(result.oauthErrorDescription?.length, 500)
+  })
+
+  it("returns an empty object for JSON primitives and arrays without throwing", () => {
+    // JSON.parse("null") === null etc. — must not crash the error-logging path.
+    for (const body of ["null", "123", '"a string"', "[1,2,3]", "true"]) {
+      assert.deepEqual(extractOAuthError(body), {}, `body: ${body}`)
+    }
+  })
+
+  it("prefers the flat error_description over a nested message when both are present", () => {
+    const result = extractOAuthError(
+      JSON.stringify({
+        error: { type: "foo", message: "nested" },
+        error_description: "flat",
+      }),
+    )
+    assert.equal(result.oauthError, "foo")
+    assert.equal(result.oauthErrorDescription, "flat")
+  })
 })
 
 function makeAccount(expiresAt: number) {
@@ -1863,7 +2024,8 @@ describe("refreshIfNeeded CLI fallback scope", () => {
     const originalFetch = globalThis.fetch
     const originalNow = Date.now
     const now = 1_700_000_000_000
-    Date.now = () => now
+    let clock = now
+    Date.now = () => clock
 
     let fetchCount = 0
     globalThis.fetch = (async () => {
@@ -1885,6 +2047,11 @@ describe("refreshIfNeeded CLI fallback scope", () => {
         credentialsModule.getCachedCredentials(),
       ])
       const afterFirstRound = fetchCount
+
+      // Advance past the post-transient refresh cooldown so the next round
+      // actually re-attempts (rather than being cooldown-skipped) — the point
+      // of the assertion is that the retry still collapses to one attempt.
+      clock += 61_000
 
       const second = await Promise.all([
         credentialsModule.getCachedCredentials(),
@@ -1955,9 +2122,12 @@ describe("refreshIfNeeded CLI fallback scope", () => {
     const now = 1_700_000_000_000
     Date.now = () => now
 
-    globalThis.fetch = (async () => {
-      throw new Error("network unreachable")
-    }) as typeof fetch
+    // A terminal failure (dead refresh token) is what routes to the CLI now;
+    // a transient rate-limit/network error deliberately does not spawn it.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+      })) as typeof fetch
 
     try {
       const { credentialsModule, keychainModule, childProcessModule } =
@@ -2628,6 +2798,31 @@ describe("parseOAuthResponse", () => {
     assert.equal(Number.isInteger(result.expiresAt), true)
   })
 
+  it("honors an absolute future expires_at (ms) over expires_in", () => {
+    const expiresAt = now + 8 * 60 * 60_000
+    const raw = JSON.stringify({
+      access_token: "sk-ant-oat01-new",
+      expires_in: 60, // deliberately tiny; expires_at should win
+      expires_at: expiresAt,
+    })
+    const result = parseOAuthResponse(raw, currentRefresh, now)
+    assert.ok(result)
+    assert.equal(result.expiresAt, expiresAt)
+  })
+
+  it("ignores a non-future (e.g. seconds-precision) expires_at and falls back to expires_in", () => {
+    // A seconds-precision value read as ms lands in 1970 (<= now); must not be
+    // used, or the token would read as already-expired.
+    const raw = JSON.stringify({
+      access_token: "sk-ant-oat01-new",
+      expires_in: 28_800,
+      expires_at: 1_900_000_000, // seconds, not ms
+    })
+    const result = parseOAuthResponse(raw, currentRefresh, now)
+    assert.ok(result)
+    assert.equal(result.expiresAt, now + 28_800 * 1000)
+  })
+
   it("returns null when access_token is missing", () => {
     const raw = JSON.stringify({ refresh_token: "rt", expires_in: 3600 })
     assert.equal(parseOAuthResponse(raw, currentRefresh, now), null)
@@ -2661,5 +2856,196 @@ describe("parseOAuthResponse", () => {
 
   it("returns null for empty string", () => {
     assert.equal(parseOAuthResponse("", currentRefresh, now), null)
+  })
+})
+
+describe("getCredentialsWithBackoff (transient rate-limit resilience)", () => {
+  it("returns fresh credentials immediately without waiting", async () => {
+    const originalFetch = globalThis.fetch
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    try {
+      const { credentialsModule } = await loadCredentialsWithCountingKeychain(
+        now + 10 * 60_000,
+      )
+      credentialsModule.initAccounts([makeAccount(now + 10 * 60_000)])
+
+      let slept = 0
+      const creds = await credentialsModule.getCredentialsWithBackoff({
+        now: () => now,
+        sleep: async () => {
+          slept += 1
+        },
+      })
+
+      assert.ok(creds, "credentials returned immediately")
+      assert.equal(slept, 0, "no wait when credentials are already available")
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalNow
+    }
+  })
+
+  it("fails fast (no wait) when there is no active account", async () => {
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    try {
+      const { credentialsModule } = await loadCredentialsWithCountingKeychain(
+        now + 10 * 60_000,
+      )
+      credentialsModule.initAccounts([]) // no accounts configured
+
+      let slept = 0
+      const creds = await credentialsModule.getCredentialsWithBackoff({
+        maxWaitMs: 100_000,
+        now: () => now,
+        sleep: async () => {
+          slept += 1
+        },
+      })
+
+      assert.equal(creds, null)
+      assert.equal(slept, 0, "no account means nothing to wait for")
+    } finally {
+      Date.now = originalNow
+    }
+  })
+
+  it("returns null promptly on a terminal failure, without exhausting the wait", async () => {
+    const originalFetch = globalThis.fetch
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+      })) as typeof fetch
+    try {
+      const { credentialsModule } = await loadCredentialsWithCountingKeychain(
+        now - 1_000,
+      )
+      credentialsModule.initAccounts([makeAccount(now - 1_000)])
+
+      let slept = 0
+      const creds = await credentialsModule.getCredentialsWithBackoff({
+        maxWaitMs: 100_000,
+        now: () => now,
+        sleep: async () => {
+          slept += 1
+        },
+      })
+
+      assert.equal(creds, null)
+      assert.equal(credentialsModule.getActiveRefreshFailureKind(), "terminal")
+      assert.equal(slept, 0, "a dead refresh token is not waited out")
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalNow
+    }
+  })
+
+  it("adopts a token a sibling instance/CLI writes to the store during the cooldown", async () => {
+    const originalFetch = globalThis.fetch
+    const originalNow = Date.now
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    // The token endpoint is rate-limiting us (transient). A retry-after beyond
+    // the fetchWithRetry cap makes it return at once rather than backing off,
+    // keeping the test fast.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "rate_limit_error" }), {
+        status: 429,
+        headers: { "retry-after": "3600" },
+      })) as typeof fetch
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now - 1_000)
+      const target = makeAccount(now - 1_000)
+      credentialsModule.initAccounts([target])
+      keychainModule.__setCredentials({
+        accessToken: "existing-token",
+        refreshToken: "existing-refresh",
+        expiresAt: now - 1_000,
+      })
+
+      // First refresh is rate-limited -> sets a cooldown, no credentials.
+      assert.equal(await credentialsModule.refreshIfNeeded(target), null)
+      assert.equal(credentialsModule.getActiveRefreshFailureKind(), "transient")
+
+      // A sibling OpenCode instance / the claude CLI rotates the shared store.
+      keychainModule.__setCredentials({
+        accessToken: "sibling-rotated-token",
+        refreshToken: "sibling-rotated-refresh",
+        expiresAt: now + 8 * 60 * 60_000,
+      })
+
+      // While still in cooldown we must NOT hit the endpoint again — we adopt
+      // the sibling's fresh token from the store instead.
+      const adopted = await credentialsModule.refreshIfNeeded(target)
+      assert.equal(adopted?.accessToken, "sibling-rotated-token")
+    } finally {
+      globalThis.fetch = originalFetch
+      Date.now = originalNow
+    }
+  })
+})
+
+describe("cross-process refresh lock (single-flight)", () => {
+  it("waits for and adopts a sibling's token while another process holds the lock", async () => {
+    const originalNow = Date.now
+    const originalFetch = globalThis.fetch
+    const now = 1_700_000_000_000
+    Date.now = () => now
+    // If the lock path were ever bypassed, the endpoint must not hand back a
+    // usable token — this asserts the result came from the store, not a refresh.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "rate_limit_error" }), {
+        status: 429,
+        headers: { "retry-after": "3600" },
+      })) as typeof fetch
+    try {
+      const { credentialsModule, keychainModule } =
+        await loadCredentialsWithCountingKeychain(now - 1_000)
+      const target = makeAccount(now - 1_000)
+      credentialsModule.initAccounts([target])
+      keychainModule.__setCredentials({
+        accessToken: "existing-token",
+        refreshToken: "existing-refresh",
+        expiresAt: now - 1_000,
+      })
+
+      // The store looks stale on the up-front re-read, then a sibling (holding
+      // the lock) rotates it fresh on the very next read.
+      let reads = 0
+      keychainModule.__setReadHook(() => {
+        reads += 1
+        if (reads >= 2) {
+          keychainModule.__setCredentials({
+            accessToken: "holder-token",
+            refreshToken: "holder-refresh",
+            expiresAt: now + 8 * 60 * 60_000,
+          })
+        }
+      })
+
+      // A sibling process owns the refresh lock for this source.
+      const held = acquireRefreshLock(target.source)
+      assert.ok(held, "test acquires the lock to simulate another process")
+      try {
+        const adopted = await credentialsModule.refreshIfNeeded(target)
+        assert.equal(
+          adopted?.accessToken,
+          "holder-token",
+          "waits for and adopts the lock holder's freshly stored token",
+        )
+      } finally {
+        held!.release()
+      }
+    } finally {
+      Date.now = originalNow
+      globalThis.fetch = originalFetch
+    }
   })
 })

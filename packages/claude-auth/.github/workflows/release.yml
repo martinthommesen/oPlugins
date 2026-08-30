@@ -19,10 +19,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect an explicit major version
+        id: release-as
+        shell: bash
+        run: |
+          current="$(node -p "require('./package.json').version")"
+          latest="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+          latest="${latest#v}"
+          if [[ -z "$latest" || "${current%%.*}" -gt "${latest%%.*}" ]]; then
+            echo "version=$current" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: googleapis/release-please-action@v4
         id: release-please
         with:
           release-type: node
+          release-as: ${{ steps.release-as.outputs.version }}
 
       - uses: pnpm/action-setup@v4
         if: steps.release-please.outputs.releases_created == 'true'
@@ -36,11 +48,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
         if: steps.release-please.outputs.releases_created == 'true'
-
+      - run: pnpm run lint
+        if: steps.release-please.outputs.releases_created == 'true'
       - run: pnpm run build
         if: steps.release-please.outputs.releases_created == 'true'
-
-      - run: pnpm publish --access public --provenance --no-git-checks
+      - run: pnpm test
+        if: steps.release-please.outputs.releases_created == 'true'
+      - run: pnpm pack --dry-run
+        if: steps.release-please.outputs.releases_created == 'true'
+      - run: pnpm publish --access public --provenance --no-git-checks --ignore-scripts
         if: steps.release-please.outputs.releases_created == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

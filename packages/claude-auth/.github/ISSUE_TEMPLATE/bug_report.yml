@@ -6,7 +6,7 @@ body:
     id: description
     attributes:
       label: Description
-      description: What happened? What did you expect to happen?
+      description: What happened, and what did you expect?
     validations:
       required: true
 
@@ -14,11 +14,23 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: How can we reproduce this?
       placeholder: |
-        1. Start OpenCode with ...
-        2. Select model ...
-        3. Send a message ...
+        1. Start opencode2 with ...
+        2. Open /connect and choose ...
+        3. Select model ...
+        4. Send ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Anthropic connection
+      options:
+        - Claude Code subscription
+        - API key
+        - Environment variable
+        - Other OAuth method
     validations:
       required: true
 
@@ -37,30 +49,31 @@ body:
     id: plugin-version
     attributes:
       label: Plugin version
-      description: "Run: npm list opencode-claude-auth"
-      placeholder: "1.3.0"
+      description: "Run: npm view opencode-claude-auth version"
+      placeholder: "3.0.0"
     validations:
       required: true
 
   - type: input
     id: opencode-version
     attributes:
-      label: OpenCode version
-      placeholder: "0.1.0"
+      label: OpenCode v2 version
+      description: "Run: opencode2 --version"
+      placeholder: "opencode2 v0.0.0-beta-18381"
     validations:
-      required: false
+      required: true
 
   - type: textarea
-    id: debug-logs
+    id: logs
     attributes:
-      label: Debug logs
+      label: Redacted logs
       description: |
-        To generate debug logs:
-        1. Set `CLAUDE_AUTH_DEBUG=1` in your environment
-        2. Restart OpenCode and reproduce the issue
-        3. Paste the contents of `~/.local/share/opencode/claude-auth-debug.log` below
+        Reproduce with `CLAUDE_AUTH_DEBUG=1`, then include relevant plugin entries from
+        `~/.local/share/opencode/claude-auth-debug.log` and relevant v2 service entries
+        from `~/.local/share/opencode/log/opencode.log`.
 
-        Secrets (tokens, API keys) are automatically redacted before being written to the log file.
+        Review and redact authorization headers, prompts, file contents, and other
+        sensitive values before submitting.
       render: json
     validations:
       required: false

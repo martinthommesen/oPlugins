@@ -13,6 +13,7 @@
 ## Checklist
 
 - [ ] PR title follows [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, etc.)
-- [ ] `make all` passes locally (runs lint, build, and test)
+- [ ] Breaking changes use `!` in the PR title or include a `BREAKING CHANGE:` footer
+- [ ] `pnpm run lint`, `pnpm run build`, and `pnpm test` pass locally
 - [ ] Tests added or updated where applicable
 - [ ] README or docs updated where applicable

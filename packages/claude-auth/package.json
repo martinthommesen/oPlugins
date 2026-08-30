@@ -16,8 +16,7 @@
   },
   "files": [
     "opencode-claude-auth.js",
-    "dist",
-    "installation.md"
+    "dist"
   ],
   "type": "module",
   "main": "opencode-claude-auth.js",
@@ -51,13 +50,8 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc && cp src/anthropic-prompt.txt dist/",
-    "test": "node --test --experimental-strip-types src/**/*.test.ts scripts/**/*.test.ts",
-    "test:models": "pnpm run build && node scripts/test-models.ts",
+    "test": "node --test --experimental-strip-types src/**/*.test.ts",
     "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-headless.ts",
-    "intercept": "pnpm run build && node --experimental-strip-types scripts/intercept-claude.ts",
-    "intercept:all": "pnpm run build && node --experimental-strip-types scripts/intercept-claude.ts --all",
-    "intercept:update": "pnpm run build && node --experimental-strip-types scripts/intercept-claude.ts --all --update",
-    "validate:oauth": "pnpm run build && node --experimental-strip-types scripts/validate-oauth-refresh.ts",
     "lint": "oxlint && oxfmt --check .",
     "lint:fix": "oxlint --fix . && oxfmt --write .",
     "format": "oxfmt --write .",

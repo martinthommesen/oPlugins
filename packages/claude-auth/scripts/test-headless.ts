@@ -1,31 +1,18 @@
 /**
- * Headless end-to-end test for the credential refresh flows.
+ * Manual packed-package smoke test for OpenCode v2.
  *
- * Runs real `opencode run` invocations against the locally built plugin with
- * a sandboxed fake keychain (PATH shims for `security` and `claude`) and
- * asserts on the structured debug log the plugin writes.
+ * By default this copies one valid Claude Code account into an isolated source
+ * and verifies package loading, automatic import, account labeling, zero-cost
+ * catalog output, and one real read-tool round trip. It never refreshes the
+ * copied token because doing so would invalidate its original source.
  *
- * Scenarios:
- *   1. Happy path — fresh primary credentials, no refresh expected.
- *   2. Expired primary — OAuth refresh fails (bogus refresh token), CLI shim
- *      "refreshes" the primary entry, request succeeds.
- *   3. Bug 1 — active account is a stale *suffixed* keychain entry; the CLI
- *      shim writes fresh credentials to the primary entry only (replicating
- *      the real Claude CLI behaviour), and the plugin must fall back to the
- *      primary entry.
- *
- * Safety:
- *   - The real keychain is only ever *read* (once, to obtain a valid access
- *     token so the final API call returns 200).
- *   - The real refresh token is never placed in a stale entry, so the OAuth
- *     refresh path fails at the real endpoint with a 4xx and nothing is
- *     rotated.
- *   - User state (`claude-account-source.txt`) is backed up and restored.
- *
- * Requires: macOS, `opencode` on PATH, valid Claude Code credentials.
- * Run with: pnpm test:headless
+ * To exercise near-expiry refresh and write-back, set
+ * CLAUDE_AUTH_HEADLESS_REFRESH_CONFIG_DIR to a disposable Claude config
+ * directory. Its refresh token will rotate and the resulting credentials will
+ * remain in that directory.
  */
-import { execFileSync, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import {
   chmodSync,
   mkdirSync,
@@ -34,516 +21,267 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-import { homedir, tmpdir } from "node:os"
+import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { keychainSuffixForDir } from "../dist/keychain.js"
+import {
+  parseCredentials,
+  readAllClaudeAccounts,
+  updateCredentialBlob,
+} from "../dist/keychain.js"
 
-const PRIMARY_SERVICE = "Claude Code-credentials"
-const MODEL = "anthropic/claude-haiku-4-5"
-const SENTINEL = "HEADLESSOK"
-const PROMPT = `Reply with exactly the word: ${SENTINEL}`
-const RUN_TIMEOUT_MS = 180_000
-const STALE_EXPIRES_AT = 1_000_000_000_000 // 2001, definitively stale
+const REQUIRED_VERSION = "opencode2 v0.0.0-beta-18381"
+const CLI_PACKAGE = "@opencode-ai/cli@0.0.0-beta-18381"
+const MODEL =
+  process.env.CLAUDE_AUTH_HEADLESS_MODEL ?? "anthropic/claude-haiku-4-5"
+const SENTINEL = `HEADLESS_${randomUUID().replaceAll("-", "")}`
+const root = mkdtempSync(join(tmpdir(), "opencode-claude-auth-v2-"))
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const refreshConfigDir = process.env.CLAUDE_AUTH_HEADLESS_REFRESH_CONFIG_DIR
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const accountSourcePath = join(
-  homedir(),
-  ".local",
-  "share",
-  "opencode",
-  "claude-account-source.txt",
-)
-
-interface LogEvent {
-  event: string
-  [key: string]: unknown
+function fail(message: string, result?: ReturnType<typeof spawnSync>): never {
+  if (result?.stdout) process.stderr.write(String(result.stdout))
+  if (result?.stderr) process.stderr.write(String(result.stderr))
+  throw new Error(message)
 }
 
-interface ExpectedEvent {
-  event: string
-  fields?: Record<string, unknown>
-}
-
-function fail(msg: string): never {
-  console.error(`\n✗ ${msg}`)
-  process.exit(1)
-}
-
-// --- preflight -------------------------------------------------------------
-
-function preflight(): { realBlob: string } {
-  if (process.platform !== "darwin") {
-    console.log(
-      "test:headless requires macOS (keychain simulation) — skipping.",
-    )
-    process.exit(0)
-  }
-  const version = spawnSync("opencode", ["--version"], { encoding: "utf-8" })
-  if (version.status !== 0) {
-    fail("`opencode` not found on PATH — install it to run this test.")
-  }
-  let realBlob: string
-  try {
-    realBlob = execFileSync(
-      "/usr/bin/security",
-      ["find-generic-password", "-s", PRIMARY_SERVICE, "-w"],
-      { encoding: "utf-8", timeout: 5000 },
-    ).trim()
-  } catch {
-    fail(
-      `No readable "${PRIMARY_SERVICE}" keychain entry. Log in with the Claude CLI first.`,
-    )
-  }
-  const expiresAt = blobExpiresAt(realBlob)
-  if (!expiresAt || expiresAt < Date.now() + 5 * 60_000) {
-    fail(
-      "Real Claude credentials are missing an expiry or expire within 5 minutes. Run `claude` to refresh them, then retry.",
-    )
-  }
-  return { realBlob }
-}
-
-function blobExpiresAt(raw: string): number | null {
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const target = (parsed.claudeAiOauth ?? parsed) as Record<string, unknown>
-    return typeof target.expiresAt === "number" ? target.expiresAt : null
-  } catch {
-    return null
-  }
-}
-
-// --- sandbox ---------------------------------------------------------------
-
-interface Sandbox {
-  root: string
-  binDir: string
-  stateDir: string
-  workDir: string
-  xdgDir: string
-  fakeConfigDir: string
-  suffix: string
-  suffixedService: string
-}
-
-function createSandbox(): Sandbox {
-  const root = mkdtempSync(join(tmpdir(), "claude-auth-headless-"))
-  const binDir = join(root, "bin")
-  const stateDir = join(root, "state")
-  const workDir = join(root, "work")
-  const xdgDir = join(root, "xdg")
-  mkdirSync(binDir, { recursive: true })
-  mkdirSync(stateDir, { recursive: true })
-  mkdirSync(workDir, { recursive: true })
-  mkdirSync(join(xdgDir, "opencode"), { recursive: true })
-
-  // Isolated opencode config: load only the locally built plugin.
-  writeFileSync(
-    join(xdgDir, "opencode", "opencode.json"),
-    JSON.stringify(
-      { $schema: "https://opencode.ai/config.json", plugin: [repoRoot] },
-      null,
-      2,
-    ),
-  )
-
-  // The suffix-to-dir scan only walks dot-directories directly under $HOME,
-  // so the fake config dir must live there. Removed in cleanup.
-  const fakeConfigDir = join(homedir(), `.claude-simtest-${process.pid}`)
-  mkdirSync(fakeConfigDir, { recursive: true })
-  writeFileSync(
-    join(fakeConfigDir, ".claude.json"),
-    JSON.stringify({ oauthAccount: { emailAddress: "sim@headless.test" } }),
-  )
-  const suffix = keychainSuffixForDir(fakeConfigDir)
-  const suffixedService = `${PRIMARY_SERVICE}-${suffix}`
-
-  // Both shims append to a single shim.log so the interleaved order of
-  // keychain reads and CLI refresh invocations is recorded reliably. The
-  // plugin's own debug log cannot serve this purpose: the plugin initialises
-  // more than once per `opencode run` and each init truncates that log, so
-  // early refresh events are racily lost.
-  const securityShim = `#!/bin/sh
-STATE_DIR="${stateDir}"
-printf 'security %s\\n' "$*" >> "$STATE_DIR/shim.log"
-if [ "$1" = "dump-keychain" ]; then
-  cat "$STATE_DIR/dump.txt" 2>/dev/null || true
-  exit 0
-fi
-if [ "$1" = "find-generic-password" ]; then
-  svc=""
-  prev=""
-  for a in "$@"; do
-    [ "$prev" = "-s" ] && svc="$a"
-    prev="$a"
-  done
-  case "$svc" in
-    "Claude Code-credentials"*)
-      f="$STATE_DIR/$svc.json"
-      if [ -f "$f" ]; then
-        cat "$f"
-        exit 0
-      fi
-      exit 44
-      ;;
-  esac
-fi
-exec /usr/bin/security "$@"
-`
-  // Replicates the real Claude CLI bug: a refresh triggered for a suffixed
-  // account writes the new token to the PRIMARY keychain entry.
-  const claudeShim = `#!/bin/sh
-STATE_DIR="${stateDir}"
-printf 'claude %s CLAUDE_CONFIG_DIR=%s\\n' "$*" "\${CLAUDE_CONFIG_DIR:-}" >> "$STATE_DIR/shim.log"
-cp "$STATE_DIR/fresh-primary.json" "$STATE_DIR/Claude Code-credentials.json"
-printf 'ok\\n'
-exit 0
-`
-  writeFileSync(join(binDir, "security"), securityShim)
-  writeFileSync(join(binDir, "claude"), claudeShim)
-  chmodSync(join(binDir, "security"), 0o755)
-  chmodSync(join(binDir, "claude"), 0o755)
-
-  return {
-    root,
-    binDir,
-    stateDir,
-    workDir,
-    xdgDir,
-    fakeConfigDir,
-    suffix,
-    suffixedService,
-  }
-}
-
-function staleBlob(): string {
-  return JSON.stringify({
-    claudeAiOauth: {
-      accessToken: "sim-stale-access-token",
-      refreshToken: "sim-bogus-refresh-token",
-      expiresAt: STALE_EXPIRES_AT,
-      scopes: ["user:inference"],
-      subscriptionType: "pro",
-    },
+function run(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  cwd = repo,
+): string {
+  const result = spawnSync(command, args, {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: 180_000,
   })
+  if (result.status !== 0) {
+    fail(`${command} ${args.join(" ")} exited ${result.status}`, result)
+  }
+  return result.stdout ?? ""
 }
 
-function writeDump(sandbox: Sandbox, services: string[]): void {
-  const lines = services.map((s) => `    "svce"<blob>="${s}"`).join("\n")
-  writeFileSync(
-    join(sandbox.stateDir, "dump.txt"),
-    `keychain: "login"\n${lines}\n`,
+function writeFileCredential(configDir: string, raw: string): void {
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(join(configDir, ".credentials.json"), raw, { mode: 0o600 })
+}
+
+function prepareCredentialSource(): {
+  configDir: string
+  initialAccess: string
+  refreshExpected: boolean
+} {
+  if (refreshConfigDir) {
+    const path = join(refreshConfigDir, ".credentials.json")
+    const raw = readFileSync(path, "utf8")
+    const credentials = parseCredentials(raw)
+    if (!credentials) fail(`Invalid disposable credentials at ${path}`)
+    const updated = updateCredentialBlob(raw, {
+      ...credentials,
+      expiresAt: Date.now() + 1_000,
+    })
+    if (!updated) fail(`Could not update disposable credentials at ${path}`)
+    writeFileCredential(refreshConfigDir, updated)
+    return {
+      configDir: refreshConfigDir,
+      initialAccess: credentials.accessToken,
+      refreshExpected: true,
+    }
+  }
+
+  const source = readAllClaudeAccounts()[0]
+  if (!source) {
+    fail(
+      "No Claude Code credentials found. Run `claude` before this smoke test.",
+    )
+  }
+  if (source.credentials.expiresAt < Date.now() + 5 * 60_000) {
+    fail("Claude credentials expire within five minutes. Run `claude` first.")
+  }
+  const configDir = join(root, "claude")
+  writeFileCredential(
+    configDir,
+    JSON.stringify({ claudeAiOauth: source.credentials }),
   )
-}
-
-function resetState(sandbox: Sandbox): void {
-  rmSync(sandbox.stateDir, { recursive: true, force: true })
-  mkdirSync(sandbox.stateDir, { recursive: true })
-}
-
-// --- account source backup/restore ------------------------------------------
-
-function backupAccountSource(): string | null {
-  try {
-    return readFileSync(accountSourcePath, "utf-8")
-  } catch {
-    return null
+  return {
+    configDir,
+    initialAccess: source.credentials.accessToken,
+    refreshExpected: false,
   }
 }
 
-function setAccountSource(source: string | null): void {
-  if (source === null) {
-    rmSync(accountSourcePath, { force: true })
+function collectAnthropicModels(
+  value: unknown,
+  out: Array<{ cost: unknown[] }>,
+): void {
+  if (!value || typeof value !== "object") return
+  if (Array.isArray(value)) {
+    for (const item of value) collectAnthropicModels(item, out)
     return
   }
-  mkdirSync(dirname(accountSourcePath), { recursive: true })
-  writeFileSync(accountSourcePath, source, "utf-8")
-}
-
-// --- runner & assertions -----------------------------------------------------
-
-interface RunResult {
-  stdout: string
-  stderr: string
-  status: number | null
-  events: LogEvent[]
-  logPath: string
-}
-
-function runOpencode(sandbox: Sandbox, scenarioName: string): RunResult {
-  const logPath = join(sandbox.root, `${scenarioName}.log`)
-  const env = { ...process.env }
-  delete env.CLAUDE_CONFIG_DIR
-  env.PATH = `${sandbox.binDir}:${env.PATH}`
-  env.CLAUDE_AUTH_DEBUG = logPath
-  env.XDG_CONFIG_HOME = sandbox.xdgDir
-
-  const result = spawnSync("opencode", ["run", "--model", MODEL, PROMPT], {
-    cwd: sandbox.workDir,
-    env,
-    encoding: "utf-8",
-    timeout: RUN_TIMEOUT_MS,
-  })
-
-  let events: LogEvent[] = []
-  try {
-    events = readFileSync(logPath, "utf-8")
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as LogEvent)
-  } catch {
-    // missing log handled by assertions
+  const record = value as Record<string, unknown>
+  if (record.providerID === "anthropic" && Array.isArray(record.cost)) {
+    out.push(record as { cost: unknown[] })
   }
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status,
-    events,
-    logPath,
-  }
+  for (const item of Object.values(record)) collectAnthropicModels(item, out)
 }
-
-function matchesFields(
-  ev: LogEvent,
-  fields?: Record<string, unknown>,
-): boolean {
-  if (!fields) return true
-  return Object.entries(fields).every(([k, v]) => ev[k] === v)
-}
-
-function assertEventSubsequence(
-  run: RunResult,
-  expected: ExpectedEvent[],
-): string | null {
-  let i = 0
-  for (const ev of run.events) {
-    const want = expected[i]
-    if (!want) break
-    if (ev.event === want.event && matchesFields(ev, want.fields)) i++
-  }
-  if (i >= expected.length) return null
-  const want = expected[i]
-  return `debug log missing event #${i}: ${want.event}${want.fields ? " " + JSON.stringify(want.fields) : ""}`
-}
-
-function readShimLog(sandbox: Sandbox): string[] {
-  try {
-    return readFileSync(join(sandbox.stateDir, "shim.log"), "utf-8")
-      .split("\n")
-      .filter((l) => l.length > 0)
-  } catch {
-    return []
-  }
-}
-
-/** Ordered subsequence match over shim.log lines using substring predicates. */
-function assertShimSubsequence(
-  lines: string[],
-  expected: string[],
-): string | null {
-  let i = 0
-  for (const line of lines) {
-    const want = expected[i]
-    if (!want) break
-    if (line.includes(want)) i++
-  }
-  if (i >= expected.length) return null
-  return `shim log missing step #${i}: ${JSON.stringify(expected[i])}`
-}
-
-const READ_PRIMARY = `find-generic-password -s ${PRIMARY_SERVICE} -w`
-
-interface Scenario {
-  name: string
-  setup: (sandbox: Sandbox, realBlob: string) => void
-  /** Ordered substrings expected in shim.log — append-only ground truth. */
-  shimExpected: (sandbox: Sandbox) => string[]
-  /** Events asserted on the plugin debug log (late events only; see shims). */
-  expected: (sandbox: Sandbox) => ExpectedEvent[]
-  extraChecks?: (
-    sandbox: Sandbox,
-    run: RunResult,
-    shimLog: string[],
-  ) => string | null
-}
-
-const scenarios: Scenario[] = [
-  {
-    name: "happy-path",
-    setup: (sandbox, realBlob) => {
-      writeDump(sandbox, [PRIMARY_SERVICE])
-      writeFileSync(join(sandbox.stateDir, `${PRIMARY_SERVICE}.json`), realBlob)
-      setAccountSource(null)
-    },
-    shimExpected: () => [READ_PRIMARY],
-    expected: () => [
-      { event: "plugin_init" },
-      { event: "fetch_response", fields: { status: 200 } },
-    ],
-    extraChecks: (_sandbox, _run, shimLog) => {
-      if (shimLog.some((l) => l.startsWith("claude "))) {
-        return "CLI refresh was invoked despite fresh credentials"
-      }
-      return null
-    },
-  },
-  {
-    // The CLI shim is only ever invoked by refreshViaCli, which itself only
-    // runs after the OAuth refresh attempt fails (bogus refresh token), so
-    // its presence in shim.log proves the full expired → refresh flow.
-    name: "expired-cli-refresh",
-    setup: (sandbox, realBlob) => {
-      writeDump(sandbox, [PRIMARY_SERVICE])
-      writeFileSync(
-        join(sandbox.stateDir, `${PRIMARY_SERVICE}.json`),
-        staleBlob(),
-      )
-      writeFileSync(join(sandbox.stateDir, "fresh-primary.json"), realBlob)
-      setAccountSource(null)
-    },
-    shimExpected: () => [
-      READ_PRIMARY, // initial read: stale
-      "claude -p", // CLI refresh triggered
-      READ_PRIMARY, // post-refresh re-read: fresh
-    ],
-    expected: () => [
-      { event: "plugin_init" },
-      { event: "fetch_response", fields: { status: 200 } },
-    ],
-  },
-  {
-    name: "bug1-suffixed-fallback",
-    setup: (sandbox, realBlob) => {
-      writeDump(sandbox, [PRIMARY_SERVICE, sandbox.suffixedService])
-      writeFileSync(
-        join(sandbox.stateDir, `${PRIMARY_SERVICE}.json`),
-        staleBlob(),
-      )
-      writeFileSync(
-        join(sandbox.stateDir, `${sandbox.suffixedService}.json`),
-        staleBlob(),
-      )
-      writeFileSync(join(sandbox.stateDir, "fresh-primary.json"), realBlob)
-      setAccountSource(sandbox.suffixedService)
-    },
-    shimExpected: (sandbox) => [
-      `find-generic-password -s ${sandbox.suffixedService} -w`, // initial read: stale
-      `claude -p . --model haiku CLAUDE_CONFIG_DIR=${sandbox.fakeConfigDir}`, // CLI refresh, correct config dir threaded through
-      `find-generic-password -s ${sandbox.suffixedService} -w`, // re-read suffixed: still stale (CLI wrote to primary)
-      READ_PRIMARY, // Bug 1 fix: fall back to the primary entry
-    ],
-    expected: () => [
-      { event: "plugin_init" },
-      { event: "fetch_response", fields: { status: 200 } },
-    ],
-  },
-]
-
-// --- cleanup -----------------------------------------------------------------
-
-function cleanup(
-  sandbox: Sandbox | null,
-  savedAccountSource: string | null,
-): void {
-  setAccountSource(savedAccountSource)
-  if (!sandbox) return
-  rmSync(sandbox.fakeConfigDir, { recursive: true, force: true })
-  if (process.env.HEADLESS_KEEP) {
-    console.log(`HEADLESS_KEEP set — sandbox preserved at ${sandbox.root}`)
-  } else {
-    rmSync(sandbox.root, { recursive: true, force: true })
-  }
-  // The tested code paths never write to the real keychain, but if a future
-  // regression adds a writeback, it would land on the fake suffixed service
-  // name. Detect and remove it.
-  const probe = spawnSync(
-    "/usr/bin/security",
-    ["find-generic-password", "-s", sandbox.suffixedService],
-    { encoding: "utf-8" },
-  )
-  if (probe.status === 0) {
-    console.warn(
-      `warning: junk keychain entry "${sandbox.suffixedService}" was created during the run — deleting it.`,
-    )
-    spawnSync("/usr/bin/security", [
-      "delete-generic-password",
-      "-s",
-      sandbox.suffixedService,
-    ])
-  }
-}
-
-// --- main ----------------------------------------------------------------------
 
 function main(): void {
-  const { realBlob } = preflight()
-  const savedAccountSource = backupAccountSource()
-  let sandbox: Sandbox | null = null
-  const failures: string[] = []
-
-  try {
-    sandbox = createSandbox()
-    for (const scenario of scenarios) {
-      process.stdout.write(`▶ ${scenario.name} ... `)
-      resetState(sandbox)
-      scenario.setup(sandbox, realBlob)
-      const run = runOpencode(sandbox, scenario.name)
-
-      const shimLog = readShimLog(sandbox)
-
-      // Preserve the shim log for post-mortem before the next scenario
-      // resets the state dir.
-      writeFileSync(
-        join(sandbox.root, `${scenario.name}-shim.log`),
-        shimLog.length > 0 ? shimLog.join("\n") + "\n" : "",
-      )
-
-      const problems: string[] = []
-      const shimError = assertShimSubsequence(
-        shimLog,
-        scenario.shimExpected(sandbox),
-      )
-      if (shimError) problems.push(shimError)
-      const seqError = assertEventSubsequence(run, scenario.expected(sandbox))
-      if (seqError) problems.push(seqError)
-      const extraError = scenario.extraChecks?.(sandbox, run, shimLog)
-      if (extraError) problems.push(extraError)
-      if (!run.stdout.includes(SENTINEL)) {
-        problems.push(`stdout did not contain ${SENTINEL}`)
-      }
-
-      if (problems.length === 0) {
-        console.log("ok")
-      } else {
-        console.log("FAIL")
-        for (const p of problems) console.log(`    ${p}`)
-        console.log(`    exit status: ${run.status}`)
-        console.log(
-          `    stdout tail: ${JSON.stringify(run.stdout.slice(-300))}`,
-        )
-        console.log(
-          `    stderr tail: ${JSON.stringify(run.stderr.slice(-300))}`,
-        )
-        console.log(
-          `    debug events: ${run.events.map((e) => e.event).join(" → ")}`,
-        )
-        console.log(
-          `    shim log:\n${shimLog.map((l) => `      ${l}`).join("\n")}`,
-        )
-        failures.push(scenario.name)
-      }
-    }
-  } finally {
-    cleanup(sandbox, savedAccountSource)
+  const cliDir = join(root, "cli")
+  mkdirSync(cliDir, { recursive: true })
+  run("npm", ["install", "--prefix", cliDir, CLI_PACKAGE], process.env)
+  const opencode = join(cliDir, "node_modules", ".bin", "opencode2")
+  const version = run(opencode, ["--version"], process.env).trim()
+  if (version !== REQUIRED_VERSION) {
+    fail(`Expected ${REQUIRED_VERSION}, found ${version}`)
   }
 
-  if (failures.length > 0) {
-    fail(
-      `${failures.length}/${scenarios.length} scenario(s) failed: ${failures.join(", ")}`,
-    )
+  const source = prepareCredentialSource()
+  const packageDir = join(root, "package")
+  const installDir = join(root, "install")
+  const configHome = join(root, "config")
+  const dataHome = join(root, "data")
+  const cacheHome = join(root, "cache")
+  const workDir = join(root, "work")
+  const binDir = join(root, "bin")
+  for (const dir of [
+    packageDir,
+    installDir,
+    configHome,
+    dataHome,
+    cacheHome,
+    workDir,
+    binDir,
+  ]) {
+    mkdirSync(dir, { recursive: true })
   }
-  console.log(`\n✓ all ${scenarios.length} scenarios passed`)
+
+  const packed = JSON.parse(
+    run(
+      "npm",
+      ["pack", "--json", "--pack-destination", packageDir],
+      process.env,
+    ),
+  ) as Array<{ filename: string }>
+  const tarball = join(packageDir, packed[0].filename)
+  run(
+    "npm",
+    ["install", "--ignore-scripts", "--prefix", installDir, tarball],
+    process.env,
+  )
+  const installedPlugin = join(
+    installDir,
+    "node_modules",
+    "opencode-claude-auth",
+  )
+
+  mkdirSync(join(configHome, "opencode"), { recursive: true })
+  writeFileSync(
+    join(configHome, "opencode", "opencode.json"),
+    JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      autoupdate: false,
+      plugins: [join(installedPlugin, "dist", "index.js")],
+    }),
+  )
+  writeFileSync(join(workDir, "smoke.txt"), SENTINEL)
+
+  const security = join(binDir, "security")
+  writeFileSync(
+    security,
+    `#!/bin/sh
+if [ "$1" = "dump-keychain" ]; then exit 0; fi
+exit 44
+`,
+  )
+  chmodSync(security, 0o755)
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    XDG_CONFIG_HOME: configHome,
+    XDG_DATA_HOME: dataHome,
+    XDG_CACHE_HOME: cacheHome,
+    CLAUDE_CONFIG_DIR: source.configDir,
+    CLAUDE_AUTH_DEBUG: join(root, "plugin.log"),
+    OPENCODE_CLAUDE_AUTH_SECURITY_BIN: security,
+  }
+
+  const login = run(
+    opencode,
+    ["auth", "login", "anthropic", "--method", "claude-code", "--standalone"],
+    env,
+    workDir,
+  )
+  if (/https?:\/\//.test(login))
+    fail("Auto import unexpectedly displayed a URL")
+
+  const auth = run(opencode, ["auth", "list", "--standalone"], env, workDir)
+  if (!/Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/m.test(auth)) {
+    fail("Imported Claude account label was not shown", {
+      stdout: auth,
+    } as ReturnType<typeof spawnSync>)
+  }
+
+  const modelsRaw = run(
+    opencode,
+    ["api", "--standalone", "get", "/api/model"],
+    env,
+    workDir,
+  )
+  const models: Array<{ cost: unknown[] }> = []
+  collectAnthropicModels(JSON.parse(modelsRaw), models)
+  if (models.length === 0 || models.some((model) => model.cost.length !== 0)) {
+    fail("Anthropic subscription models did not have zeroed costs")
+  }
+
+  const output = run(
+    opencode,
+    [
+      "run",
+      "--standalone",
+      "--auto",
+      "--format",
+      "json",
+      "--model",
+      MODEL,
+      `Use the read tool to read ${join(workDir, "smoke.txt")}, then reply with exactly the file contents.`,
+    ],
+    env,
+    workDir,
+  )
+  if (
+    !output.includes(SENTINEL) ||
+    !output.includes('"type":"tool_use"') ||
+    !output.includes('"tool":"mcp_Read"')
+  ) {
+    process.stderr.write(output)
+    fail("Tool round trip did not return the sentinel")
+  }
+
+  const current = parseCredentials(
+    readFileSync(join(source.configDir, ".credentials.json"), "utf8"),
+  )
+  if (
+    source.refreshExpected &&
+    (!current ||
+      current.accessToken === source.initialAccess ||
+      current.expiresAt < Date.now() + 5 * 60_000)
+  ) {
+    fail("Near-expiry refresh did not rotate and write back credentials")
+  }
+
+  console.log(`Packed OpenCode v2 smoke test passed with ${MODEL}`)
 }
 
-main()
+try {
+  main()
+} finally {
+  if (process.env.HEADLESS_KEEP) {
+    console.log(`HEADLESS_KEEP set; sandbox preserved at ${root}`)
+  } else {
+    rmSync(root, { recursive: true, force: true })
+  }
+}

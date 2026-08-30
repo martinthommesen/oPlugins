@@ -1,14 +1,16 @@
-import { execFileSync, execSync } from "node:child_process"
-import { createHash } from "node:crypto"
+import { execFileSync, spawnSync } from "node:child_process"
+import { createHash, randomUUID } from "node:crypto"
 import {
   chmodSync,
   existsSync,
+  renameSync,
   readdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { log } from "./logger.ts"
 
 export interface ClaudeCredentials {
@@ -27,6 +29,10 @@ export interface ClaudeAccount {
 
 export const PRIMARY_SERVICE = "Claude Code-credentials"
 
+function securityBinary(): string {
+  return process.env.OPENCODE_CLAUDE_AUTH_SECURITY_BIN ?? "/usr/bin/security"
+}
+
 export function parseCredentials(raw: string): ClaudeCredentials | null {
   let parsed: unknown
   try {
@@ -35,7 +41,11 @@ export function parseCredentials(raw: string): ClaudeCredentials | null {
     return null
   }
 
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return null
+
   const data = (parsed as { claudeAiOauth?: unknown }).claudeAiOauth ?? parsed
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null
   const creds = data as {
     accessToken?: unknown
     refreshToken?: unknown
@@ -50,8 +60,12 @@ export function parseCredentials(raw: string): ClaudeCredentials | null {
 
   if (
     typeof creds.accessToken !== "string" ||
+    creds.accessToken.trim().length === 0 ||
     typeof creds.refreshToken !== "string" ||
-    typeof creds.expiresAt !== "number"
+    creds.refreshToken.trim().length === 0 ||
+    typeof creds.expiresAt !== "number" ||
+    !Number.isFinite(creds.expiresAt) ||
+    creds.expiresAt <= 0
   ) {
     log("credentials_parsed", {
       hasAccessToken: typeof creds.accessToken === "string",
@@ -82,12 +96,10 @@ export function parseCredentials(raw: string): ClaudeCredentials | null {
 
 function readKeychainService(serviceName: string): string | null {
   try {
-    const result = execSync(
-      `security find-generic-password -s "${serviceName}" -w`,
-      {
-        timeout: 2000,
-        encoding: "utf-8",
-      },
+    const result = execFileSync(
+      securityBinary(),
+      ["find-generic-password", "-s", serviceName, "-w"],
+      { timeout: 2000, encoding: "utf-8" },
     ).trim()
     log("keychain_read", { service: serviceName, success: true })
     return result
@@ -144,7 +156,7 @@ function readKeychainService(serviceName: string): string | null {
 
 function listClaudeKeychainServices(): string[] {
   try {
-    const dump = execSync("security dump-keychain", {
+    const dump = execFileSync(securityBinary(), ["dump-keychain"], {
       timeout: 5000,
       maxBuffer: 1024 * 1024 * 10, // 10 MB
       encoding: "utf-8",
@@ -317,8 +329,9 @@ export function buildAccountLabels(
 
 export function readAllClaudeAccounts(): ClaudeAccount[] {
   if (process.platform !== "darwin") {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
+    const configDir = resolve(
+      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+    )
     const creds = readCredentialsFile(configDir)
     if (!creds) return []
     const email = readEmailFromConfigDir(configDir)
@@ -347,8 +360,9 @@ export function readAllClaudeAccounts(): ClaudeAccount[] {
   }
 
   if (keychainAccounts.length === 0) {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
+    const configDir = resolve(
+      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+    )
     const creds = readCredentialsFile(configDir)
     if (!creds) return []
     const email = readEmailFromConfigDir(configDir)
@@ -366,7 +380,11 @@ export function readAllClaudeAccounts(): ClaudeAccount[] {
 
   const resolved = keychainAccounts.map((a) => {
     const configDir =
-      a.suffix === null ? join(homedir(), ".claude") : suffixToDir.get(a.suffix)
+      a.source === PRIMARY_SERVICE
+        ? join(homedir(), ".claude")
+        : a.suffix
+          ? suffixToDir.get(a.suffix)
+          : undefined
     const email = configDir ? readEmailFromConfigDir(configDir) : null
     log("account_config_dir", {
       source: a.source,
@@ -397,6 +415,13 @@ export function readAllClaudeAccounts(): ClaudeAccount[] {
   })
 }
 
+export function credentialSourceID(source: string, configDir?: string): string {
+  if (source !== "file") return `keychain:${source}`
+  const dir =
+    configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
+  return `file:${resolve(dir)}`
+}
+
 export function updateCredentialBlob(
   existingJson: string,
   newCreds: { accessToken: string; refreshToken: string; expiresAt: number },
@@ -421,7 +446,7 @@ export function updateCredentialBlob(
 function getKeychainAccountName(serviceName: string): string | null {
   try {
     const output = execFileSync(
-      "/usr/bin/security",
+      securityBinary(),
       ["find-generic-password", "-s", serviceName],
       { timeout: 2000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
     )
@@ -444,9 +469,11 @@ function getKeychainAccountName(serviceName: string): string | null {
  * can be correlated across log lines (and against another account's) without
  * putting token material in the log.
  */
-function tokenFingerprint(token: string): string {
-  return createHash("sha256").update(token).digest("hex").slice(0, 8)
+export function tokenFingerprint(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 32)
 }
+
+export type WriteBackResult = "written" | "conflict" | "failed"
 
 /**
  * Whether a stored credential blob still carries the access token we expect.
@@ -479,7 +506,7 @@ export function writeBackCredentials(
   creds: ClaudeCredentials,
   configDir?: string,
   expectedPriorAccessToken?: string,
-): boolean {
+): WriteBackResult {
   const newCreds = {
     accessToken: creds.accessToken,
     refreshToken: creds.refreshToken,
@@ -487,6 +514,7 @@ export function writeBackCredentials(
   }
 
   if (source === "file") {
+    let tempPath: string | undefined
     try {
       const dir =
         configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")
@@ -510,26 +538,59 @@ export function writeBackCredentials(
             stored: tokenFingerprint(stored.accessToken),
           })
         }
-        return false
+        return stored === null ? "failed" : "conflict"
       }
       const updated = updateCredentialBlob(raw, newCreds)
-      if (!updated) return false
-      writeFileSync(credPath, updated, { encoding: "utf-8", mode: 0o600 })
+      if (!updated) return "failed"
+      tempPath = join(
+        dir,
+        `.credentials.json.${process.pid}.${randomUUID()}.tmp`,
+      )
+      writeFileSync(tempPath, updated, {
+        encoding: "utf-8",
+        mode: 0o600,
+        flag: "wx",
+      })
+
+      // Preserve unrelated concurrent edits and source rotations. The final
+      // rename is atomic, so readers never observe a partially written blob.
+      const latest = readFileSync(credPath, "utf-8")
+      if (latest !== raw) {
+        const stored = parseCredentials(latest)
+        log(
+          stored ? "writeback_skipped_stale" : "writeback_skipped_unparseable",
+          {
+            source,
+            configDir: dir,
+          },
+        )
+        return stored ? "conflict" : "failed"
+      }
+      renameSync(tempPath, credPath)
+      tempPath = undefined
       if (process.platform !== "win32") {
         chmodSync(credPath, 0o600)
       }
       log("writeback_success", { source, configDir: dir })
-      return true
+      return "written"
     } catch {
       log("writeback_failed", { source, configDir: configDir ?? null })
-      return false
+      return "failed"
+    } finally {
+      if (tempPath) {
+        try {
+          unlinkSync(tempPath)
+        } catch {
+          // The temporary file may already have been renamed.
+        }
+      }
     }
   }
 
   if (process.platform === "darwin") {
     try {
       const raw = readKeychainService(source)
-      if (!raw) return false
+      if (!raw) return "failed"
       if (
         expectedPriorAccessToken !== undefined &&
         !credentialBlobMatches(raw, expectedPriorAccessToken)
@@ -545,34 +606,43 @@ export function writeBackCredentials(
             stored: tokenFingerprint(stored.accessToken),
           })
         }
-        return false
+        return stored === null ? "failed" : "conflict"
       }
       const updated = updateCredentialBlob(raw, newCreds)
-      if (!updated) return false
+      if (!updated) return "failed"
       const accountName = getKeychainAccountName(source) ?? source
-      execFileSync(
-        "/usr/bin/security",
-        [
-          "add-generic-password",
-          "-s",
-          source,
-          "-a",
-          accountName,
-          "-w",
-          updated,
-          "-U",
-        ],
-        { timeout: 2000, stdio: "ignore" },
+      const latest = readKeychainService(source)
+      if (latest === null) return "failed"
+      if (latest !== raw) {
+        const stored = parseCredentials(latest)
+        log(
+          stored ? "writeback_skipped_stale" : "writeback_skipped_unparseable",
+          { source },
+        )
+        return stored ? "conflict" : "failed"
+      }
+      const result = spawnSync(
+        securityBinary(),
+        ["add-generic-password", "-s", source, "-a", accountName, "-U", "-w"],
+        {
+          timeout: 2000,
+          input: `${updated}\n`,
+          encoding: "utf8",
+          stdio: ["pipe", "ignore", "ignore"],
+        },
       )
+      if (result.error || result.status !== 0) {
+        throw result.error ?? new Error(`security exited ${result.status}`)
+      }
       log("writeback_success", { source, accountName })
-      return true
+      return "written"
     } catch {
       log("writeback_failed", { source })
-      return false
+      return "failed"
     }
   }
 
-  return false
+  return "failed"
 }
 
 export function refreshAccount(

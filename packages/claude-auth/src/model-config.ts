@@ -1,13 +1,11 @@
 export interface ModelOverride {
   exclude?: string[]
   add?: string[]
-  disableEffort?: boolean
 }
 
 export interface ModelConfig {
   ccVersion: string
   baseBetas: string[]
-  longContextBetas: string[]
   modelOverrides: Record<string, ModelOverride>
 }
 
@@ -23,22 +21,17 @@ export const config: ModelConfig = {
     "thinking-token-count-2026-05-13",
     "extended-cache-ttl-2025-04-11",
   ],
-  longContextBetas: [
-    "context-1m-2025-08-07",
-    "interleaved-thinking-2025-05-14",
-  ],
   // NOTE: getModelOverride is first-match-wins. The "sonnet" key must stay
   // ahead of "4-6"/"4-7": it shields claude-sonnet-4-6 from the "4-6"
   // effort add-override, and its exclude strips effort if a user supplies
   // it via ANTHROPIC_BETA_FLAGS. Do not remove it as inert — the split is
-  // pinned by the "effort beta" test in betas.test.ts.
+  // pinned by the model-specific effort test in model-config.test.ts.
   modelOverrides: {
     sonnet: {
       exclude: ["effort-2025-11-24"],
     },
     haiku: {
       exclude: ["effort-2025-11-24"],
-      disableEffort: true,
     },
     "4-6": {
       add: ["effort-2025-11-24"],
@@ -63,4 +56,23 @@ export function getModelOverride(modelId: string): ModelOverride | null {
     if (lower.includes(pattern)) return override
   }
   return null
+}
+
+export function getModelBetas(
+  modelId: string,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  let betas = (env.ANTHROPIC_BETA_FLAGS ?? config.baseBetas.join(","))
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  const override = getModelOverride(modelId)
+  if (override?.exclude) {
+    betas = betas.filter((beta) => !override.exclude!.includes(beta))
+  }
+  for (const beta of override?.add ?? []) {
+    if (!betas.includes(beta)) betas.push(beta)
+  }
+  return [...new Set(betas)]
 }

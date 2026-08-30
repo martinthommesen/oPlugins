@@ -52,6 +52,32 @@ describe("refresh-lock", () => {
     })
     assert.ok(takeover, "a stale lock is taken over")
     takeover!.release()
+    held!.release()
+  })
+
+  it("does not let a stale holder release its successor's lock", () => {
+    const started = Date.now()
+    const first = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 1_000,
+      now: () => started,
+    })
+    assert.ok(first)
+    const second = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 10_000,
+      now: () => started + 2_000,
+    })
+    assert.ok(second)
+    assert.equal(first.extend(30_000), false)
+    first.release()
+    const third = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 10_000,
+      now: () => started + 2_000,
+    })
+    assert.equal(third, null)
+    second.release()
   })
 
   it("does not take over a lock that is still within its TTL", () => {
@@ -67,6 +93,73 @@ describe("refresh-lock", () => {
     held!.release()
   })
 
+  it("extends the lease for a refresh longer than the base TTL", () => {
+    const started = Date.now()
+    const held = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 1_000,
+      now: () => started,
+    })
+    assert.ok(held)
+    held.extend(30_000)
+    const denied = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 1_000,
+      now: () => started + 5_000,
+    })
+    assert.equal(denied, null)
+    held.release()
+  })
+
+  it("does not renew an owner after its lease expires", () => {
+    let current = Date.now()
+    const held = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 1_000,
+      now: () => current,
+    })
+    assert.ok(held)
+    current += 2_000
+    assert.equal(held.extend(30_000), false)
+    held.release()
+  })
+
+  it("treats a temporarily unreadable fresh claim as live", () => {
+    const held = acquireRefreshLock(SRC, { dir, ttlMs: 60_000 })
+    assert.ok(held)
+    const [claim] = readdirSync(dir)
+    writeFileSync(join(dir, claim), "")
+    assert.equal(acquireRefreshLock(SRC, { dir, ttlMs: 60_000 }), null)
+    held.release()
+  })
+
+  it("preserves a deferred cooldown claim after release", () => {
+    const started = Date.now()
+    const held = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 1_000,
+      now: () => started,
+    })
+    assert.ok(held)
+    held.defer(30_000)
+    held.release()
+    assert.equal(
+      acquireRefreshLock(SRC, {
+        dir,
+        ttlMs: 1_000,
+        now: () => started + 5_000,
+      }),
+      null,
+    )
+    const later = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 1_000,
+      now: () => started + 31_000,
+    })
+    assert.ok(later)
+    later.release()
+  })
+
   it("keeps locks for different sources independent", () => {
     const a = acquireRefreshLock("source-a", { dir })
     const b = acquireRefreshLock("source-b", { dir })
@@ -76,16 +169,22 @@ describe("refresh-lock", () => {
     b!.release()
   })
 
-  it("removes the lock file on release", () => {
+  it("keeps an expired ticket until a successor commits", () => {
     const lock = acquireRefreshLock(SRC, { dir })
     assert.ok(lock)
     assert.equal(readdirSync(dir).length, 1, "a lock file exists while held")
     lock!.release()
-    assert.equal(
-      readdirSync(dir).filter((f) => f.endsWith(".lock")).length,
-      0,
-      "the lock file is removed on release",
+    const releasedTicket = readdirSync(dir).find((file) =>
+      file.endsWith(".lock"),
     )
+    assert.ok(releasedTicket, "release leaves an ordering tombstone")
+
+    const successor = acquireRefreshLock(SRC, { dir })
+    assert.ok(successor)
+    const tickets = readdirSync(dir).filter((file) => file.endsWith(".lock"))
+    assert.equal(tickets.length, 1)
+    assert.notEqual(tickets[0], releasedTicket)
+    successor!.release()
   })
 
   it("degrades to best-effort (grants) when the lock dir is unusable", () => {

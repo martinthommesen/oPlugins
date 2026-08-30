@@ -1,32 +1,27 @@
 /**
- * Best-effort cross-process single-flight lock for OAuth token refreshes.
+ * Best-effort cross-process single flight for rotating OAuth refresh tokens.
  *
- * The plugin runs inside every OpenCode process, so several instances (plus the
- * `claude` CLI) can all decide to refresh the same expired token at once and
- * bury the endpoint in duplicate requests — the token endpoint answers the pile
- * with HTTP 429. An advisory lock file lets exactly one refresher proceed; the
- * others wait briefly and adopt the winner's freshly written token from the
- * shared credential store.
- *
- * "Best-effort" is deliberate: any filesystem error degrades to running the
- * refresh without a lock rather than blocking it. A crashed holder cannot
- * wedge the system either — the lock carries a TTL and a stale one is taken
- * over.
+ * Lock files are monotonically numbered source-local tickets. Creating the next
+ * ticket with O_EXCL is the single atomic winner commit. Released tickets stay
+ * as expired tombstones until a successor exists, so ticket numbers never
+ * reset and a stale holder can never target its successor's path.
  */
+import { createHash, randomUUID } from "node:crypto"
 import {
   closeSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
+  readdirSync,
+  readFileSync,
   statSync,
   unlinkSync,
   writeSync,
 } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { createHash } from "node:crypto"
 import { log } from "./logger.ts"
 
-/** How long before a held lock is considered stale (env-overridable). */
 export const DEFAULT_LOCK_TTL_MS = (() => {
   const raw = process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
@@ -34,41 +29,72 @@ export const DEFAULT_LOCK_TTL_MS = (() => {
 })()
 
 export interface RefreshLock {
+  extend(ms: number): boolean
+  defer(ms: number): void
   release(): void
 }
 
 export interface AcquireOptions {
-  /** Directory to hold lock files in. Defaults to the OpenCode data dir. */
   dir?: string
-  /** Staleness threshold in ms. Defaults to {@link DEFAULT_LOCK_TTL_MS}. */
   ttlMs?: number
   now?: () => number
 }
 
+interface Claim {
+  ticket: bigint
+  expiresAt: number
+  path: string
+}
+
 function defaultLockDir(): string {
-  // Read at call time so tests (and unusual deployments) can redirect the lock
-  // directory without reloading the module.
   return (
     process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR ??
     join(homedir(), ".local", "share", "opencode")
   )
 }
 
-function lockPathFor(source: string, dir: string): string {
+function lockPrefix(source: string): string {
   const digest = createHash("sha256").update(source).digest("hex").slice(0, 16)
-  return join(dir, `claude-auth-refresh-${digest}.lock`)
+  return `claude-auth-refresh-${digest}-`
 }
 
-const NOOP_LOCK: RefreshLock = { release() {} }
+const NOOP_LOCK: RefreshLock = {
+  extend: () => true,
+  defer() {},
+  release() {},
+}
 
-/**
- * Try to acquire the refresh lock for `source`.
- *
- * Returns a {@link RefreshLock} when this process may refresh (either it won the
- * lock, or a filesystem error made the lock unavailable and we degrade to
- * best-effort). Returns null when a live holder currently owns it — the caller
- * should wait and adopt the holder's result instead of refreshing.
- */
+function readClaim(path: string, ticket: bigint, ttlMs: number): Claim | null {
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")) as {
+      expiresAt?: unknown
+    }
+    if (
+      typeof value.expiresAt === "number" &&
+      Number.isFinite(value.expiresAt)
+    ) {
+      return { ticket, expiresAt: value.expiresAt, path }
+    }
+  } catch {
+    // Initial creation and lease extension briefly expose an empty payload.
+  }
+
+  try {
+    const modified = statSync(path).mtimeMs
+    return { ticket, expiresAt: modified + ttlMs, path }
+  } catch {
+    return null
+  }
+}
+
+function remove(path: string): void {
+  try {
+    unlinkSync(path)
+  } catch {
+    // The claim may already have been removed by another successor.
+  }
+}
+
 export function acquireRefreshLock(
   source: string,
   opts: AcquireOptions = {},
@@ -76,67 +102,159 @@ export function acquireRefreshLock(
   const dir = opts.dir ?? defaultLockDir()
   const ttlMs = opts.ttlMs ?? DEFAULT_LOCK_TTL_MS
   const now = opts.now ?? Date.now
-  const path = lockPathFor(source, dir)
+  const owner = randomUUID()
+  const prefix = lockPrefix(source)
 
   try {
     mkdirSync(dir, { recursive: true })
   } catch {
-    // Non-fatal: openSync below will surface a real problem.
+    // Scanning below determines whether coordination is available.
   }
 
-  // Two attempts: the second only runs after clearing a stale lock.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let fd: number
+  const scan = (): Claim[] =>
+    readdirSync(dir)
+      .map((name): Claim | null => {
+        if (!name.startsWith(prefix) || !name.endsWith(".lock")) return null
+        const rawTicket = name.slice(prefix.length, -".lock".length)
+        if (!/^\d+$/.test(rawTicket)) return null
+        const ticket = BigInt(rawTicket)
+        return readClaim(join(dir, name), ticket, ttlMs)
+      })
+      .filter((claim): claim is Claim => claim !== null)
+
+  let claims: Claim[]
+  try {
+    claims = scan()
+  } catch (error) {
+    log("refresh_lock_error", { source, error: String(error) })
+    return NOOP_LOCK
+  }
+
+  if (claims.some((claim) => claim.expiresAt >= now())) return null
+
+  let ticket = claims.reduce(
+    (highest, claim) => (claim.ticket > highest ? claim.ticket : highest),
+    0n,
+  )
+  let path: string
+  let fd: number
+
+  while (true) {
+    ticket += 1n
+    path = join(dir, `${prefix}${ticket}.lock`)
     try {
       fd = openSync(path, "wx")
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      if (code !== "EEXIST") {
-        // Unexpected FS failure — never let the lock block a refresh.
-        log("refresh_lock_error", { source, error: String(code ?? err) })
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        log("refresh_lock_error", {
+          source,
+          error: String((error as NodeJS.ErrnoException).code ?? error),
+        })
         return NOOP_LOCK
       }
-      // Someone holds it. Take over only if it is stale.
-      let stale = false
       try {
-        stale = now() - statSync(path).mtimeMs > ttlMs
-      } catch {
-        // Vanished between open and stat — retry the acquire.
-        stale = true
+        claims = scan()
+      } catch (scanError) {
+        log("refresh_lock_error", { source, error: String(scanError) })
+        return NOOP_LOCK
       }
-      if (stale) {
-        log("refresh_lock_stale_takeover", { source })
-        try {
-          unlinkSync(path)
-        } catch {
-          // Lost the race to remove it; the next attempt/stat settles it.
-        }
-        continue
-      }
-      return null
-    }
-
-    try {
-      writeSync(fd, JSON.stringify({ pid: process.pid, ts: now() }))
-    } catch {
-      // The lock is held regardless of whether the payload wrote.
-    }
-    log("refresh_lock_acquired", { source })
-    return {
-      release() {
-        try {
-          closeSync(fd)
-        } catch {
-          // already closed
-        }
-        try {
-          unlinkSync(path)
-        } catch {
-          // already gone (e.g. a stale-takeover removed it)
-        }
-      },
+      if (claims.some((claim) => claim.expiresAt >= now())) return null
+      ticket = claims.reduce(
+        (highest, claim) => (claim.ticket > highest ? claim.ticket : highest),
+        ticket,
+      )
     }
   }
 
-  return null
+  const writeLease = (expiresAt: number): void => {
+    try {
+      ftruncateSync(fd, 0)
+      writeSync(fd, JSON.stringify({ owner, pid: process.pid, expiresAt }), 0)
+    } catch {
+      // A concurrent scan treats the fresh claim mtime as a live lease.
+    }
+  }
+  writeLease(now() + ttlMs)
+
+  const ownsTicket = (): boolean => {
+    try {
+      const value = JSON.parse(readFileSync(path, "utf8")) as {
+        owner?: unknown
+        expiresAt?: unknown
+      }
+      return (
+        value.owner === owner &&
+        typeof value.expiresAt === "number" &&
+        value.expiresAt > now() &&
+        !scan().some(
+          (claim) =>
+            claim.ticket > ticket ||
+            (claim.ticket !== ticket && claim.expiresAt >= now()),
+        )
+      )
+    } catch {
+      return false
+    }
+  }
+
+  // A delayed contender may recreate a compacted lower ticket. A higher
+  // ticket proves another process committed after this caller's first scan,
+  // so this claim must withdraw before returning to the refresh path.
+  try {
+    if (
+      scan().some(
+        (claim) =>
+          claim.ticket > ticket ||
+          (claim.ticket !== ticket && claim.expiresAt >= now()),
+      )
+    ) {
+      writeLease(0)
+      closeSync(fd)
+      return null
+    }
+  } catch (error) {
+    log("refresh_lock_error", { source, error: String(error) })
+    // Filesystem errors degrade to best-effort after this point.
+  }
+
+  // The successor ticket now preserves monotonic ordering, so older expired
+  // tombstones can be removed without making any ticket reusable.
+  for (const claim of claims) {
+    if (claim.expiresAt < now()) remove(claim.path)
+  }
+
+  log("refresh_lock_acquired", { source, ticket: ticket.toString() })
+  let deferred = false
+  let released = false
+  return {
+    extend(ms: number) {
+      if (!ownsTicket()) {
+        log("refresh_lock_lost", { source, ticket: ticket.toString() })
+        return false
+      }
+      writeLease(now() + ms)
+      if (!ownsTicket()) {
+        log("refresh_lock_lost", { source, ticket: ticket.toString() })
+        return false
+      }
+      log("refresh_lock_extended", { source, ms })
+      return true
+    },
+    defer(ms: number) {
+      deferred = true
+      writeLease(now() + ms)
+      log("refresh_lock_deferred", { source, ms })
+    },
+    release() {
+      if (released) return
+      released = true
+      if (!deferred) writeLease(0)
+      try {
+        closeSync(fd)
+      } catch {
+        // already closed
+      }
+    },
+  }
 }

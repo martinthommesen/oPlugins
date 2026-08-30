@@ -2,12 +2,10 @@
  * Transient-vs-terminal classification and per-account backoff for OAuth token
  * refreshes.
  *
- * The token endpoint (`claude.ai/v1/oauth/token`) rate-limits refresh requests
+ * The token endpoint (`platform.claude.com/v1/oauth/token`) may rate-limit refresh requests
  * with HTTP 429 `rate_limit_error`. That is transient — the refresh token is
  * still valid — but the plugin previously treated every non-OK refresh as a
- * hard failure, surfacing "credentials unavailable. Run `claude`" and then
- * hammering the same endpoint (and the `claude` CLI, which hits it too). This
- * module lets callers tell a transient rate-limit apart from a genuinely dead
+ * hard failure. This module lets callers tell a transient rate-limit apart from a genuinely dead
  * refresh token (`invalid_grant`), and imposes a cooldown so a rate-limited
  * account is not re-hit until the window has plausibly cleared.
  */
@@ -35,6 +33,7 @@ const TERMINAL_OAUTH_ERRORS = new Set([
   "invalid_client",
   "unauthorized_client",
   "unsupported_grant_type",
+  "invalid_scope",
 ])
 
 export function classifyRefreshFailure(
@@ -56,8 +55,7 @@ interface BackoffOptions {
  * Delay before the next refresh attempt. An explicit `retry-after` from the
  * endpoint wins (still clamped to `MAX_COOLDOWN_MS`); otherwise an exponential
  * schedule (base · 2^(n-1),
- * capped) with jitter in the [50%, 100%] band to desynchronize the several
- * OpenCode instances / CLI invocations that all refresh the same account.
+ * capped) with jitter in the [50%, 100%] band to desynchronize refreshes.
  */
 export function computeBackoffMs(
   consecutive: number,

@@ -30,11 +30,43 @@ jobs:
             echo "version=$current" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: googleapis/release-please-action@v5
-        id: release-please
+      - name: Run release-please (attempt 1)
+        uses: googleapis/release-please-action@v5
+        id: release-please-1
+        continue-on-error: true
         with:
           release-type: node
           release-as: ${{ steps.release-as.outputs.version }}
+
+      - name: Run release-please (attempt 2)
+        if: steps.release-please-1.outcome == 'failure'
+        uses: googleapis/release-please-action@v5
+        id: release-please-2
+        continue-on-error: true
+        with:
+          release-type: node
+          release-as: ${{ steps.release-as.outputs.version }}
+
+      - name: Run release-please (attempt 3)
+        if: steps.release-please-1.outcome == 'failure' && steps.release-please-2.outcome == 'failure'
+        uses: googleapis/release-please-action@v5
+        id: release-please-3
+        with:
+          release-type: node
+          release-as: ${{ steps.release-as.outputs.version }}
+
+      - name: Select release-please outputs
+        id: release-please
+        shell: bash
+        run: |
+          releases_created="${{ steps.release-please-1.outputs.releases_created }}"
+          if [[ "${{ steps.release-please-2.outcome }}" == "success" ]]; then
+            releases_created="${{ steps.release-please-2.outputs.releases_created }}"
+          fi
+          if [[ "${{ steps.release-please-3.outcome }}" == "success" ]]; then
+            releases_created="${{ steps.release-please-3.outputs.releases_created }}"
+          fi
+          echo "releases_created=$releases_created" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v4
         if: steps.release-please.outputs.releases_created == 'true'

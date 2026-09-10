@@ -22,6 +22,7 @@ import { readAllClaudeAccounts, type ClaudeAccount } from "./keychain.ts"
 import { closeLogger, initLogger, log } from "./logger.ts"
 import {
   buildRequestFromSnapshot,
+  restoreResponseToolNames,
   transformContext,
   transformRequest,
   type RequestSnapshot,
@@ -223,42 +224,51 @@ export async function setupClaudeAuth(
     ),
   )
 
+  const recoverUnauthorized = async (
+    original: Response,
+    state: RequestState,
+  ): Promise<Response> => {
+    let credential = state.credential
+    let response = original
+
+    const adopted = deps.adopt(credential)
+    if (adopted.kind === "adopted") {
+      updateActive(credential, adopted.credential)
+      credential = adopted.credential
+      response = await deps.fetch(
+        buildRequestFromSnapshot(state.snapshot, credential),
+      )
+      if (response.status !== 401) return response
+    }
+
+    const refreshed = await deps.refresh(credential)
+    if (refreshed.kind === "transient") {
+      return retryableRefreshResponse(credential)
+    }
+    updateActive(credential, refreshed.credential)
+    if (refreshed.credential.access !== credential.access) {
+      response = await deps.fetch(
+        buildRequestFromSnapshot(state.snapshot, refreshed.credential),
+      )
+    }
+    return response
+  }
+
   registrations.push(
     await ctx.session.hook(
       "http.response",
       async (event: SessionHttpResponse) => {
-        if (event.response.status !== 401) return
         const state = requestStates.get(event.request)
         if (!state) return
 
-        let credential = state.credential
-        let response = event.response
-
-        const adopted = deps.adopt(credential)
-        if (adopted.kind === "adopted") {
-          updateActive(credential, adopted.credential)
-          credential = adopted.credential
-          response = await deps.fetch(
-            buildRequestFromSnapshot(state.snapshot, credential),
-          )
-          if (response.status !== 401) {
-            event.response = response
-            return
-          }
-        }
-
-        const refreshed = await deps.refresh(credential)
-        if (refreshed.kind === "transient") {
-          event.response = retryableRefreshResponse(credential)
-          return
-        }
-        updateActive(credential, refreshed.credential)
-        if (refreshed.credential.access !== credential.access) {
-          response = await deps.fetch(
-            buildRequestFromSnapshot(state.snapshot, refreshed.credential),
-          )
-        }
-        event.response = response
+        const resolved =
+          event.response.status === 401
+            ? await recoverUnauthorized(event.response, state)
+            : event.response
+        event.response = restoreResponseToolNames(
+          resolved,
+          state.snapshot.toolNames,
+        )
       },
       { providerID: INTEGRATION_ID },
     ),

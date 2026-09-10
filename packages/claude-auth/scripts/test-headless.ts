@@ -255,10 +255,11 @@ exit 44
   if (
     !output.includes(SENTINEL) ||
     !output.includes('"type":"tool_use"') ||
-    !output.includes('"tool":"mcp_Read"')
+    !output.includes('"tool":"read"') ||
+    output.includes("mcp_")
   ) {
     process.stderr.write(output)
-    fail("Tool round trip did not return the sentinel")
+    fail("Tool round trip did not return the sentinel under OpenCode names")
   }
 
   const current = parseCredentials(

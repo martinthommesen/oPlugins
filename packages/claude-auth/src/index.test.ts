@@ -458,6 +458,29 @@ describe("401 recovery contract", () => {
     await cleanup?.()
   })
 
+  it("returns OpenCode's own tool names on a successful response", async () => {
+    const fake = fakeContext(oauth())
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()]),
+    )
+    const request = requestEvent(JSON.stringify({ tools: [{ name: "shell" }] }))
+    await fake.hooks.get("http.request")!(request as never)
+    assert.match(await request.request.clone().text(), /"mcp_Shell"/)
+
+    const responseEvent = {
+      request: request.request,
+      response: new Response(
+        'event: content_block_start\ndata: {"type":"tool_use","name":"mcp_Shell"}\n\n',
+      ),
+    }
+    await fake.hooks.get("http.response")!(responseEvent as never)
+    const text = await responseEvent.response.text()
+    assert.match(text, /"name":"shell"/)
+    assert.doesNotMatch(text, /mcp_Shell/)
+    await cleanup?.()
+  })
+
   it("turns a transient refresh into an explicitly retryable 429", async () => {
     const original = oauth()
     const fake = fakeContext(original)

@@ -6,8 +6,11 @@ import type {
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
+  aliasRequestBody,
   buildClaudeHeaders,
   buildRequestFromSnapshot,
+  restoreResponseToolNames,
+  restoreToolNames,
   SYSTEM_IDENTITY,
   transformContext,
   transformRequest,
@@ -75,20 +78,19 @@ describe("semantic context transform", () => {
     assert.match(first.text, /edit -> mcp_Edit/)
   })
 
-  it("moves the exact tool definition object and aliases history", () => {
+  it("leaves the tool registry and call history on OpenCode's own names", () => {
     const event = contextEvent()
     const read = event.tools.read
     transformContext(event)
-    assert.equal(event.tools.read, undefined)
-    assert.equal(event.tools.mcp_Read, read)
-    assert.equal(event.messages[1].content[0].type, "tool-call")
+    assert.equal(event.tools.read, read)
+    assert.equal(event.tools.mcp_Read, undefined)
     assert.equal(
       (event.messages[1].content[0] as { name: string }).name,
-      "mcp_Read",
+      "read",
     )
     assert.equal(
       (event.messages[2].content[0] as { name: string }).name,
-      "mcp_Read",
+      "read",
     )
   })
 
@@ -183,6 +185,134 @@ describe("native request transform", () => {
     assert.equal(
       new URL(transformed.request.url).searchParams.get("beta"),
       "false",
+    )
+  })
+})
+
+function encode(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value))
+}
+
+function decode(body: Uint8Array): Record<string, never> {
+  return JSON.parse(new TextDecoder().decode(body))
+}
+
+async function readAll(response: Response): Promise<string> {
+  return await response.text()
+}
+
+function sse(events: string[]): Response {
+  const encoder = new TextEncoder()
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const event of events) controller.enqueue(encoder.encode(event))
+        controller.close()
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  )
+}
+
+describe("wire tool aliases", () => {
+  it("aliases client tools, tool choice, and tool_use history", () => {
+    const aliased = aliasRequestBody(
+      encode({
+        tools: [
+          { name: "shell", input_schema: {} },
+          { type: "custom", name: "read", input_schema: {} },
+          { type: "web_search_20250305", name: "web_search" },
+        ],
+        tool_choice: { type: "tool", name: "shell" },
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "one", name: "grep", input: {} }],
+          },
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "one", content: "hit" },
+            ],
+          },
+        ],
+      }),
+    )
+    const payload = decode(aliased.body) as never as {
+      tools: Array<{ name: string }>
+      tool_choice: { name: string }
+      messages: Array<{ content: Array<Record<string, string>> }>
+    }
+    assert.deepEqual(
+      payload.tools.map((tool) => tool.name),
+      ["mcp_Shell", "mcp_Read", "web_search"],
+    )
+    assert.equal(payload.tool_choice.name, "mcp_Shell")
+    assert.equal(payload.messages[0].content[0].name, "mcp_Grep")
+    assert.equal(payload.messages[1].content[0].tool_use_id, "one")
+    assert.deepEqual(aliased.toolNames, {
+      mcp_Shell: "shell",
+      mcp_Read: "read",
+      mcp_Grep: "grep",
+    })
+  })
+
+  it("passes through bodies with nothing to alias", () => {
+    const plain = new TextEncoder().encode("complete-body")
+    assert.equal(aliasRequestBody(plain).body, plain)
+
+    const noTools = encode({ messages: [{ role: "user", content: "hi" }] })
+    const result = aliasRequestBody(noTools)
+    assert.equal(result.body, noTools)
+    assert.deepEqual(result.toolNames, {})
+
+    const alreadyAliased = aliasRequestBody(
+      encode({ tools: [{ name: "mcp_Playwright_click" }] }),
+    )
+    assert.deepEqual(alreadyAliased.toolNames, {})
+  })
+
+  it("restores only aliases this plugin applied", () => {
+    const restored = restoreToolNames(
+      '{"name":"mcp_Shell"} {"name": "mcp_Playwright_click"}',
+      { mcp_Shell: "shell" },
+    )
+    assert.equal(restored, '{"name":"shell"} {"name": "mcp_Playwright_click"}')
+  })
+
+  it("rewrites a streamed tool call split across chunks", async () => {
+    const response = restoreResponseToolNames(
+      sse([
+        'event: content_block_start\ndata: {"type":"content_block_start","content_block":{"type":"tool_use","id":"one","na',
+        'me":"mcp_Shell"}}\n\nevent: content_block_delta\ndata: {"delta":{"text":"done"}}\n\n',
+      ]),
+      { mcp_Shell: "shell" },
+    )
+    const text = await readAll(response)
+    assert.match(text, /"name":"shell"/)
+    assert.doesNotMatch(text, /mcp_Shell/)
+    assert.match(text, /"text":"done"/)
+  })
+
+  it("leaves responses without aliases untouched", async () => {
+    const original = new Response("body", { status: 429 })
+    assert.equal(restoreResponseToolNames(original, {}), original)
+  })
+
+  it("carries the aliases on the snapshot for retries", async () => {
+    const event = {
+      model: { id: "claude-sonnet-4-5" },
+      request: new Request("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        body: JSON.stringify({ tools: [{ name: "shell" }] }),
+      }),
+    } as unknown as SessionHttpRequest
+    const transformed = await transformRequest(event, oauth())
+    assert.deepEqual(transformed.snapshot.toolNames, { mcp_Shell: "shell" })
+    assert.match(await transformed.request.text(), /"mcp_Shell"/)
+    assert.match(
+      await buildRequestFromSnapshot(transformed.snapshot, oauth()).text(),
+      /"mcp_Shell"/,
     )
   })
 })

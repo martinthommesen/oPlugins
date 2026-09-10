@@ -80,8 +80,12 @@ OpenCode owns connection persistence. The plugin does not write OpenCode
 - Uses OpenCode's native Anthropic provider and model catalog.
 - Reports zero dollar cost while a Claude Code subscription connection is
   active. API-key and environment connections retain native API pricing.
-- Adds the Claude Code billing identity, supported beta flags, request headers,
-  and semantic tool aliases required for subscription traffic.
+- Adds the Claude Code billing identity, supported beta flags, and request
+  headers required for subscription traffic.
+- Renames tools to the Claude Code `mcp_<PascalCase>` convention on the wire
+  only, because Anthropic's billing validator rejects other tool names. The
+  response restores OpenCode's own names, so tool calls keep their native
+  rendering and behavior.
 - Lets OpenCode own generic rate-limit and provider retries.
 - Refreshes near-expiry credentials through Anthropic's current OAuth endpoint,
   with per-account locking, cooldowns, and guarded source write-back.

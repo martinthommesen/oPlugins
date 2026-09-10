@@ -12,14 +12,23 @@ export const SYSTEM_IDENTITY =
 
 const BILLING_PREFIX = "x-anthropic-billing-header:"
 const CONTEXT_METADATA_KEY = "griffinmartin.claude-auth"
+const TOOL_PREFIX = "mcp_"
 const processSessionID = randomUUID()
 
 type ContextMessage = SessionContext["messages"][number]
 type ContextPart = ContextMessage["content"][number]
 
+/**
+ * Anthropic's OAuth billing validator rejects unknown tool names when several
+ * tools are present. Claude Code sends third-party tools as `mcp_<PascalCase>`,
+ * so subscription traffic uses the same convention on the wire. The alias never
+ * reaches OpenCode: the request body is rewritten on the way out and the
+ * response stream restores the original names, which keeps the native tool
+ * renderers and tool dispatch intact.
+ */
 function aliasToolName(name: string): string {
-  if (name.startsWith("mcp_")) return name
-  return `mcp_${name.charAt(0).toUpperCase()}${name.slice(1)}`
+  if (name.startsWith(TOOL_PREFIX)) return name
+  return `${TOOL_PREFIX}${name.charAt(0).toUpperCase()}${name.slice(1)}`
 }
 
 function firstUserText(messages: SessionContext["messages"]): string {
@@ -41,26 +50,9 @@ function markRelocatedText(text: string): ContextPart {
 }
 
 export function transformContext(event: SessionContext): void {
-  const aliases = new Map<string, string>()
-  for (const [name, definition] of Object.entries(event.tools)) {
-    const alias = aliasToolName(name)
-    if (alias === name) continue
-    if (event.tools[alias] && event.tools[alias] !== definition) continue
-    event.tools[alias] = definition
-    delete event.tools[name]
-    aliases.set(name, alias)
-  }
-
-  for (const message of event.messages) {
-    for (const part of message.content) {
-      if (
-        (part.type === "tool-call" || part.type === "tool-result") &&
-        aliases.has(part.name)
-      ) {
-        ;(part as { name: string }).name = aliases.get(part.name)!
-      }
-    }
-  }
+  const aliases = Object.keys(event.tools)
+    .map((name) => [name, aliasToolName(name)] as const)
+    .filter(([name, alias]) => alias !== name)
 
   const version = process.env.ANTHROPIC_CLI_VERSION ?? config.ccVersion
   const entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT ?? "sdk-cli"
@@ -90,8 +82,8 @@ export function transformContext(event: SessionContext): void {
       part.type === "text" && part.metadata?.[CONTEXT_METADATA_KEY] === true,
   )
   const guidance =
-    aliases.size > 0
-      ? `Tool names in these instructions map as follows: ${[...aliases]
+    aliases.length > 0
+      ? `Tool names in these instructions map as follows: ${aliases
           .map(([name, alias]) => `${name} -> ${alias}`)
           .join(", ")}.`
       : ""
@@ -173,11 +165,136 @@ export function buildClaudeHeaders(
   return headers
 }
 
+type JsonRecord = Record<string, unknown>
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Server tools keep the exact name Anthropic defines for their `type`. */
+function isClientTool(tool: JsonRecord): boolean {
+  return typeof tool.type !== "string" || tool.type === "custom"
+}
+
+function renameTool(
+  holder: JsonRecord,
+  restored: Record<string, string>,
+): void {
+  const name = holder.name
+  if (typeof name !== "string") return
+  const alias = aliasToolName(name)
+  if (alias === name) return
+  holder.name = alias
+  restored[alias] = name
+}
+
+/**
+ * Rewrite the outbound `/v1/messages` body to Claude Code tool names. Returns
+ * the aliases applied so the response stream can restore the original names.
+ * A body that is not the expected JSON shape is passed through untouched.
+ */
+export function aliasRequestBody(body: Uint8Array): {
+  body: Uint8Array
+  toolNames: Record<string, string>
+} {
+  const restored: Record<string, string> = {}
+  let payload: unknown
+  try {
+    payload = JSON.parse(new TextDecoder().decode(body))
+  } catch {
+    return { body, toolNames: restored }
+  }
+  if (!isRecord(payload)) return { body, toolNames: restored }
+
+  if (Array.isArray(payload.tools)) {
+    for (const tool of payload.tools) {
+      if (isRecord(tool) && isClientTool(tool)) renameTool(tool, restored)
+    }
+  }
+
+  if (isRecord(payload.tool_choice) && payload.tool_choice.type === "tool") {
+    renameTool(payload.tool_choice, restored)
+  }
+
+  if (Array.isArray(payload.messages)) {
+    for (const message of payload.messages) {
+      if (!isRecord(message) || !Array.isArray(message.content)) continue
+      for (const block of message.content) {
+        if (isRecord(block) && block.type === "tool_use") {
+          renameTool(block, restored)
+        }
+      }
+    }
+  }
+
+  if (Object.keys(restored).length === 0) return { body, toolNames: restored }
+  return {
+    body: new TextEncoder().encode(JSON.stringify(payload)),
+    toolNames: restored,
+  }
+}
+
+/** Replace only the aliases this plugin applied, leaving real MCP names alone. */
+export function restoreToolNames(
+  text: string,
+  toolNames: Record<string, string>,
+): string {
+  return text.replace(/"name"\s*:\s*"(mcp_[^"]*)"/g, (match, alias: string) =>
+    alias in toolNames ? `"name":${JSON.stringify(toolNames[alias])}` : match,
+  )
+}
+
+/**
+ * Restore original tool names in the response body so OpenCode sees the tools
+ * it registered. Chunks are flushed on SSE event boundaries so a tool name is
+ * never split across two rewrites.
+ */
+export function restoreResponseToolNames(
+  response: Response,
+  toolNames: Record<string, string>,
+): Response {
+  if (!response.body || Object.keys(toolNames).length === 0) return response
+
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ""
+
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true })
+        const boundary = buffer.lastIndexOf("\n\n")
+        if (boundary === -1) return
+        const complete = buffer.slice(0, boundary + 2)
+        buffer = buffer.slice(boundary + 2)
+        controller.enqueue(
+          encoder.encode(restoreToolNames(complete, toolNames)),
+        )
+      },
+      flush(controller) {
+        buffer += decoder.decode()
+        if (!buffer) return
+        controller.enqueue(encoder.encode(restoreToolNames(buffer, toolNames)))
+        buffer = ""
+      },
+    }),
+  )
+
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
 export interface RequestSnapshot {
   url: string
   method: string
   headers: Array<[string, string]>
   body: Uint8Array | null
+  toolNames: Record<string, string>
   cache: RequestCache
   credentials: RequestCredentials
   integrity: string
@@ -194,13 +311,16 @@ export async function snapshotRequest(
   event: SessionHttpRequest,
 ): Promise<RequestSnapshot> {
   const request = event.request
+  const original = request.body
+    ? new Uint8Array(await request.clone().arrayBuffer())
+    : null
+  const aliased = original ? aliasRequestBody(original) : null
   return {
     url: transformURL(request.url),
     method: request.method,
     headers: [...request.headers.entries()],
-    body: request.body
-      ? new Uint8Array(await request.clone().arrayBuffer())
-      : null,
+    body: aliased?.body ?? null,
+    toolNames: aliased?.toolNames ?? {},
     cache: request.cache,
     credentials: request.credentials,
     integrity: request.integrity,

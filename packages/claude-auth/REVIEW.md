@@ -1,6 +1,8 @@
 # Code + Doc Review: opencode-claude-auth (whole codebase)
 
-**Scope:** whole working tree, branch `main`, HEAD `081f2b7` plus uncommitted changes to `README.md`, `scripts/test-headless.ts`, `src/index.ts`, `src/index.test.ts`, `src/transforms.ts`, `src/transforms.test.ts`. Report-only; nothing was changed.
+**Scope:** whole working tree at `081f2b7` (an ancestor of `main`) plus the tool-alias work that became commit `76aa21a` on the `fix/wire-tool-aliases-and-model-betas` branch. It predates commit `9b72bee` (`src/model-config.ts`). Report-only; nothing was changed. 32 findings.
+
+**Status:** the branch that added this report also resolves #15 (one-to-one alias map) and #21 (`ANTHROPIC_BETA_FLAGS` row). A follow-up pass on the same branch resolved #1, #2, #3, #4, #6, #7, #8, #9, #10, #11 (fail-transient kept, with a consecutive-failure ceiling), #12, #13, #14, #16, #19, #20, #22, #23, #24, #25, #27, #28, #29, #32, the `ANTHROPIC_BETA_FLAGS=""` residual, the repository URL mismatch, and the `writeBackCredentials` duplication advisory. #5 was answered by documenting the non-atomic window rather than closing it. Still open: #17, #18, #26, #30, #31, and the remaining residual risks.
 
 **Team:** correctness, security, reliability, performance, testing, maintainability, doc coherence, doc feasibility, plus an independent cross-model adversarial pass through Codex. Project-standards did not run — no `CODING_STANDARDS.md`, `CLAUDE.md`, or `AGENTS.md` in the repo.
 
@@ -103,9 +105,8 @@ _doc-feasibility, conf 75_ — Every variable is read inside the long-running se
 
 ## Coverage
 
-- **Cross-model pass:** ran through the Codex CLI. Route `codex`, requested `gpt-5.6-luna` at `xhigh`; `receipt_supported: false`, so serving model and effort are **unverified**. `independence_verified: true` (Claude-family host, Codex-family peer), so its agreement on #3 counts as independent corroboration. It contributed #5, #8, #11, #15 — none reached by a local reviewer.
-- **Validation:** one batch of 13 P1 candidates; 10 validated, 3 dropped, no skips taken. Dropped: the README multi-account claim (Credential Sources already states the Linux/Windows single-file behavior); the `NOOP_LOCK` degradation (each fallback logs `refresh_lock_error`, the module is documented best-effort, and returning null would stall uncontended refreshes); and the missing bearer host check (the hook is scoped to `providerID: "anthropic"`, so the destination is the user's own configured baseURL).
-- Suppressed at anchor 50: 16. Demoted to soft buckets: 2 test-coverage, 4 maintainability/reliability advisories. No reviewer failures — all 8 local reviewers and the peer returned.
+- **Cross-model pass:** a second, independent model family reviewed the same tree. Its agreement on #3 counts as independent corroboration. It contributed #5, #8, #11, #15, none of which a local reviewer reached.
+- **Validation:** 13 P1 candidates; 10 validated, 3 dropped. Dropped: the README multi-account claim (Credential Sources already states the Linux/Windows single-file behavior); the `NOOP_LOCK` degradation (each fallback logs `refresh_lock_error`, the module is documented best-effort, and returning null would stall uncontended refreshes); and the missing bearer host check (the hook is scoped to `providerID: "anthropic"`, so the destination is the user's own configured baseURL).
 - Removable surface: ~7 lines from #13.
 
 ### Residual risks (selected)
@@ -113,7 +114,7 @@ _doc-feasibility, conf 75_ — Every variable is read inside the long-running se
 - **Redaction does not match the token format it protects.** `JWT_PATTERN` is `/^eyJ.../`, anchored — Anthropic OAuth tokens are `sk-ant-oat01-...`, so it can never match one. Key-based redaction covers only `accessToken`/`refreshToken`/`x-api-key`. No call site logs a raw token today, so nothing leaks; the control simply would not work if one were added. `README.md:148` also claims broader coverage than the code has. Reached independently by security and doc-coherence.
 - **`CLAUDE_AUTH_DEBUG` is a literal path that gets truncated** — pointing it at `~/.claude/.credentials.json` destroys the user's login with no confirmation. The debug log itself is created world-readable while credentials use 0600.
 - **Lock coordination degrades to a no-op** on filesystem failure, and `NOOP_LOCK.extend()` returns `true`. Rejected as a finding, but it is why #5 and #8 have no backstop. `defer()` also skips the `ownsTicket()` check that `extend()` performs.
-- **`requestStates` is keyed by the exact `Request` object** — a host-side clone silently skips both 401 recovery and tool-name restoration.
+- **`requestStates` is keyed by the exact `Request` object** — a host-side clone silently skips 401 recovery. Tool-name restoration falls back to the session's registered tools, so it survives a clone.
 - **`ClaudeAuthTerminalError` escapes the `http.response` hook**; `recoverUnauthorized` calls `deps.refresh` with no try/catch.
 - **`ANTHROPIC_BETA_FLAGS=""` drops `oauth-2025-04-20`**, which subscription auth requires (`??` instead of a non-empty check).
 - **`computeBackoffMs` clamps `Retry-After` to 60 s by design**, so an hour-long quota window produces roughly 60 endpoint attempts instead of one. Documented tradeoff.
@@ -124,7 +125,7 @@ _doc-feasibility, conf 75_ — Every variable is read inside the long-running se
 
 ### Testing gaps
 
-Keychain exit codes 36/128/44 and timeout; two 401 recovery outcomes; `updateActive`'s conflict branch; the `latest !== raw` re-read check on both write-back branches; `restoreResponseToolNames` with no `\n\n`, CRLF framing, or a replayed aliased response; `transformContext`'s `!firstUser` fallback; the `!anthropic` catalog guard; partial-capability `assertCapabilities`; any multi-process lock test; `buildSuffixToDirCache` branches; `invalid_scope`; and no CI check that `dist/index.js` imports before publish.
+Keychain exit codes 36/128/44 and timeout; two 401 recovery outcomes; `updateActive`'s conflict branch; the `latest !== raw` re-read check on both write-back branches; `transformContext`'s `!firstUser` fallback; the `!anthropic` catalog guard; partial-capability `assertCapabilities`; any multi-process lock test; `buildSuffixToDirCache` branches; `invalid_scope`; and no CI check that `dist/index.js` imports before publish.
 
 ---
 
@@ -151,5 +152,3 @@ Keychain exit codes 36/128/44 and timeout; two 401 recovery outcomes; `updateAct
 | 12-32 | P2/P3 | see tables above              | 21 further findings, all with concrete fixes     | gated_auto/manual | yes  | 75-100 |
 
 **Decision gate (not in the apply queue):** **#11** `src/refresh-backoff.ts:43` — choose the OAuth retry policy before any code change.
-
-Run artifacts, per-reviewer JSON, and the peer artifact: `/tmp/compound-engineering-501/ce-code-review/20260909-164755-cc1a89f5/`

@@ -1,6 +1,10 @@
 /**
  * Manual packed-package smoke test for OpenCode v2.
  *
+ * Pass --offline to test plugin loading, import, pricing, and a streamed
+ * read-tool round trip with a fake credential and a local mock API, without
+ * reading real credentials or contacting Anthropic.
+ *
  * By default this copies one valid Claude Code account into an isolated source
  * and verifies package loading, automatic import, account labeling, zero-cost
  * catalog output, and one real read-tool round trip. It never refreshes the
@@ -11,7 +15,7 @@
  * directory. Its refresh token will rotate and the resulting credentials will
  * remain in that directory.
  */
-import { spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import {
   chmodSync,
@@ -23,44 +27,72 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { REQUIRED_HOST_VERSION } from "../dist/index.js"
 import {
   parseCredentials,
   readAllClaudeAccounts,
   updateCredentialBlob,
 } from "../dist/keychain.js"
+import { startMockAnthropic } from "./mock-anthropic.ts"
 
-const REQUIRED_VERSION = "opencode2 v0.0.0-beta-18381"
-const CLI_PACKAGE = "@opencode-ai/cli@0.0.0-beta-18381"
+const requestedHost = process.env.CLAUDE_AUTH_HEADLESS_HOST_VERSION
+const HOST_VERSION =
+  requestedHost && requestedHost !== "target"
+    ? requestedHost
+    : REQUIRED_HOST_VERSION
+const REQUIRED_VERSION = `opencode v${HOST_VERSION}`
+const CLI_PACKAGE = `@opencode/cli@${HOST_VERSION}`
+const offline = process.argv.includes("--offline")
+// A model that requires the pinned Claude Code version and takes the effort
+// beta, so the smoke run covers what a version or beta change can break.
 const MODEL =
-  process.env.CLAUDE_AUTH_HEADLESS_MODEL ?? "anthropic/claude-haiku-4-5"
+  process.env.CLAUDE_AUTH_HEADLESS_MODEL ?? "anthropic/claude-sonnet-5-5"
+const customModel = process.env.CLAUDE_AUTH_HEADLESS_CUSTOM_MODEL === "1"
 const SENTINEL = `HEADLESS_${randomUUID().replaceAll("-", "")}`
 const root = mkdtempSync(join(tmpdir(), "opencode-claude-auth-v2-"))
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const refreshConfigDir = process.env.CLAUDE_AUTH_HEADLESS_REFRESH_CONFIG_DIR
 
-function fail(message: string, result?: ReturnType<typeof spawnSync>): never {
+function fail(
+  message: string,
+  result?: { stdout: string; stderr: string },
+): never {
   if (result?.stdout) process.stderr.write(String(result.stdout))
   if (result?.stderr) process.stderr.write(String(result.stderr))
   throw new Error(message)
 }
 
-function run(
+async function run(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
   cwd = repo,
-): string {
-  const result = spawnSync(command, args, {
+): Promise<string> {
+  const child = spawn(command, args, {
     cwd,
     env,
-    encoding: "utf8",
     timeout: 180_000,
+    stdio: ["ignore", "pipe", "pipe"],
   })
-  if (result.status !== 0) {
-    fail(`${command} ${args.join(" ")} exited ${result.status}`, result)
-  }
-  return result.stdout ?? ""
+  const result = { stdout: "", stderr: "" }
+  child.stdout.setEncoding("utf8").on("data", (data) => {
+    result.stdout += data
+  })
+  child.stderr.setEncoding("utf8").on("data", (data) => {
+    result.stderr += data
+  })
+  return new Promise((complete, reject) => {
+    child.once("error", reject)
+    child.once("close", (status) => {
+      if (status !== 0) {
+        process.stderr.write(result.stdout + result.stderr)
+        reject(new Error(`${command} ${args.join(" ")} exited ${status}`))
+      } else {
+        complete(result.stdout)
+      }
+    })
+  })
 }
 
 function writeFileCredential(configDir: string, raw: string): void {
@@ -68,11 +100,30 @@ function writeFileCredential(configDir: string, raw: string): void {
   writeFileSync(join(configDir, ".credentials.json"), raw, { mode: 0o600 })
 }
 
-function prepareCredentialSource(): {
+async function prepareCredentialSource(): Promise<{
   configDir: string
   initialAccess: string
   refreshExpected: boolean
-} {
+}> {
+  if (offline) {
+    const configDir = join(root, "claude")
+    writeFileCredential(
+      configDir,
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "offline-test-access",
+          refreshToken: "offline-test-refresh",
+          expiresAt: Date.now() + 3_600_000,
+        },
+      }),
+    )
+    return {
+      configDir,
+      initialAccess: "offline-test-access",
+      refreshExpected: false,
+    }
+  }
+
   if (refreshConfigDir) {
     const path = join(refreshConfigDir, ".credentials.json")
     const raw = readFileSync(path, "utf8")
@@ -91,7 +142,7 @@ function prepareCredentialSource(): {
     }
   }
 
-  const source = readAllClaudeAccounts()[0]
+  const source = (await readAllClaudeAccounts())[0]
   if (!source) {
     fail(
       "No Claude Code credentials found. Run `claude` before this smoke test.",
@@ -128,17 +179,17 @@ function collectAnthropicModels(
   for (const item of Object.values(record)) collectAnthropicModels(item, out)
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const cliDir = join(root, "cli")
   mkdirSync(cliDir, { recursive: true })
-  run("npm", ["install", "--prefix", cliDir, CLI_PACKAGE], process.env)
-  const opencode = join(cliDir, "node_modules", ".bin", "opencode2")
-  const version = run(opencode, ["--version"], process.env).trim()
+  await run("npm", ["install", "--prefix", cliDir, CLI_PACKAGE], process.env)
+  const opencode = join(cliDir, "node_modules", ".bin", "opencode")
+  const version = (await run(opencode, ["--version"], process.env)).trim()
   if (version !== REQUIRED_VERSION) {
     fail(`Expected ${REQUIRED_VERSION}, found ${version}`)
   }
 
-  const source = prepareCredentialSource()
+  const source = await prepareCredentialSource()
   const packageDir = join(root, "package")
   const installDir = join(root, "install")
   const configHome = join(root, "config")
@@ -159,14 +210,14 @@ function main(): void {
   }
 
   const packed = JSON.parse(
-    run(
+    await run(
       "npm",
       ["pack", "--json", "--pack-destination", packageDir],
       process.env,
     ),
   ) as Array<{ filename: string }>
   const tarball = join(packageDir, packed[0].filename)
-  run(
+  await run(
     "npm",
     ["install", "--ignore-scripts", "--prefix", installDir, tarball],
     process.env,
@@ -177,108 +228,194 @@ function main(): void {
     "opencode-claude-auth",
   )
 
-  mkdirSync(join(configHome, "opencode"), { recursive: true })
+  const pluginsDir = join(configHome, "opencode", "plugins")
+  const modelsPath = join(root, "models.json")
+  mkdirSync(pluginsDir, { recursive: true })
+  // Read the host's models after setup. Standalone API reads do not activate
+  // plugins in the supported hosts; auth/run commands do, as a normal client does.
   writeFileSync(
-    join(configHome, "opencode", "opencode.json"),
-    JSON.stringify({
-      $schema: "https://opencode.ai/config.json",
-      autoupdate: false,
-      plugins: [join(installedPlugin, "dist", "index.js")],
-    }),
+    join(pluginsDir, "claude-auth.js"),
+    `import plugin from ${JSON.stringify(pathToFileURL(join(installedPlugin, "dist", "index.js")).href)}
+import { writeFileSync } from "node:fs"
+export default {
+  ...plugin,
+  async setup(ctx) {
+    const cleanup = await plugin.setup(ctx)
+    if (${offline}) await ctx.session.hook("http.request", (event) => {
+      event.request.headers.set("x-claude-auth-test-kind", event.kind)
+    }, { providerID: "anthropic" })
+    const { data: models } = await ctx.model.list()
+    writeFileSync(${JSON.stringify(modelsPath)}, JSON.stringify(
+      models.map(({ providerID, cost }) => ({ providerID, cost }))
+    ))
+    return cleanup
+  }
+}
+`,
   )
-  writeFileSync(join(workDir, "smoke.txt"), SENTINEL)
+  const mock = offline
+    ? await startMockAnthropic(SENTINEL, join(workDir, "smoke.txt"))
+    : undefined
+  try {
+    writeFileSync(
+      join(configHome, "opencode", "opencode.json"),
+      JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        update: "disable",
+        ...(mock
+          ? {
+              providers: {
+                anthropic: {
+                  settings: { baseURL: mock.baseURL },
+                  ...(customModel
+                    ? {
+                        models: {
+                          [MODEL.replace(/^anthropic\//, "")]: {
+                            capabilities: {
+                              tools: true,
+                              input: ["text", "image"],
+                              output: ["text"],
+                            },
+                            limit: { context: 1_000_000, output: 128_000 },
+                          },
+                        },
+                      }
+                    : {}),
+                },
+              },
+              agents: { title: { model: MODEL } },
+            }
+          : {}),
+      }),
+    )
+    writeFileSync(join(workDir, "smoke.txt"), SENTINEL)
 
-  const security = join(binDir, "security")
-  writeFileSync(
-    security,
-    `#!/bin/sh
+    const security = join(binDir, "security")
+    writeFileSync(
+      security,
+      `#!/bin/sh
 if [ "$1" = "dump-keychain" ]; then exit 0; fi
 exit 44
 `,
-  )
-  chmodSync(security, 0o755)
+    )
+    chmodSync(security, 0o755)
 
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ""}`,
-    XDG_CONFIG_HOME: configHome,
-    XDG_DATA_HOME: dataHome,
-    XDG_CACHE_HOME: cacheHome,
-    CLAUDE_CONFIG_DIR: source.configDir,
-    CLAUDE_AUTH_DEBUG: join(root, "plugin.log"),
-    OPENCODE_CLAUDE_AUTH_SECURITY_BIN: security,
+    // The plugin reads these to override what it sends. Inherited from the
+    // developer's shell (Claude Code itself sets CLAUDE_CODE_ENTRYPOINT), they
+    // would change the wire values the mock checks against.
+    const {
+      CLAUDE_CODE_ENTRYPOINT: _entrypoint,
+      ANTHROPIC_CLI_VERSION: _cliVersion,
+      ANTHROPIC_USER_AGENT: _userAgent,
+      ANTHROPIC_BETA_FLAGS: _betaFlags,
+      ...inherited
+    } = process.env
+    const env = {
+      ...inherited,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      XDG_CONFIG_HOME: configHome,
+      XDG_DATA_HOME: dataHome,
+      XDG_CACHE_HOME: cacheHome,
+      XDG_STATE_HOME: join(root, "state"),
+      CLAUDE_CONFIG_DIR: source.configDir,
+      CLAUDE_AUTH_DEBUG: join(root, "plugin.log"),
+      OPENCODE_CLAUDE_AUTH_SECURITY_BIN: security,
+    }
+
+    const login = await run(
+      opencode,
+      ["auth", "login", "anthropic", "--method", "claude-code", "--standalone"],
+      env,
+      workDir,
+    )
+    if (/https?:\/\//.test(login))
+      fail("Auto import unexpectedly displayed a URL")
+
+    const auth = await run(
+      opencode,
+      ["auth", "list", "--standalone"],
+      env,
+      workDir,
+    )
+    if (!/Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/m.test(auth)) {
+      process.stderr.write(auth)
+      fail("Imported Claude account label was not shown")
+    }
+
+    const modelsRaw = readFileSync(modelsPath, "utf8")
+    const models: Array<{ cost: unknown[] }> = []
+    collectAnthropicModels(JSON.parse(modelsRaw), models)
+    if (
+      models.length === 0 ||
+      models.some((model) => model.cost.length !== 0)
+    ) {
+      fail("Anthropic subscription models did not have zeroed costs")
+    }
+
+    const output = await run(
+      opencode,
+      [
+        "run",
+        "--standalone",
+        "--auto",
+        "--format",
+        "json",
+        "--model",
+        MODEL,
+        `Use the read tool to read ${join(workDir, "smoke.txt")}, then reply with exactly the file contents.`,
+      ],
+      env,
+      workDir,
+    )
+    if (
+      !output.includes(SENTINEL) ||
+      !output.includes('"type":"tool_use"') ||
+      !output.includes('"tool":"read"') ||
+      output.includes('"tool":"mcp_')
+    ) {
+      process.stderr.write(output)
+      fail("Tool round trip did not return the sentinel under OpenCode names")
+    }
+
+    if (mock) {
+      mock.verify()
+      console.log(
+        `Packed OpenCode ${HOST_VERSION} offline tool round trip passed with ${MODEL}${customModel ? " (custom model)" : ""}`,
+      )
+      return
+    }
+
+    const current = parseCredentials(
+      readFileSync(join(source.configDir, ".credentials.json"), "utf8"),
+    )
+    if (
+      source.refreshExpected &&
+      (!current ||
+        current.accessToken === source.initialAccess ||
+        current.expiresAt < Date.now() + 5 * 60_000)
+    ) {
+      fail("Near-expiry refresh did not rotate and write back credentials")
+    }
+
+    console.log(`Packed OpenCode v2 smoke test passed with ${MODEL}`)
+  } finally {
+    await mock?.close()
   }
-
-  const login = run(
-    opencode,
-    ["auth", "login", "anthropic", "--method", "claude-code", "--standalone"],
-    env,
-    workDir,
-  )
-  if (/https?:\/\//.test(login))
-    fail("Auto import unexpectedly displayed a URL")
-
-  const auth = run(opencode, ["auth", "list", "--standalone"], env, workDir)
-  if (!/Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/m.test(auth)) {
-    fail("Imported Claude account label was not shown", {
-      stdout: auth,
-    } as ReturnType<typeof spawnSync>)
-  }
-
-  const modelsRaw = run(
-    opencode,
-    ["api", "--standalone", "get", "/api/model"],
-    env,
-    workDir,
-  )
-  const models: Array<{ cost: unknown[] }> = []
-  collectAnthropicModels(JSON.parse(modelsRaw), models)
-  if (models.length === 0 || models.some((model) => model.cost.length !== 0)) {
-    fail("Anthropic subscription models did not have zeroed costs")
-  }
-
-  const output = run(
-    opencode,
-    [
-      "run",
-      "--standalone",
-      "--auto",
-      "--format",
-      "json",
-      "--model",
-      MODEL,
-      `Use the read tool to read ${join(workDir, "smoke.txt")}, then reply with exactly the file contents.`,
-    ],
-    env,
-    workDir,
-  )
-  if (
-    !output.includes(SENTINEL) ||
-    !output.includes('"type":"tool_use"') ||
-    !output.includes('"tool":"read"') ||
-    output.includes("mcp_")
-  ) {
-    process.stderr.write(output)
-    fail("Tool round trip did not return the sentinel under OpenCode names")
-  }
-
-  const current = parseCredentials(
-    readFileSync(join(source.configDir, ".credentials.json"), "utf8"),
-  )
-  if (
-    source.refreshExpected &&
-    (!current ||
-      current.accessToken === source.initialAccess ||
-      current.expiresAt < Date.now() + 5 * 60_000)
-  ) {
-    fail("Near-expiry refresh did not rotate and write back credentials")
-  }
-
-  console.log(`Packed OpenCode v2 smoke test passed with ${MODEL}`)
 }
 
 try {
-  main()
+  await main()
+} catch (error) {
+  // The sandbox is removed below (it can hold a copied token), so the
+  // plugin's own account of the failure is printed before it goes.
+  try {
+    process.stderr.write(
+      `--- plugin.log ---\n${readFileSync(join(root, "plugin.log"), "utf8")}`,
+    )
+  } catch {
+    // No log was written.
+  }
+  throw error
 } finally {
   if (process.env.HEADLESS_KEEP) {
     console.log(`HEADLESS_KEEP set; sandbox preserved at ${root}`)

@@ -1,9 +1,11 @@
-import type { Credential } from "@opencode-ai/plugin"
-import { log } from "./logger.ts"
+import type { Credential } from "@opencode/plugin"
+import { setTimeout as sleep } from "node:timers/promises"
+import { isRecord, parseJsonRecord } from "./json.ts"
+import { errorMessage, log, warn } from "./logger.ts"
 import {
-  readAllClaudeAccounts,
-  refreshAccount,
+  readSourceCredentials,
   credentialSourceID,
+  isKnownCredentialSource,
   tokenFingerprint,
   writeBackCredentials,
   type ClaudeAccount,
@@ -13,16 +15,18 @@ import {
 import {
   classifyRefreshFailure,
   clearRefreshOutcome,
-  getRefreshCooldownUntil,
+  cooldownRemainingMs,
   getRefreshFailureKind,
-  isRefreshCooldownActive,
   noteRefreshTerminal,
+  MAX_CONSECUTIVE_TRANSIENT,
   noteRefreshTransient,
+  transientFailureCount,
 } from "./refresh-backoff.ts"
-import { acquireRefreshLock, type RefreshLock } from "./refresh-lock.ts"
+import { acquireRefreshLock, type LockAttempt } from "./refresh-lock.ts"
 
 export const INTEGRATION_ID = "anthropic"
-export const METHOD_ID = "claude-code"
+/** Branded by the host SDK; the one cast lives here instead of at each use. */
+export const METHOD_ID = "claude-code" as Credential.OAuth["methodID"]
 export const OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 export const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 export const OAUTH_SCOPE = [
@@ -36,20 +40,22 @@ export const OAUTH_SCOPE = [
 const OAUTH_TIMEOUT_MS = 30_000
 const LOCK_ADOPT_WAIT_MS = 5_000
 const LOCK_ADOPT_POLL_MS = 250
+/** Suggested wait when another process's refresh did not land in time. */
+const REFRESH_IN_PROGRESS_RETRY_MS = 5_000
 
-export interface ClaudeCredentialMetadata extends Record<string, unknown> {
+interface ClaudeCredentialMetadata extends Record<string, unknown> {
   source: string
   configDir?: string
   accountLabel: string
   sourceTokenHash: string
 }
 
-export interface AccountAnswer {
+interface AccountAnswer {
   account?: string | number | boolean | readonly string[]
   [key: string]: string | number | boolean | readonly string[] | undefined
 }
 
-export interface OAuthMethodForm {
+interface OAuthMethodForm {
   key: string
   type: "string"
   title: string
@@ -57,7 +63,7 @@ export interface OAuthMethodForm {
   options: Array<{ value: string; label: string }>
 }
 
-export type RefreshOutcome =
+type RefreshOutcome =
   | { kind: "ok"; credentials: ClaudeCredentials }
   | {
       kind: "transient"
@@ -67,36 +73,41 @@ export type RefreshOutcome =
     }
   | { kind: "terminal"; status: number; oauthError?: string }
 
-export type CredentialRefreshKind =
-  | "unchanged"
-  | "adopted"
-  | "refreshed"
-  | "transient"
-
-export interface CredentialRefreshResult {
-  credential: Credential.OAuth
-  kind: CredentialRefreshKind
-}
+/**
+ * `transient` keeps the credential it was given and says how long to wait
+ * before asking again.
+ */
+export type CredentialRefreshResult =
+  | {
+      credential: Credential.OAuth
+      kind: "unchanged" | "adopted" | "refreshed"
+    }
+  | { credential: Credential.OAuth; kind: "transient"; retryAfterMs: number }
 
 export interface CredentialDependencies {
-  readAccounts: () => ClaudeAccount[]
-  readSource: (source: string, configDir?: string) => ClaudeCredentials | null
+  readSource: (
+    source: string,
+    configDir?: string,
+  ) => Promise<ClaudeCredentials | null>
   writeSource: (
     source: string,
     credentials: ClaudeCredentials,
     configDir: string | undefined,
     expectedAccessToken: string,
-  ) => WriteBackResult
+  ) => Promise<WriteBackResult>
   fetch: typeof fetch
-  acquireLock: (source: string) => RefreshLock | null
+  acquireLock: (source: string) => LockAttempt
   now: () => number
   sleep: (ms: number) => Promise<void>
   lockWaitMs: number
-  lockPollMs: number
-  oauthTimeoutMs: number
 }
 
-const inFlightRefreshes = new Map<string, Promise<CredentialRefreshResult>>()
+interface InFlightRefresh {
+  credentialKey: string
+  result: Promise<CredentialRefreshResult>
+}
+
+const inFlightRefreshes = new Map<string, InFlightRefresh>()
 
 function refreshSourceKey(metadata: ClaudeCredentialMetadata): string {
   return credentialSourceID(metadata.source, metadata.configDir)
@@ -126,9 +137,8 @@ function adaptJoinedResult(
   credential: Credential.OAuth,
   metadata: ClaudeCredentialMetadata,
 ): CredentialRefreshResult {
-  if (result.kind === "transient" || result.kind === "unchanged") {
-    return { credential, kind: result.kind }
-  }
+  if (result.kind === "transient") return { ...result, credential }
+  if (result.kind === "unchanged") return { credential, kind: "unchanged" }
   const resultMetadata = readMetadata(result.credential)
   return {
     kind: result.kind,
@@ -147,16 +157,13 @@ function dependencies(
   overrides: Partial<CredentialDependencies> = {},
 ): CredentialDependencies {
   return {
-    readAccounts: readAllClaudeAccounts,
-    readSource: refreshAccount,
+    readSource: readSourceCredentials,
     writeSource: writeBackCredentials,
     fetch: globalThis.fetch,
     acquireLock: acquireRefreshLock,
     now: Date.now,
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep,
     lockWaitMs: LOCK_ADOPT_WAIT_MS,
-    lockPollMs: LOCK_ADOPT_POLL_MS,
-    oauthTimeoutMs: OAUTH_TIMEOUT_MS,
     ...overrides,
   }
 }
@@ -193,18 +200,19 @@ export function createOAuthCredential(
   return credential
 }
 
-export function authorizeAccount(
+export async function authorizeAccount(
   startupAccounts: ClaudeAccount[],
   answer: AccountAnswer,
   overrides: Partial<CredentialDependencies> = {},
-): Credential.OAuth {
+): Promise<Credential.OAuth> {
   const deps = dependencies(overrides)
-  if (startupAccounts.length > 1 && typeof answer.account !== "string") {
+  const answered = answer.account
+  if (startupAccounts.length > 1 && typeof answered !== "string") {
     throw new Error("Select a registered Claude Code account")
   }
   const requested =
-    startupAccounts.length > 1
-      ? (answer.account as string)
+    typeof answered === "string" && startupAccounts.length > 1
+      ? answered
       : startupAccounts[0]?.source
 
   if (!requested) {
@@ -220,19 +228,13 @@ export function authorizeAccount(
     throw new Error("The selected Claude Code account was not registered")
   }
 
-  const account = deps
-    .readAccounts()
-    .find(
-      (candidate) =>
-        candidate.source === selected.source &&
-        candidate.configDir === selected.configDir,
-    )
-  if (!account) {
+  const credentials = await deps.readSource(selected.source, selected.configDir)
+  if (!credentials) {
     throw new Error(
       "The selected Claude Code account is no longer available. Restart the OpenCode service to refresh the account list.",
     )
   }
-  return createOAuthCredential(account)
+  return createOAuthCredential({ ...selected, credentials })
 }
 
 export function credentialLabel(
@@ -259,6 +261,9 @@ export function readMetadata(
   const { source, configDir, accountLabel, sourceTokenHash } = metadata
   if (
     typeof source !== "string" ||
+    // Validated here, at the one gate every consumer passes through, rather
+    // than at each place that hands `source` to a subprocess.
+    !isKnownCredentialSource(source) ||
     typeof accountLabel !== "string" ||
     typeof sourceTokenHash !== "string" ||
     (configDir !== undefined && typeof configDir !== "string")
@@ -274,19 +279,11 @@ function fromSourceCredentials(
 ): Credential.OAuth {
   return {
     type: "oauth",
-    methodID: METHOD_ID as Credential.OAuth["methodID"],
+    methodID: METHOD_ID,
     access: credentials.accessToken,
     refresh: credentials.refreshToken,
     expires: Math.trunc(credentials.expiresAt),
     metadata,
-  }
-}
-
-function fromOAuthCredential(credential: Credential.OAuth): ClaudeCredentials {
-  return {
-    accessToken: credential.access,
-    refreshToken: credential.refresh,
-    expiresAt: credential.expires,
   }
 }
 
@@ -296,29 +293,29 @@ function usable(credentials: ClaudeCredentials, now: number): boolean {
   )
 }
 
-function safeReadSource(
+async function safeReadSource(
   metadata: ClaudeCredentialMetadata,
   deps: CredentialDependencies,
-): ClaudeCredentials | null {
+): Promise<ClaudeCredentials | null> {
   try {
-    return deps.readSource(metadata.source, metadata.configDir)
+    return await deps.readSource(metadata.source, metadata.configDir)
   } catch (error) {
     log("source_read_failed", {
       source: metadata.source,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     })
     return null
   }
 }
 
-export function adoptExternalCredential(
+export async function adoptExternalCredential(
   credential: Credential.OAuth,
   overrides: Partial<CredentialDependencies> = {},
-): CredentialRefreshResult {
+): Promise<CredentialRefreshResult> {
   const deps = dependencies(overrides)
   const metadata = readMetadata(credential)
   if (!metadata) return { credential, kind: "unchanged" }
-  const stored = safeReadSource(metadata, deps)
+  const stored = await safeReadSource(metadata, deps)
   return adoptStoredCredential(credential, metadata, stored, deps)
 }
 
@@ -328,21 +325,18 @@ function adoptStoredCredential(
   stored: ClaudeCredentials | null,
   deps: CredentialDependencies,
 ): CredentialRefreshResult {
-  if (
-    !stored ||
-    !usable(stored, deps.now()) ||
-    tokenFingerprint(stored.accessToken) === metadata.sourceTokenHash
-  ) {
+  if (!stored || !usable(stored, deps.now())) {
+    return { credential, kind: "unchanged" }
+  }
+  const sourceTokenHash = tokenFingerprint(stored.accessToken)
+  if (sourceTokenHash === metadata.sourceTokenHash) {
     return { credential, kind: "unchanged" }
   }
 
   clearCredentialRefreshOutcome(credential, metadata)
   log("credential_adopted", { source: metadata.source })
   return {
-    credential: fromSourceCredentials(stored, {
-      ...metadata,
-      sourceTokenHash: tokenFingerprint(stored.accessToken),
-    }),
+    credential: fromSourceCredentials(stored, { ...metadata, sourceTokenHash }),
     kind: "adopted",
   }
 }
@@ -358,40 +352,11 @@ function parseRetryAfterMs(
   return Number.isFinite(date) && date > now ? date - now : undefined
 }
 
-export function extractOAuthError(raw: string): {
-  oauthError?: string
-  oauthErrorDescription?: string
-} {
-  let value: unknown
-  try {
-    value = JSON.parse(raw)
-  } catch {
-    return {}
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  const data = value as {
-    error?: unknown
-    error_description?: unknown
-  }
-  const result: {
-    oauthError?: string
-    oauthErrorDescription?: string
-  } = {}
-  if (typeof data.error === "string") {
-    result.oauthError = data.error.slice(0, 200)
-  } else if (data.error && typeof data.error === "object") {
-    const nested = data.error as { type?: unknown; message?: unknown }
-    if (typeof nested.type === "string") {
-      result.oauthError = nested.type.slice(0, 200)
-    }
-    if (typeof nested.message === "string") {
-      result.oauthErrorDescription = nested.message.slice(0, 500)
-    }
-  }
-  if (typeof data.error_description === "string") {
-    result.oauthErrorDescription = data.error_description.slice(0, 500)
-  }
-  return result
+/** The OAuth error code in a token-endpoint error body, if it has one. */
+function extractOAuthError(raw: string): string | undefined {
+  const data = parseJsonRecord(raw)
+  const code = isRecord(data?.error) ? data.error.type : data?.error
+  return typeof code === "string" ? code.slice(0, 200) : undefined
 }
 
 export function parseOAuthResponse(
@@ -399,19 +364,8 @@ export function parseOAuthResponse(
   currentRefreshToken: string,
   now: number = Date.now(),
 ): ClaudeCredentials | null {
-  let data: {
-    access_token?: unknown
-    refresh_token?: unknown
-    expires_in?: unknown
-    expires_at?: unknown
-  }
-  try {
-    const value: unknown = JSON.parse(raw)
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null
-    data = value as typeof data
-  } catch {
-    return null
-  }
+  const data = parseJsonRecord(raw)
+  if (!data) return null
   if (
     typeof data.access_token !== "string" ||
     data.access_token.trim().length === 0
@@ -442,7 +396,7 @@ export function parseOAuthResponse(
   return {
     accessToken: data.access_token,
     refreshToken:
-      typeof data.refresh_token === "string" && data.refresh_token
+      typeof data.refresh_token === "string"
         ? data.refresh_token
         : currentRefreshToken,
     expiresAt: Math.trunc(expiresAt),
@@ -454,8 +408,6 @@ export async function exchangeRefreshToken(
   overrides: Partial<CredentialDependencies> = {},
 ): Promise<RefreshOutcome> {
   const deps = dependencies(overrides)
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), deps.oauthTimeoutMs)
   try {
     const response = await deps.fetch(OAUTH_TOKEN_URL, {
       method: "POST",
@@ -466,18 +418,18 @@ export async function exchangeRefreshToken(
         refresh_token: refreshToken,
         scope: OAUTH_SCOPE,
       }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(OAUTH_TIMEOUT_MS),
     })
     const raw = await response.text()
     if (!response.ok) {
-      const detail = extractOAuthError(raw)
-      const kind = classifyRefreshFailure(response.status, detail.oauthError)
+      const oauthError = extractOAuthError(raw)
+      const kind = classifyRefreshFailure(oauthError)
       return kind === "terminal"
-        ? { kind, status: response.status, oauthError: detail.oauthError }
+        ? { kind, status: response.status, oauthError }
         : {
             kind,
             status: response.status,
-            oauthError: detail.oauthError,
+            oauthError,
             retryAfterMs: parseRetryAfterMs(
               response.headers.get("retry-after"),
               deps.now(),
@@ -489,13 +441,19 @@ export async function exchangeRefreshToken(
       ? { kind: "ok", credentials }
       : { kind: "transient", status: response.status }
   } catch (error) {
+    // Network failures, timeouts, and aborts all reach this catch. The logged
+    // error name tells them apart, and tells them from a bug.
     log("refresh_request_failed", {
-      error: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : typeof error,
+      error: errorMessage(error),
     })
     return { kind: "transient", status: 0 }
-  } finally {
-    clearTimeout(timer)
   }
+}
+
+function describeTransient(status: number, oauthError?: string): string {
+  if (status === 0) return "network error"
+  return oauthError ? `HTTP ${status}: ${oauthError}` : `HTTP ${status}`
 }
 
 export class ClaudeAuthTerminalError extends Error {
@@ -507,19 +465,58 @@ export class ClaudeAuthTerminalError extends Error {
   }
 }
 
+/**
+ * Refreshing kept failing for reasons that say nothing against the refresh
+ * token itself: the network, the token endpoint, or the credential store.
+ * Unlike {@link ClaudeAuthTerminalError} nothing is latched; the next attempt
+ * after the cooldown goes out as usual, so recovery needs no restart.
+ */
+export class ClaudeAuthRefreshExhaustedError extends Error {
+  constructor(failures: number, cause: string) {
+    super(
+      `Claude Code token refresh has failed ${failures} times in a row (${cause}). Check your network connection; the plugin keeps retrying.`,
+    )
+    this.name = "ClaudeAuthRefreshExhaustedError"
+  }
+}
+
 async function waitForExternalCredential(
   credential: Credential.OAuth,
   deps: CredentialDependencies,
 ): Promise<CredentialRefreshResult> {
   const deadline = deps.now() + deps.lockWaitMs
-  let adopted = adoptExternalCredential(credential, deps)
+  let adopted = await adoptExternalCredential(credential, deps)
   while (adopted.kind !== "adopted" && deps.now() < deadline) {
-    await deps.sleep(deps.lockPollMs)
-    adopted = adoptExternalCredential(credential, deps)
+    await deps.sleep(LOCK_ADOPT_POLL_MS)
+    adopted = await adoptExternalCredential(credential, deps)
   }
   return adopted.kind === "adopted"
     ? adopted
-    : { credential, kind: "transient" }
+    : {
+        credential,
+        kind: "transient",
+        retryAfterMs: REFRESH_IN_PROGRESS_RETRY_MS,
+      }
+}
+
+/**
+ * Why a refresh must not proceed for this credential right now: a terminal
+ * failure already recorded for exactly this token, or an active cooldown for
+ * its source. Null when the refresh may go ahead.
+ */
+function refreshBlocked(
+  credential: Credential.OAuth,
+  credentialKey: string,
+  sourceKey: string,
+  deps: CredentialDependencies,
+): CredentialRefreshResult | null {
+  if (getRefreshFailureKind(credentialKey) === "terminal") {
+    throw new ClaudeAuthTerminalError()
+  }
+  const retryAfterMs = cooldownRemainingMs(sourceKey, deps.now())
+  return retryAfterMs > 0
+    ? { credential, kind: "transient", retryAfterMs }
+    : null
 }
 
 async function performCredentialRefresh(
@@ -531,20 +528,60 @@ async function performCredentialRefresh(
   const sourceKey = refreshSourceKey(metadata)
   const credentialKey = refreshCredentialKey(credential, metadata)
 
-  const adopted = adoptExternalCredential(credential, deps)
+  const adopted = await adoptExternalCredential(credential, deps)
   if (adopted.kind === "adopted") return adopted
-  if (getRefreshFailureKind(credentialKey) === "terminal") {
-    throw new ClaudeAuthTerminalError()
-  }
-  if (isRefreshCooldownActive(sourceKey, deps.now())) {
-    return { credential, kind: "transient" }
-  }
+  const blocked = refreshBlocked(credential, credentialKey, sourceKey, deps)
+  if (blocked) return blocked
 
-  const lock = deps.acquireLock(sourceKey)
-  if (!lock) return waitForExternalCredential(credential, deps)
+  const attempt = deps.acquireLock(sourceKey)
+  if (attempt.kind === "busy")
+    return waitForExternalCredential(credential, deps)
+  if (attempt.kind === "cooldown") {
+    // Another process failed and is backing off, so no credential is coming.
+    const retryAfterMs = Math.max(0, attempt.until - deps.now())
+    log("refresh_cooldown_elsewhere", { source: metadata.source, retryAfterMs })
+    return { credential, kind: "transient", retryAfterMs }
+  }
+  const { lock } = attempt
+
+  /**
+   * Record a transient failure, then either back off quietly or, past the
+   * ceiling, tell the user. Nothing is latched: the next attempt after the
+   * cooldown goes out as usual.
+   */
+  const transient = (
+    cause: string,
+    retryAfterMs?: number,
+  ): CredentialRefreshResult => {
+    const cooldownMs = noteRefreshTransient(sourceKey, {
+      retryAfterMs,
+      now: deps.now(),
+    })
+    lock.defer(cooldownMs)
+    const failures = transientFailureCount(sourceKey)
+    log("refresh_transient", {
+      source: metadata.source,
+      cause,
+      cooldownMs,
+      failures,
+    })
+    if (failures >= MAX_CONSECUTIVE_TRANSIENT) {
+      throw new ClaudeAuthRefreshExhaustedError(failures, cause)
+    }
+    return { credential, kind: "transient", retryAfterMs: cooldownMs }
+  }
 
   try {
-    const priorSource = safeReadSource(metadata, deps)
+    let priorSource: ClaudeCredentials | null
+    try {
+      priorSource = await deps.readSource(metadata.source, metadata.configDir)
+    } catch (error) {
+      // Refreshing blind would rotate the token Claude Code holds with no way
+      // to write the replacement back. That would sign the CLI out.
+      return transient(
+        `Claude Code credentials could not be read: ${errorMessage(error)}`,
+      )
+    }
     const afterLock = adoptStoredCredential(
       credential,
       metadata,
@@ -552,38 +589,33 @@ async function performCredentialRefresh(
       deps,
     )
     if (afterLock.kind === "adopted") return afterLock
-    if (getRefreshFailureKind(credentialKey) === "terminal") {
-      throw new ClaudeAuthTerminalError()
-    }
-    if (isRefreshCooldownActive(sourceKey, deps.now())) {
-      return { credential, kind: "transient" }
-    }
+    const blockedAfterLock = refreshBlocked(
+      credential,
+      credentialKey,
+      sourceKey,
+      deps,
+    )
+    if (blockedAfterLock) return blockedAfterLock
 
-    const sourceChanged =
-      priorSource !== null &&
-      tokenFingerprint(priorSource.accessToken) !== metadata.sourceTokenHash
-    const refreshToken = sourceChanged
-      ? priorSource.refreshToken
-      : credential.refresh
-    if (!lock.extend(deps.oauthTimeoutMs + 15_000)) {
+    const priorSourceHash = priorSource
+      ? tokenFingerprint(priorSource.accessToken)
+      : null
+    const refreshToken =
+      priorSource && priorSourceHash !== metadata.sourceTokenHash
+        ? priorSource.refreshToken
+        : credential.refresh
+    if (!lock.extend(OAUTH_TIMEOUT_MS + 15_000)) {
       return waitForExternalCredential(credential, deps)
     }
     const outcome = await exchangeRefreshToken(refreshToken, deps)
     if (outcome.kind === "transient") {
-      const cooldownMs = noteRefreshTransient(sourceKey, {
-        retryAfterMs: outcome.retryAfterMs,
-      })
-      lock.defer(cooldownMs)
-      log("refresh_transient", {
-        source: metadata.source,
-        status: outcome.status,
-        oauthError: outcome.oauthError,
-        cooldownMs,
-      })
-      return { credential, kind: "transient" }
+      return transient(
+        describeTransient(outcome.status, outcome.oauthError),
+        outcome.retryAfterMs,
+      )
     }
     if (outcome.kind === "terminal") {
-      const winner = adoptExternalCredential(credential, deps)
+      const winner = await adoptExternalCredential(credential, deps)
       if (winner.kind === "adopted") return winner
       noteRefreshTerminal(credentialKey)
       log("refresh_terminal", {
@@ -595,25 +627,37 @@ async function performCredentialRefresh(
     }
 
     clearCredentialRefreshOutcome(credential, metadata)
-    const expectedAccessToken =
-      priorSource?.accessToken ?? fromOAuthCredential(credential).accessToken
-    const writeResult = deps.writeSource(
+    const expectedAccessToken = priorSource?.accessToken ?? credential.access
+    const writeResult = await deps.writeSource(
       metadata.source,
       outcome.credentials,
       metadata.configDir,
       expectedAccessToken,
     )
-    if (writeResult === "conflict") {
-      const winner = adoptExternalCredential(credential, deps)
-      if (winner.kind === "adopted") return winner
-    }
 
-    const sourceTokenHash =
-      writeResult === "written"
-        ? tokenFingerprint(outcome.credentials.accessToken)
-        : priorSource
-          ? tokenFingerprint(priorSource.accessToken)
-          : metadata.sourceTokenHash
+    let sourceTokenHash = priorSourceHash ?? metadata.sourceTokenHash
+    switch (writeResult) {
+      case "written":
+        sourceTokenHash = tokenFingerprint(outcome.credentials.accessToken)
+        break
+      case "conflict": {
+        const winner = await adoptExternalCredential(credential, deps)
+        if (winner.kind === "adopted") return winner
+        break
+      }
+      case "failed":
+      case "unavailable":
+        warn(
+          "refresh_writeback_failed",
+          `refreshed Claude Code credentials could not be saved to ${describeSource(metadata)}. OpenCode keeps working, but the \`claude\` CLI will need to sign in again once its current token expires.`,
+          { source: metadata.source, reason: writeResult },
+        )
+        break
+      default: {
+        const unhandled: never = writeResult
+        throw new Error(`unhandled write-back result ${String(unhandled)}`)
+      }
+    }
     log("refresh_success", { source: metadata.source, writeResult })
     return {
       credential: fromSourceCredentials(outcome.credentials, {
@@ -627,6 +671,12 @@ async function performCredentialRefresh(
   }
 }
 
+function describeSource(metadata: ClaudeCredentialMetadata): string {
+  return metadata.source === "file"
+    ? "the Claude Code credentials file"
+    : `the macOS Keychain item "${metadata.source}"`
+}
+
 export async function refreshClaudeCredentialDetailed(
   credential: Credential.OAuth,
   overrides: Partial<CredentialDependencies> = {},
@@ -634,44 +684,37 @@ export async function refreshClaudeCredentialDetailed(
   const metadata = readMetadata(credential)
   if (!metadata) return { credential, kind: "unchanged" }
   const sourceKey = refreshSourceKey(metadata)
+  const credentialKey = refreshCredentialKey(credential, metadata)
 
   const existing = inFlightRefreshes.get(sourceKey)
   if (existing) {
-    return adaptJoinedResult(await existing, credential, metadata)
+    try {
+      return adaptJoinedResult(await existing.result, credential, metadata)
+    } catch (error) {
+      // A terminal outcome is about the leader's refresh token. A joiner
+      // holding a newer generation of the same source still has its own.
+      if (
+        !(error instanceof ClaudeAuthTerminalError) ||
+        existing.credentialKey === credentialKey
+      ) {
+        throw error
+      }
+    }
   }
 
   const deps = dependencies(overrides)
-  const pending = performCredentialRefresh(credential, deps)
+  const pending: InFlightRefresh = {
+    credentialKey,
+    result: performCredentialRefresh(credential, deps),
+  }
   inFlightRefreshes.set(sourceKey, pending)
   try {
-    return await pending
+    return await pending.result
   } finally {
     if (inFlightRefreshes.get(sourceKey) === pending) {
       inFlightRefreshes.delete(sourceKey)
     }
   }
-}
-
-export async function refreshClaudeCredential(
-  credential: Credential.OAuth,
-  overrides: Partial<CredentialDependencies> = {},
-): Promise<Credential.OAuth> {
-  return (await refreshClaudeCredentialDetailed(credential, overrides))
-    .credential
-}
-
-export function refreshRetryAfterSeconds(
-  credential: Credential.OAuth,
-  now: number = Date.now(),
-): number {
-  const metadata = readMetadata(credential)
-  const until = metadata
-    ? getRefreshCooldownUntil(refreshSourceKey(metadata))
-    : null
-  return Math.max(
-    1,
-    Math.min(60, Math.ceil(((until ?? now + 5_000) - now) / 1000)),
-  )
 }
 
 export function resetCredentialStateForTests(): void {

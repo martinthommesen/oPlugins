@@ -2,36 +2,7 @@ import { createHash } from "node:crypto"
 
 const BILLING_SALT = "59cf53e54c78"
 
-interface Message {
-  role?: string
-  content?: string | Array<{ type?: string; text?: string }>
-}
-
-/**
- * Extract text from the first user message's first text block.
- * Matches Claude Code's K19() function exactly: find the first message
- * with role "user", then return the text of its first text content block.
- */
-export function extractFirstUserMessageText(messages: Message[]): string {
-  const userMsg = messages.find((m) => m.role === "user")
-  if (!userMsg) return ""
-  const content = userMsg.content
-  if (typeof content === "string") return content
-  if (Array.isArray(content)) {
-    const textBlock = content.find((b) => b.type === "text")
-    if (textBlock && textBlock.type === "text" && textBlock.text) {
-      return textBlock.text
-    }
-  }
-  return ""
-}
-
-/**
- * Compute cch: first 5 hex characters of SHA-256(messageText).
- */
-export function computeCch(messageText: string): string {
-  return createHash("sha256").update(messageText).digest("hex").slice(0, 5)
-}
+export const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
 
 /**
  * Compute the 3-char version suffix.
@@ -52,20 +23,21 @@ export function computeVersionSuffix(
 
 /**
  * Build the complete billing header string for insertion into system[0].
- * Format: x-anthropic-billing-header: cc_version=V.S; cc_entrypoint=E; cch=H;
+ * `text` is the first user message's first text block, as Claude Code's own
+ * extraction selects it.
+ * Format: x-anthropic-billing-header: cc_version=V.S; cc_entrypoint=E; cch=00000;
  */
 export function buildBillingHeaderValue(
-  messages: Message[],
+  text: string,
   version: string,
   entrypoint: string,
 ): string {
-  const text = extractFirstUserMessageText(messages)
   const suffix = computeVersionSuffix(text, version)
-  const cch = computeCch(text)
   return (
-    `x-anthropic-billing-header: ` +
+    `${BILLING_HEADER_PREFIX} ` +
     `cc_version=${version}.${suffix}; ` +
     `cc_entrypoint=${entrypoint}; ` +
-    `cch=${cch};`
+    // The current CLI uses a fixed placeholder, not a user-message hash.
+    `cch=00000;`
   )
 }

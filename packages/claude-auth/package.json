@@ -12,7 +12,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/griffinmartin/opencode-claude-auth.git"
+    "url": "git+https://github.com/martinthommesen/opencode-claude-auth.git"
   },
   "files": [
     "dist"
@@ -26,21 +26,26 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc",
-    "test": "node --test --experimental-strip-types src/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "pretest": "node -e \"const n=require('node:fs').globSync('src/**/*.test.ts').length; if (n < 9) { console.error('expected at least 9 test files, found '+n); process.exit(1) }\"",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'",
     "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-headless.ts",
+    "test:host": "pnpm run test:headless --offline",
+    "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } })\"",
     "lint": "oxlint && oxfmt --check .",
     "lint:fix": "oxlint --fix . && oxfmt --write .",
     "format": "oxfmt --write .",
-    "prepublishOnly": "pnpm run lint && pnpm run build && pnpm test && pnpm pack --dry-run"
-  },
-  "dependencies": {
-    "@opencode-ai/plugin": "0.0.0-beta-18381"
+    "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run"
   },
   "devDependencies": {
+    "@opencode/plugin": "2.0.26",
     "@types/node": "^25.5.0",
     "oxfmt": "0.41.0",
     "oxlint": "1.56.0",
     "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=22.6.0"
   },
   "packageManager": "pnpm@10.32.1"
 }

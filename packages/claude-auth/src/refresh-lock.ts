@@ -2,14 +2,21 @@
  * Best-effort cross-process single flight for rotating OAuth refresh tokens.
  *
  * Lock files are monotonically numbered source-local tickets. Creating the next
- * ticket with O_EXCL is the single atomic winner commit. Released tickets stay
- * as expired tombstones until a successor exists, so ticket numbers never
- * reset and a stale holder can never target its successor's path.
+ * ticket with O_EXCL is the contention point, though it does not settle the
+ * winner on its own: a post-create supersession check can still withdraw the
+ * claim. Released tickets stay as expired tombstones until a successor exists,
+ * so ticket numbers never reset and a stale holder can never target its
+ * successor's path.
+ *
+ * Coordination is best-effort, not guaranteed. When the lock directory is
+ * unusable the module degrades to a lock that serializes nothing, because
+ * refusing to refresh would be the worse failure. That degradation is reported
+ * as `refresh_lock_degraded` and marked on the lock so callers and tests can
+ * tell it apart from a real acquisition.
  */
 import { createHash, randomUUID } from "node:crypto"
 import {
   closeSync,
-  ftruncateSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -18,20 +25,31 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs"
-import { homedir } from "node:os"
 import { join } from "node:path"
-import { log } from "./logger.ts"
+import { opencodeDataDir, positiveIntFromEnv } from "./env.ts"
+import { errorMessage, log } from "./logger.ts"
 
-export const DEFAULT_LOCK_TTL_MS = (() => {
-  const raw = process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 20_000
-})()
+/** Ceiling for a lease, so a mistyped TTL cannot park refreshes for days. */
+export const MAX_LOCK_TTL_MS = 120_000
+
+export const DEFAULT_LOCK_TTL_MS = Math.min(
+  MAX_LOCK_TTL_MS,
+  positiveIntFromEnv("OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS", 20_000),
+)
+
+/**
+ * Fixed payload width. A lease is rewritten in place, so a constant length
+ * keeps a concurrent reader from observing a truncated or half-overwritten
+ * claim and falling back to the mtime heuristic. JSON.parse ignores the pad.
+ */
+const LEASE_BYTES = 256
 
 export interface RefreshLock {
   extend(ms: number): boolean
   defer(ms: number): void
   release(): void
+  /** True when the lock serializes nothing because coordination is unavailable. */
+  degraded: boolean
 }
 
 export interface AcquireOptions {
@@ -47,10 +65,7 @@ interface Claim {
 }
 
 function defaultLockDir(): string {
-  return (
-    process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR ??
-    join(homedir(), ".local", "share", "opencode")
-  )
+  return process.env.OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR ?? opencodeDataDir()
 }
 
 function lockPrefix(source: string): string {
@@ -58,10 +73,19 @@ function lockPrefix(source: string): string {
   return `claude-auth-refresh-${digest}-`
 }
 
-const NOOP_LOCK: RefreshLock = {
-  extend: () => true,
-  defer() {},
-  release() {},
+/**
+ * The lock returned when the lock directory cannot be used. `extend` reports
+ * success because the alternative — failing every refresh on a machine whose
+ * lock directory is unwritable — is worse than an uncoordinated refresh.
+ */
+function degradedLock(source: string, error: unknown): RefreshLock {
+  log("refresh_lock_degraded", { source, error: errorMessage(error) })
+  return {
+    extend: () => true,
+    defer() {},
+    release() {},
+    degraded: true,
+  }
 }
 
 function readClaim(path: string, ticket: bigint, ttlMs: number): Claim | null {
@@ -87,6 +111,26 @@ function readClaim(path: string, ticket: bigint, ttlMs: number): Claim | null {
   }
 }
 
+function hasLiveClaim(claims: Claim[], now: number): boolean {
+  return claims.some((claim) => claim.expiresAt >= now)
+}
+
+function highestTicket(claims: Claim[], floor: bigint): bigint {
+  return claims.reduce(
+    (highest, claim) => (claim.ticket > highest ? claim.ticket : highest),
+    floor,
+  )
+}
+
+/** Another process committed a later ticket, or holds a live earlier one. */
+function superseded(claims: Claim[], ticket: bigint, now: number): boolean {
+  return claims.some(
+    (claim) =>
+      claim.ticket > ticket ||
+      (claim.ticket !== ticket && claim.expiresAt >= now),
+  )
+}
+
 function remove(path: string): void {
   try {
     unlinkSync(path)
@@ -100,13 +144,15 @@ export function acquireRefreshLock(
   opts: AcquireOptions = {},
 ): RefreshLock | null {
   const dir = opts.dir ?? defaultLockDir()
-  const ttlMs = opts.ttlMs ?? DEFAULT_LOCK_TTL_MS
+  const ttlMs = Math.min(MAX_LOCK_TTL_MS, opts.ttlMs ?? DEFAULT_LOCK_TTL_MS)
   const now = opts.now ?? Date.now
   const owner = randomUUID()
   const prefix = lockPrefix(source)
 
   try {
-    mkdirSync(dir, { recursive: true })
+    // Owner-only: a shared lock directory otherwise lets any local user park
+    // a long-lived claim and stall every refresh.
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
   } catch {
     // Scanning below determines whether coordination is available.
   }
@@ -126,16 +172,12 @@ export function acquireRefreshLock(
   try {
     claims = scan()
   } catch (error) {
-    log("refresh_lock_error", { source, error: String(error) })
-    return NOOP_LOCK
+    return degradedLock(source, error)
   }
 
-  if (claims.some((claim) => claim.expiresAt >= now())) return null
+  if (hasLiveClaim(claims, now())) return null
 
-  let ticket = claims.reduce(
-    (highest, claim) => (claim.ticket > highest ? claim.ticket : highest),
-    0n,
-  )
+  let ticket = highestTicket(claims, 0n)
   let path: string
   let fd: number
 
@@ -147,37 +189,33 @@ export function acquireRefreshLock(
       break
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        log("refresh_lock_error", {
+        return degradedLock(
           source,
-          error: String((error as NodeJS.ErrnoException).code ?? error),
-        })
-        return NOOP_LOCK
+          (error as NodeJS.ErrnoException).code ?? error,
+        )
       }
       try {
         claims = scan()
       } catch (scanError) {
-        log("refresh_lock_error", { source, error: String(scanError) })
-        return NOOP_LOCK
+        return degradedLock(source, scanError)
       }
-      if (claims.some((claim) => claim.expiresAt >= now())) return null
-      ticket = claims.reduce(
-        (highest, claim) => (claim.ticket > highest ? claim.ticket : highest),
-        ticket,
-      )
+      if (hasLiveClaim(claims, now())) return null
+      ticket = highestTicket(claims, ticket)
     }
   }
 
   const writeLease = (expiresAt: number): void => {
     try {
-      ftruncateSync(fd, 0)
-      writeSync(fd, JSON.stringify({ owner, pid: process.pid, expiresAt }), 0)
+      const payload = JSON.stringify({ owner, pid: process.pid, expiresAt })
+      writeSync(fd, payload.padEnd(LEASE_BYTES, " "), 0)
     } catch {
       // A concurrent scan treats the fresh claim mtime as a live lease.
     }
   }
   writeLease(now() + ttlMs)
 
-  const ownsTicket = (): boolean => {
+  /** This process's lease is still the one on disk and has not expired. */
+  const holdsLease = (): boolean => {
     try {
       const value = JSON.parse(readFileSync(path, "utf8")) as {
         owner?: unknown
@@ -186,55 +224,67 @@ export function acquireRefreshLock(
       return (
         value.owner === owner &&
         typeof value.expiresAt === "number" &&
-        value.expiresAt > now() &&
-        !scan().some(
-          (claim) =>
-            claim.ticket > ticket ||
-            (claim.ticket !== ticket && claim.expiresAt >= now()),
-        )
+        value.expiresAt > now()
       )
     } catch {
       return false
     }
   }
 
+  /** No other process has committed a later ticket. */
+  const stillFirst = (): boolean => {
+    try {
+      return !superseded(scan(), ticket, now())
+    } catch {
+      return false
+    }
+  }
+
+  const ownsTicket = (): boolean => holdsLease() && stillFirst()
+
   // A delayed contender may recreate a compacted lower ticket. A higher
   // ticket proves another process committed after this caller's first scan,
   // so this claim must withdraw before returning to the refresh path.
+  // Empty, not the pre-commit `claims`: the sweep below must only act on the
+  // post-commit scan, so a failed scan skips the sweep rather than falling
+  // back to stale information.
+  let settled: Claim[] = []
   try {
-    if (
-      scan().some(
-        (claim) =>
-          claim.ticket > ticket ||
-          (claim.ticket !== ticket && claim.expiresAt >= now()),
-      )
-    ) {
+    const fresh = scan()
+    if (superseded(fresh, ticket, now())) {
       writeLease(0)
       closeSync(fd)
       return null
     }
+    settled = fresh
   } catch (error) {
-    log("refresh_lock_error", { source, error: String(error) })
+    log("refresh_lock_error", { source, error: errorMessage(error) })
     // Filesystem errors degrade to best-effort after this point.
   }
 
   // The successor ticket now preserves monotonic ordering, so older expired
-  // tombstones can be removed without making any ticket reusable.
-  for (const claim of claims) {
-    if (claim.expiresAt < now()) remove(claim.path)
+  // tombstones can be removed without making any ticket reusable. This reads
+  // the post-commit scan: the pre-commit one can show a claim as expired that
+  // its holder has since revived, and unlinking that file strands the holder.
+  for (const claim of settled) {
+    if (claim.ticket !== ticket && claim.expiresAt < now()) remove(claim.path)
   }
 
   log("refresh_lock_acquired", { source, ticket: ticket.toString() })
   let deferred = false
   let released = false
   return {
+    degraded: false,
     extend(ms: number) {
       if (!ownsTicket()) {
         log("refresh_lock_lost", { source, ticket: ticket.toString() })
         return false
       }
       writeLease(now() + ms)
-      if (!ownsTicket()) {
+      // Only the supersession half needs re-checking: the lease was just
+      // written by this process, and re-reading it back is the single most
+      // expensive syscall on the refresh path.
+      if (!stillFirst()) {
         log("refresh_lock_lost", { source, ticket: ticket.toString() })
         return false
       }
@@ -242,6 +292,12 @@ export function acquireRefreshLock(
       return true
     },
     defer(ms: number) {
+      // Same ownership check extend() makes: reviving a lease this process no
+      // longer holds would republish a claim a successor has moved past.
+      if (!ownsTicket()) {
+        log("refresh_lock_lost", { source, ticket: ticket.toString() })
+        return
+      }
       deferred = true
       writeLease(now() + ms)
       log("refresh_lock_deferred", { source, ms })

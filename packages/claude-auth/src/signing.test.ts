@@ -1,84 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import {
-  extractFirstUserMessageText,
-  computeCch,
-  computeVersionSuffix,
-  buildBillingHeaderValue,
-} from "./signing.ts"
+import { computeVersionSuffix, buildBillingHeaderValue } from "./signing.ts"
 
 describe("signing", () => {
-  describe("extractFirstUserMessageText", () => {
-    it("extracts string content from user message", () => {
-      assert.equal(
-        extractFirstUserMessageText([{ role: "user", content: "hello" }]),
-        "hello",
-      )
-    })
-
-    it("extracts first text block from array content", () => {
-      assert.equal(
-        extractFirstUserMessageText([
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "first" },
-              { type: "text", text: "second" },
-            ],
-          },
-        ]),
-        "first",
-      )
-    })
-
-    it("skips non-user messages", () => {
-      assert.equal(
-        extractFirstUserMessageText([
-          { role: "assistant", content: "hi" },
-          { role: "user", content: "hello" },
-        ]),
-        "hello",
-      )
-    })
-
-    it("returns empty string when no user message", () => {
-      assert.equal(
-        extractFirstUserMessageText([{ role: "assistant", content: "hi" }]),
-        "",
-      )
-    })
-
-    it("returns empty string for empty messages array", () => {
-      assert.equal(extractFirstUserMessageText([]), "")
-    })
-
-    it("returns empty string when no text blocks in array content", () => {
-      assert.equal(
-        extractFirstUserMessageText([
-          {
-            role: "user",
-            content: [{ type: "image" }],
-          },
-        ]),
-        "",
-      )
-    })
-  })
-
-  describe("computeCch", () => {
-    it("matches test vector: 'hey' → fa690", () => {
-      assert.equal(computeCch("hey"), "fa690")
-    })
-
-    it("matches test vector: empty string → e3b0c", () => {
-      assert.equal(computeCch(""), "e3b0c")
-    })
-
-    it("matches test vector: long message", () => {
-      assert.equal(computeCch("Hello, how are you doing today?"), "852db")
-    })
-  })
-
   describe("computeVersionSuffix", () => {
     it("matches test vector: 'hey' + v2.1.37 → 0d9", () => {
       assert.equal(computeVersionSuffix("hey", "2.1.37"), "0d9")
@@ -89,9 +13,16 @@ describe("signing", () => {
     })
 
     it("pads short messages with '0' for OOB indices", () => {
-      // "hey" has length 3, so indices 4, 7, 20 all produce "0"
-      // sampled = "000"
-      assert.equal(computeVersionSuffix("hey", "2.1.37"), "0d9")
+      // "hey" is length 3, so indices 4, 7 and 20 all pad to "0" — the same
+      // sample any other sub-index-4 message produces.
+      assert.equal(
+        computeVersionSuffix("hey", "2.1.37"),
+        computeVersionSuffix("abc", "2.1.37"),
+      )
+      assert.notEqual(
+        computeVersionSuffix("hey", "2.1.37"),
+        computeVersionSuffix("heyxxxxx", "2.1.37"),
+      )
     })
 
     it("samples correct character indices from long message", () => {
@@ -106,59 +37,28 @@ describe("signing", () => {
     })
 
     it("handles empty string (all indices pad to '0')", () => {
-      const result = computeVersionSuffix("", "2.1.90")
-      assert.equal(typeof result, "string")
-      assert.equal(result.length, 3)
+      assert.equal(computeVersionSuffix("", "2.1.90"), "b39")
     })
   })
 
   describe("buildBillingHeaderValue", () => {
-    it("produces correct header for simple string message", () => {
-      const result = buildBillingHeaderValue(
-        [{ role: "user", content: "hey" }],
-        "2.1.112",
-        "sdk-cli",
-      )
+    it("produces correct header for the first user text", () => {
+      const result = buildBillingHeaderValue("hey", "2.1.295", "sdk-cli")
       assert.ok(
-        result.startsWith("x-anthropic-billing-header: cc_version=2.1.112."),
+        result.startsWith("x-anthropic-billing-header: cc_version=2.1.295."),
       )
       assert.ok(result.includes("cc_entrypoint=sdk-cli"))
-      assert.ok(result.includes("cch=fa690"))
+      assert.ok(result.includes("cch=00000;"))
     })
 
-    it("uses first text block from array content", () => {
-      const result = buildBillingHeaderValue(
-        [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "hey" },
-              { type: "text", text: "ignored" },
-            ],
-          },
-        ],
-        "2.1.112",
-        "sdk-cli",
-      )
-      assert.ok(
-        result.startsWith("x-anthropic-billing-header: cc_version=2.1.112."),
-      )
-      assert.ok(result.includes("cc_entrypoint=sdk-cli"))
-      assert.ok(result.includes("cch=fa690"))
-    })
-
-    it("handles missing user message (hashes empty string)", () => {
-      const result = buildBillingHeaderValue([], "2.1.112", "sdk-cli")
-      assert.ok(result.includes("cch=e3b0c"))
+    it("handles missing user message with the CLI's fixed cch placeholder", () => {
+      const result = buildBillingHeaderValue("", "2.1.295", "sdk-cli")
+      assert.ok(result.includes("cch=00000;"))
     })
 
     it("uses provided entrypoint", () => {
-      const result = buildBillingHeaderValue(
-        [{ role: "user", content: "hey" }],
-        "2.1.112",
-        "sdk-cli",
-      )
-      assert.ok(result.includes("cc_entrypoint=sdk-cli"))
+      const result = buildBillingHeaderValue("hey", "2.1.112", "cli")
+      assert.ok(result.includes("cc_entrypoint=cli;"))
     })
   })
 })

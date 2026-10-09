@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Target OpenCode 2.0.26 while retaining compatible V2 hosts back to 2.0.7.
+- Update Claude Code wire defaults to 2.1.295 and its bundled SDK 0.128.0,
+  including the current billing checksum placeholder.
+- Apply subscription context transforms to title, compaction, and transient
+  generation requests, with separate tool-name fallbacks for each request kind.
+- Handle legacy dated model IDs, custom model aliases, new model families, and
+  deferred tool-search references without maintaining a model allowlist.
+- Exercise the packed plugin's streamed tool round trip against a local mock
+  API on both supported host versions in CI.
+
 ## [2.1.6](https://github.com/griffinmartin/opencode-claude-auth/compare/v2.1.5...v2.1.6) (2026-08-03)
 
 

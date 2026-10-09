@@ -9,7 +9,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { acquireRefreshLock } from "./refresh-lock.ts"
+import { acquireRefreshLock, MAX_LOCK_TTL_MS } from "./refresh-lock.ts"
 
 const SRC = "Claude Code-credentials"
 
@@ -33,9 +33,11 @@ describe("refresh-lock", () => {
   it("releases the lock so a later caller can acquire it", () => {
     const first = acquireRefreshLock(SRC, { dir })
     assert.ok(first)
+    assert.notEqual(first!.degraded, true, "a real lock, not the no-op")
     first!.release()
     const second = acquireRefreshLock(SRC, { dir })
     assert.ok(second, "the lock is available again after release")
+    assert.notEqual(second!.degraded, true)
     second!.release()
   })
 
@@ -51,6 +53,7 @@ describe("refresh-lock", () => {
       now: () => future,
     })
     assert.ok(takeover, "a stale lock is taken over")
+    assert.notEqual(takeover!.degraded, true)
     takeover!.release()
     held!.release()
   })
@@ -165,6 +168,13 @@ describe("refresh-lock", () => {
     const b = acquireRefreshLock("source-b", { dir })
     assert.ok(a, "source-a acquires")
     assert.ok(b, "source-b acquires independently")
+    assert.notEqual(a!.degraded, true)
+    assert.notEqual(b!.degraded, true)
+    assert.equal(
+      readdirSync(dir).filter((file) => file.endsWith(".lock")).length,
+      2,
+      "each source holds its own ticket",
+    )
     a!.release()
     b!.release()
   })
@@ -187,15 +197,55 @@ describe("refresh-lock", () => {
     successor!.release()
   })
 
-  it("degrades to best-effort (grants) when the lock dir is unusable", () => {
+  it("degrades to a marked no-op lock when the lock dir is unusable", () => {
     // Point at a path whose parent is a file, so mkdir/open cannot create the
     // lock. The lock must never block a refresh — it grants a no-op handle.
     const filePath = join(dir, "not-a-dir")
     // create a regular file, then use a path underneath it as the lock dir
     writeFileSync(filePath, "x")
-    const lock = acquireRefreshLock(SRC, { dir: join(filePath, "sub") })
+    const lockDir = join(filePath, "sub")
+    const lock = acquireRefreshLock(SRC, { dir: lockDir })
     assert.ok(lock, "an unusable lock dir degrades to a granted no-op lock")
+    // Without this the degraded lock is indistinguishable from a real one,
+    // and a caller cannot tell that nothing is being serialized.
+    assert.equal(lock!.degraded, true)
+    const second = acquireRefreshLock(SRC, { dir: lockDir })
+    assert.equal(
+      second!.degraded,
+      true,
+      "degradation grants every caller at once",
+    )
     lock!.release()
-    assert.ok(!existsSync(join(filePath, "sub")))
+    second!.release()
+    assert.ok(!existsSync(lockDir))
+  })
+
+  it("caps a lease so a mistyped TTL cannot park refreshes for days", () => {
+    const lock = acquireRefreshLock(SRC, { dir, ttlMs: 10 * 60 * 60 * 1000 })
+    assert.ok(lock)
+    const past = Date.now() + MAX_LOCK_TTL_MS + 1_000
+    const later = acquireRefreshLock(SRC, { dir, now: () => past })
+    assert.ok(later, "the capped lease expires and a successor takes over")
+    later!.release()
+    lock!.release()
+  })
+
+  it("will not revive a lease it no longer owns", () => {
+    const first = acquireRefreshLock(SRC, { dir, ttlMs: 20_000 })
+    assert.ok(first)
+    const future = Date.now() + 60_000
+    const successor = acquireRefreshLock(SRC, {
+      dir,
+      ttlMs: 20_000,
+      now: () => future,
+    })
+    assert.ok(successor, "the stale claim is superseded")
+
+    // The stale holder tries to keep its claim alive on the way out.
+    first!.defer(60_000)
+    const after = acquireRefreshLock(SRC, { dir, now: () => future })
+    assert.equal(after, null, "the successor still holds the lock")
+    successor!.release()
+    first!.release()
   })
 })

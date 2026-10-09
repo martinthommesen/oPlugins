@@ -1,10 +1,11 @@
-import { Plugin, type Credential } from "@opencode-ai/plugin"
-import type { Context } from "@opencode-ai/plugin/promise/plugin"
+import type { Credential } from "@opencode/plugin"
+import type { Context, Plugin } from "@opencode/plugin/promise/plugin"
 import type {
-  SessionContext,
   SessionHttpRequest,
   SessionHttpResponse,
-} from "@opencode-ai/plugin/promise/session"
+  SessionRequestKind,
+} from "@opencode/plugin/promise/session"
+import { setTimeout as sleep } from "node:timers/promises"
 import {
   adoptExternalCredential,
   authorizeAccount,
@@ -19,16 +20,33 @@ import {
   refreshRetryAfterSeconds,
 } from "./credentials.ts"
 import { readAllClaudeAccounts, type ClaudeAccount } from "./keychain.ts"
-import { closeLogger, initLogger, log } from "./logger.ts"
+import { closeLogger, errorMessage, initLogger, log } from "./logger.ts"
 import {
   buildRequestFromSnapshot,
   restoreResponseToolNames,
+  retryableRefreshResponse,
   transformContext,
   transformRequest,
+  type OriginalByAlias,
   type RequestSnapshot,
 } from "./transforms.ts"
 
 const SOURCE_CACHE_TTL_MS = 30_000
+const EVENT_RESUBSCRIBE_DELAY_MS = 1_000
+const DISPOSE_STEP_TIMEOUT_MS = 5_000
+/**
+ * Request contexts whose wire aliases are retained. Only a fallback for when the
+ * per-request state is unavailable, so evicting the coldest entry costs at
+ * most one response's tool-name restoration in a session that went quiet.
+ */
+const MAX_TRACKED_CONTEXTS = 512
+
+/**
+ * The host build this release targets. The single source for the pin: the
+ * compatibility error, the smoke test's CLI install, and its version check
+ * all read it, so bumping the host is one edit here plus `package.json`.
+ */
+export const REQUIRED_HOST_VERSION = "2.0.26"
 
 interface RequestState {
   credential: Credential.OAuth
@@ -40,8 +58,8 @@ function assertCapabilities(ctx: Context): void {
     ["integration.transform", ctx.integration?.transform],
     ["integration.connection.active", ctx.integration?.connection?.active],
     ["integration.connection.resolve", ctx.integration?.connection?.resolve],
-    ["catalog.transform", ctx.catalog?.transform],
-    ["catalog.reload", ctx.catalog?.reload],
+    ["model.transform", ctx.model?.transform],
+    ["model.reload", ctx.model?.reload],
     ["event.subscribe", ctx.event?.subscribe],
     ["session.hook", ctx.session?.hook],
   ]
@@ -50,7 +68,7 @@ function assertCapabilities(ctx: Context): void {
     .map(([name]) => name)
   if (missing.length > 0) {
     throw new Error(
-      `opencode-claude-auth requires the OpenCode v0.0.0-beta-18381 Promise plugin API (missing: ${missing.join(", ")})`,
+      `opencode-claude-auth requires a compatible OpenCode v2 Promise plugin API (target: v${REQUIRED_HOST_VERSION}; missing: ${missing.join(", ")})`,
     )
   }
 }
@@ -60,39 +78,65 @@ function sameCredential(
   right: Credential.OAuth,
 ): boolean {
   if (!left) return false
+  const leftMetadata = readMetadata(left)
+  const rightMetadata = readMetadata(right)
   return (
     left.access === right.access &&
-    readMetadata(left)?.source === readMetadata(right)?.source &&
-    readMetadata(left)?.configDir === readMetadata(right)?.configDir
+    leftMetadata?.source === rightMetadata?.source &&
+    leftMetadata?.configDir === rightMetadata?.configDir
   )
 }
 
-function retryableRefreshResponse(credential: Credential.OAuth): Response {
-  return new Response(
-    JSON.stringify({
-      type: "error",
-      error: {
-        type: "rate_limit_error",
-        message: "Claude token refresh is temporarily unavailable.",
-      },
-    }),
-    {
-      status: 429,
-      headers: {
-        "content-type": "application/json",
-        "retry-after": String(refreshRetryAfterSeconds(credential)),
-        "x-should-retry": "true",
-      },
-    },
-  )
+function aliasKey(
+  sessionID: string,
+  kind: SessionRequestKind = "primary",
+): string {
+  return `${sessionID}:${kind}`
 }
 
 export interface PluginDependencies {
-  readAccounts: () => ClaudeAccount[]
-  adopt: (credential: Credential.OAuth) => CredentialRefreshResult
+  readAccounts: () => Promise<ClaudeAccount[]>
+  adopt: (credential: Credential.OAuth) => Promise<CredentialRefreshResult>
   refresh: (credential: Credential.OAuth) => Promise<CredentialRefreshResult>
   fetch: typeof fetch
   now: () => number
+  /** Wait before re-subscribing after the host event stream fails or ends. */
+  eventResubscribeDelayMs: number
+}
+
+/**
+ * Run a teardown step, logging instead of aborting the steps after it. The
+ * timeout matters as much as the catch: a step that never settles would
+ * otherwise strand every later step, including closing the log.
+ */
+async function settle(
+  step: string,
+  run: () => Promise<unknown>,
+): Promise<void> {
+  const timer = new AbortController()
+  try {
+    await Promise.race([
+      run(),
+      sleep(DISPOSE_STEP_TIMEOUT_MS, undefined, { signal: timer.signal }).then(
+        () => {
+          throw new Error(`${step} did not settle`)
+        },
+      ),
+    ])
+  } catch (error) {
+    log("dispose_failed", { step, error: errorMessage(error) })
+  } finally {
+    // Leave no pending timer behind: the race does not cancel the loser.
+    timer.abort()
+  }
+}
+
+/** Release a response this plugin is dropping, so undici can reclaim it now. */
+function discard(response: Response | undefined): void {
+  if (!response || response.bodyUsed || !response.body) return
+  void response.body.cancel().catch(() => {
+    // Already errored or locked; nothing left to release.
+  })
 }
 
 /** @internal Test seam for the host-facing plugin contract. */
@@ -106,36 +150,66 @@ export async function setupClaudeAuth(
     refresh: refreshClaudeCredentialDetailed,
     fetch: globalThis.fetch,
     now: Date.now,
+    eventResubscribeDelayMs: EVENT_RESUBSCRIBE_DELAY_MS,
     ...overrides,
   }
   assertCapabilities(ctx)
-  initLogger()
-
-  let startupAccounts: ClaudeAccount[] = []
   try {
-    startupAccounts = deps.readAccounts()
+    initLogger()
   } catch (error) {
-    log("account_discovery_failed", {
-      error: error instanceof Error ? error.message : String(error),
-    })
+    // A rejected CLAUDE_AUTH_DEBUG value must not take the plugin down with
+    // it, and there is no log to report it to yet.
+    process.stderr.write(`opencode-claude-auth: ${errorMessage(error)}\n`)
+  }
+
+  // A discovery failure (a locked Keychain, say) is kept so /connect can show
+  // its cause instead of reporting that no credentials exist.
+  let startupAccounts: ClaudeAccount[] = []
+  let startupError: unknown
+  try {
+    startupAccounts = await deps.readAccounts()
+  } catch (error) {
+    startupError = error
+    log("account_discovery_failed", { error: errorMessage(error) })
   }
 
   let activeCredential: Credential.OAuth | null = null
   let sourceCheckedAt = 0
   const requestStates = new WeakMap<Request, RequestState>()
+  // Aliases the registered tools carry on the wire, per session. Restoration
+  // falls back to this when the host hands the response hook a Request other
+  // than the one the request hook produced. Bounded, because the plugin lives
+  // in a server that outlives any individual session and the host has no
+  // session-ended signal to unsubscribe from.
+  const sessionAliases = new Map<string, OriginalByAlias>()
+  const rememberAliases = (key: string, aliases: OriginalByAlias): void => {
+    // Re-inserting moves the entry to the end, so eviction takes the session
+    // that has been idle longest rather than the one that started first.
+    sessionAliases.delete(key)
+    sessionAliases.set(key, aliases)
+    if (sessionAliases.size > MAX_TRACKED_CONTEXTS) {
+      const [oldest] = sessionAliases.keys()
+      sessionAliases.delete(oldest)
+    }
+  }
   const registrations: Array<{ dispose(): Promise<void> }> = []
 
+  /**
+   * Adopt `next` in place of `previous`. `recheckSource` forces the next
+   * request to re-read the source; a caller that just read it says false.
+   */
   const updateActive = (
     previous: Credential.OAuth,
     next: Credential.OAuth,
+    { recheckSource = true } = {},
   ): void => {
     if (sameCredential(activeCredential, previous)) activeCredential = next
-    sourceCheckedAt = 0
+    if (recheckSource) sourceCheckedAt = 0
   }
 
+  const form = buildAccountForm(startupAccounts)
   registrations.push(
     await ctx.integration.transform((draft) => {
-      const form = buildAccountForm(startupAccounts)
       draft.method.update({
         integrationID: INTEGRATION_ID,
         method: {
@@ -145,7 +219,10 @@ export async function setupClaudeAuth(
           ...(form ? { form } : {}),
         },
         authorize: async (answer) => {
-          const credential = authorizeAccount(startupAccounts, answer, {
+          if (startupAccounts.length === 0 && startupError !== undefined) {
+            throw startupError
+          }
+          const credential = await authorizeAccount(startupAccounts, answer, {
             readAccounts: deps.readAccounts,
           })
           return {
@@ -178,23 +255,37 @@ export async function setupClaudeAuth(
   await loadActiveCredential()
 
   registrations.push(
-    await ctx.catalog.transform((draft) => {
+    await ctx.model.transform((editor) => {
       if (!activeCredential) return
-      const anthropic = draft.provider.get(INTEGRATION_ID)
-      if (!anthropic) return
-      for (const model of anthropic.models.values()) model.cost = []
+      for (const model of editor.list(INTEGRATION_ID)) {
+        editor.update(INTEGRATION_ID, String(model.id), (draft) => {
+          draft.cost = []
+        })
+      }
     }),
   )
 
-  registrations.push(
-    await ctx.session.hook(
-      "context",
-      (event: SessionContext) => {
-        if (activeCredential) transformContext(event)
-      },
-      { providerID: INTEGRATION_ID },
-    ),
-  )
+  // Auxiliary model calls need the same subscription identity as the agent
+  // loop. Keep their fallback aliases separate: a title can run concurrently.
+  for (const hook of ["context", "compaction", "generate", "title"] as const) {
+    registrations.push(
+      await ctx.session.hook(
+        hook,
+        (event) => {
+          const key = aliasKey(
+            event.sessionID,
+            hook === "context" ? "primary" : hook,
+          )
+          if (activeCredential) {
+            rememberAliases(key, transformContext(event))
+          } else {
+            sessionAliases.delete(key)
+          }
+        },
+        { providerID: INTEGRATION_ID },
+      ),
+    )
+  }
 
   registrations.push(
     await ctx.session.hook(
@@ -206,14 +297,21 @@ export async function setupClaudeAuth(
         const now = deps.now()
         if (now - sourceCheckedAt >= SOURCE_CACHE_TTL_MS) {
           sourceCheckedAt = now
-          const adopted = deps.adopt(credential)
+          const adopted = await deps.adopt(credential)
           if (adopted.kind === "adopted") {
-            updateActive(credential, adopted.credential)
+            // The source was just read, so this window stays open.
+            updateActive(credential, adopted.credential, {
+              recheckSource: false,
+            })
             credential = adopted.credential
           }
         }
 
-        const transformed = await transformRequest(event, credential)
+        const transformed = await transformRequest(
+          event,
+          credential,
+          requestStates.get(event.request)?.snapshot.originalByAlias,
+        )
         event.request = transformed.request
         requestStates.set(transformed.request, {
           credential,
@@ -224,34 +322,65 @@ export async function setupClaudeAuth(
     ),
   )
 
-  const recoverUnauthorized = async (
+  const attemptRecovery = async (
     original: Response,
     state: RequestState,
+    opened: Response[],
   ): Promise<Response> => {
     let credential = state.credential
     let response = original
 
-    const adopted = deps.adopt(credential)
+    // Every response this opens is recorded, so the caller can release the
+    // ones it does not return without each step having to know which of its
+    // predecessors is still live.
+    const replay = async (next: Credential.OAuth): Promise<Response> => {
+      const replayed = await deps.fetch(
+        buildRequestFromSnapshot(state.snapshot, next),
+      )
+      opened.push(replayed)
+      return replayed
+    }
+
+    const adopted = await deps.adopt(credential)
     if (adopted.kind === "adopted") {
       updateActive(credential, adopted.credential)
       credential = adopted.credential
-      response = await deps.fetch(
-        buildRequestFromSnapshot(state.snapshot, credential),
-      )
+      response = await replay(credential)
       if (response.status !== 401) return response
     }
 
     const refreshed = await deps.refresh(credential)
     if (refreshed.kind === "transient") {
-      return retryableRefreshResponse(credential)
+      return retryableRefreshResponse(refreshRetryAfterSeconds(credential))
     }
     updateActive(credential, refreshed.credential)
     if (refreshed.credential.access !== credential.access) {
-      response = await deps.fetch(
-        buildRequestFromSnapshot(state.snapshot, refreshed.credential),
-      )
+      response = await replay(refreshed.credential)
     }
     return response
+  }
+
+  /**
+   * Recovery is best-effort. A terminal credential error, an aborted turn, or
+   * a failed replay all surface better as the original 401 — which the SDK
+   * already knows how to report — than as an exception escaping the hook.
+   */
+  const recoverUnauthorized = async (
+    original: Response,
+    state: RequestState,
+  ): Promise<Response> => {
+    if (state.snapshot.signal.aborted) return original
+    const opened: Response[] = []
+    let resolved = original
+    try {
+      resolved = await attemptRecovery(original, state, opened)
+    } catch (error) {
+      log("unauthorized_recovery_failed", { error: errorMessage(error) })
+    }
+    for (const response of [original, ...opened]) {
+      if (response !== resolved) discard(response)
+    }
+    return resolved
   }
 
   registrations.push(
@@ -259,31 +388,43 @@ export async function setupClaudeAuth(
       "http.response",
       async (event: SessionHttpResponse) => {
         const state = requestStates.get(event.request)
-        if (!state) return
+        if (!state) {
+          // The host handed back a Request other than the one the request
+          // hook produced, so 401 recovery is skipped for this turn. Tool
+          // names still restore from the session fallback, which makes the
+          // degradation invisible without this.
+          log("request_state_missing", { sessionID: event.sessionID })
+        }
+        const originalByAlias =
+          state?.snapshot.originalByAlias ??
+          sessionAliases.get(aliasKey(event.sessionID, event.kind))
+        if (!originalByAlias) return
 
+        // The plugin's own retryable 429 has no aliases to restore, so the
+        // rewrite below passes it through without a match.
         const resolved =
-          event.response.status === 401
+          state && event.response.status === 401
             ? await recoverUnauthorized(event.response, state)
             : event.response
-        event.response = restoreResponseToolNames(
-          resolved,
-          state.snapshot.toolNames,
-        )
+        event.response = restoreResponseToolNames(resolved, originalByAlias)
       },
       { providerID: INTEGRATION_ID },
     ),
   )
 
   const eventController = new AbortController()
-  const eventIterable = ctx.event.subscribe({
-    signal: eventController.signal,
-  })
-  const eventIterator = eventIterable[Symbol.asyncIterator]()
-  const eventTask = (async () => {
+  const { signal } = eventController
+  const subscribe = () =>
+    ctx.event.subscribe({ signal })[Symbol.asyncIterator]()
+  let eventIterator: ReturnType<typeof subscribe> | undefined
+
+  const consumeEvents = async (): Promise<void> => {
+    const iterator = subscribe()
+    eventIterator = iterator
     try {
       while (true) {
-        const next = await eventIterator.next()
-        if (next.done) break
+        const next = await iterator.next()
+        if (next.done) return
         const event = next.value
         if (
           event.type !== "credential.switched" ||
@@ -294,41 +435,62 @@ export async function setupClaudeAuth(
         try {
           await loadActiveCredential()
         } catch (error) {
-          log("credential_reload_failed", {
-            error: error instanceof Error ? error.message : String(error),
-          })
+          log("credential_reload_failed", { error: errorMessage(error) })
         }
         try {
-          await ctx.catalog.reload()
+          await ctx.model.reload()
         } catch (error) {
-          log("catalog_reload_failed", {
-            error: error instanceof Error ? error.message : String(error),
-          })
+          log("model_reload_failed", { error: errorMessage(error) })
         }
       }
     } catch (error) {
-      if (!eventController.signal.aborted) {
-        log("credential_event_failed", {
-          error: error instanceof Error ? error.message : String(error),
-        })
+      // The host's subscribe() ignores the abort signal, so an iterator
+      // abandoned mid-stream has to be closed here or every resubscribe
+      // strands one. A completed iterator needs nothing.
+      await iterator.return?.().catch(() => {})
+      if (!signal.aborted) {
+        log("credential_event_failed", { error: errorMessage(error) })
       }
     }
-  })()
+  }
+
+  // The host stream can fail or end while the service keeps running, and a
+  // plugin that stops listening silently stops following account switches.
+  const eventTask = (async () => {
+    while (!signal.aborted) {
+      await consumeEvents()
+      await sleep(deps.eventResubscribeDelayMs, undefined, { signal }).catch(
+        () => {
+          // Aborted during the wait; the loop condition ends it.
+        },
+      )
+    }
+  })().catch((error) => {
+    // Nothing awaits this until dispose, and an unhandled rejection would
+    // take the whole service down.
+    log("credential_event_failed", { error: errorMessage(error) })
+  })
 
   return async () => {
     eventController.abort()
-    await eventIterator.return?.()
-    await eventTask
-    for (let index = registrations.length - 1; index >= 0; index--) {
-      await registrations[index].dispose()
+    try {
+      await settle("event_iterator", async () => eventIterator?.return?.())
+      await settle("event_task", () => eventTask)
+      for (let index = registrations.length - 1; index >= 0; index--) {
+        await settle("registration", () => registrations[index].dispose())
+      }
+    } finally {
+      closeLogger()
     }
-    closeLogger()
   }
 }
 
-const plugin = Plugin.define({
+// `Plugin.define` is an identity function, so the type annotation gives the
+// same checking without a runtime import. That keeps the host SDK out of
+// consumers' installs: every other import in this package is a type.
+const plugin: Plugin = {
   id: "griffinmartin.claude-auth",
   setup: setupClaudeAuth,
-})
+}
 
 export default plugin

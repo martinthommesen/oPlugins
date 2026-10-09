@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    // Node 22 has the ES2023 array methods; only the emit target is ES2022.
+    // DOM restores the fetch types the default `<target>.full` lib carried.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ES2022",
     "moduleResolution": "bundler",
     "outDir": "dist",
@@ -15,5 +18,5 @@
     "rewriteRelativeImportExtensions": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/test-helpers.ts"]
 }

@@ -8,7 +8,11 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        host: ["2.0.7", "target"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +25,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+      - run: pnpm run typecheck
       - run: pnpm run build
       - run: pnpm test
+        # dist is what consumers get, and nothing else loads it before publish.
+      - run: pnpm run verify:dist
+      - run: pnpm run test:host
+        env:
+          CLAUDE_AUTH_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run

@@ -1,22 +1,45 @@
 import assert from "node:assert/strict"
 import { describe, it, beforeEach, afterEach } from "node:test"
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs"
+import {
+  mkdtempSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { PassThrough } from "node:stream"
-import { initLogger, log, closeLogger, redact } from "./logger.ts"
+import { opencodeDataDir } from "./env.ts"
+import { withEnv } from "./test-helpers.ts"
+import {
+  initLogger,
+  log,
+  closeLogger,
+  redact,
+  resolveLogPath,
+} from "./logger.ts"
 
 describe("logger", () => {
   let tmpDir: string
+  let defaultPath: string
+  let restore: Array<() => void> = []
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "claude-auth-log-test-"))
-    delete process.env.CLAUDE_AUTH_DEBUG
+    // Point the default log at the sandbox. Without this the tests below
+    // truncate the developer's own debug log.
+    restore = [
+      withEnv("XDG_DATA_HOME", tmpDir),
+      withEnv("CLAUDE_AUTH_DEBUG", undefined),
+    ]
+    defaultPath = join(opencodeDataDir(), "claude-auth-debug.log")
   })
 
   afterEach(() => {
     closeLogger()
-    delete process.env.CLAUDE_AUTH_DEBUG
+    for (const undo of restore.toReversed()) undo()
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -24,8 +47,6 @@ describe("logger", () => {
     it("log() does nothing when CLAUDE_AUTH_DEBUG is unset", () => {
       initLogger()
       log("test_event", { key: "value" })
-      // No file should be created at default path
-      const defaultPath = join(tmpDir, "claude-auth-debug.log")
       assert.ok(!existsSync(defaultPath), "No log file should be created")
     })
 
@@ -33,8 +54,59 @@ describe("logger", () => {
       process.env.CLAUDE_AUTH_DEBUG = ""
       initLogger()
       log("test_event", { key: "value" })
-      const defaultPath = join(tmpDir, "claude-auth-debug.log")
       assert.ok(!existsSync(defaultPath), "No log file should be created")
+    })
+
+    it("treats the usual off values as disabled, not as a filename", () => {
+      for (const value of ["0", "false", "no", "off", "OFF"]) {
+        process.env.CLAUDE_AUTH_DEBUG = value
+        initLogger()
+        log("test_event", {})
+        closeLogger()
+        assert.equal(resolveLogPath(value), null, `${value} must disable`)
+        assert.ok(
+          !existsSync(join(process.cwd(), value)),
+          `${value} must not become a log file`,
+        )
+      }
+      assert.ok(!existsSync(defaultPath))
+    })
+  })
+
+  describe("path validation", () => {
+    it("refuses a relative path", () => {
+      assert.throws(() => resolveLogPath("debug.log"), /absolute/)
+    })
+
+    it("refuses to truncate any existing file it did not write", () => {
+      // Not a blocklist of known filenames: anything that is not already one
+      // of these logs is off limits, including files nobody has thought of.
+      for (const name of [".credentials.json", "auth.json", ".env", "notes"]) {
+        const path = join(tmpDir, name)
+        writeFileSync(path, "important user data\n")
+        process.env.CLAUDE_AUTH_DEBUG = path
+        assert.throws(() => initLogger(), /not a claude-auth log/, name)
+        assert.equal(readFileSync(path, "utf-8"), "important user data\n")
+      }
+    })
+
+    it("reuses a file it wrote itself", () => {
+      const path = join(tmpDir, "reuse.log")
+      process.env.CLAUDE_AUTH_DEBUG = path
+      initLogger()
+      log("first_run", {})
+      closeLogger()
+      assert.doesNotThrow(() => initLogger())
+      log("second_run", {})
+      const lines = readFileSync(path, "utf-8").trim().split("\n")
+      assert.equal(lines.length, 1)
+      assert.equal(JSON.parse(lines[0]).event, "second_run")
+    })
+
+    it("maps the on values to the default path", () => {
+      for (const value of ["1", "true", "yes", "on"]) {
+        assert.equal(resolveLogPath(value), defaultPath)
+      }
     })
   })
 
@@ -100,11 +172,22 @@ describe("logger", () => {
 
     it("treats CLAUDE_AUTH_DEBUG=1 as default path", () => {
       process.env.CLAUDE_AUTH_DEBUG = "1"
-      // Just verify initLogger doesn't throw — we can't easily assert
-      // the default path without polluting the real filesystem
+      initLogger()
+      log("test_event", { key: "value" })
+      closeLogger()
+
+      const parsed = JSON.parse(readFileSync(defaultPath, "utf-8").trim())
+      assert.equal(parsed.event, "test_event")
+      assert.equal(parsed.key, "value")
+    })
+
+    it("keeps the log as private as the credentials it describes", () => {
+      if (process.platform === "win32") return
+      const logPath = join(tmpDir, "perms.log")
+      process.env.CLAUDE_AUTH_DEBUG = logPath
       initLogger()
       log("test_event", {})
-      closeLogger()
+      assert.equal(statSync(logPath).mode & 0o777, 0o600)
     })
   })
 
@@ -181,6 +264,31 @@ describe("redact", () => {
       someToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
     })
     assert.equal(result.someToken, "eyJhbGci...REDACTED")
+  })
+
+  it("catches the Anthropic token format the plugin actually handles", () => {
+    const result = redact({
+      bearer: "sk-ant-oat01-abcdefghijklmnop",
+      other: "sk-ant-api03-zyxwvutsrq",
+    })
+    assert.equal(result.bearer, "sk-ant-o...REDACTED")
+    assert.equal(result.other, "sk-ant-a...REDACTED")
+  })
+
+  it("redacts nested and arrayed secrets, not just top-level ones", () => {
+    const result = redact({
+      credential: { accessToken: "sk-ant-oat01-secret", source: "file" },
+      headers: ["sk-ant-oat01-secret", "plain"],
+    })
+    assert.deepEqual(result.credential, {
+      accessToken: "REDACTED",
+      source: "file",
+    })
+    assert.deepEqual(result.headers, ["sk-ant-o...REDACTED", "plain"])
+  })
+
+  it("redacts the Keychain account name", () => {
+    assert.equal(redact({ account: "someone@example.com" }).account, "REDACTED")
   })
 
   it("preserves non-sensitive fields", () => {

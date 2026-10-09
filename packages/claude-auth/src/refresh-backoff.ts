@@ -10,17 +10,27 @@
  * account is not re-hit until the window has plausibly cleared.
  */
 
+import { positiveIntFromEnv } from "./env.ts"
+
 export type RefreshFailureKind = "transient" | "terminal"
 
 /** Base cooldown after the first transient failure (env-overridable). */
-export const BASE_COOLDOWN_MS = (() => {
-  const raw = process.env.OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000
-})()
+export const BASE_COOLDOWN_MS = positiveIntFromEnv(
+  "OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS",
+  15_000,
+)
 
 /** Hard ceiling for a single cooldown, regardless of consecutive failures. */
 export const MAX_COOLDOWN_MS = 60_000
+
+/**
+ * Consecutive transient failures after which a source is treated as dead.
+ * Unknown OAuth errors are classified transient so a recoverable blip never
+ * demands re-authentication, but a permanent failure with an unfamiliar code
+ * (a lapsed subscription, for one) would otherwise retry forever. At the
+ * capped cooldown this ceiling is reached after roughly nine minutes.
+ */
+export const MAX_CONSECUTIVE_TRANSIENT = 10
 
 /**
  * OAuth token-endpoint error codes that mean the refresh token itself is no
@@ -71,7 +81,7 @@ export function computeBackoffMs(
   const exponent = Math.max(0, consecutive - 1)
   const scheduled = Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * 2 ** exponent)
   const jitterFactor = 0.5 + rng() * 0.5
-  return Math.min(MAX_COOLDOWN_MS, Math.round(scheduled * jitterFactor))
+  return Math.round(scheduled * jitterFactor)
 }
 
 interface CooldownState {
@@ -109,6 +119,11 @@ export function noteRefreshTerminal(source: string): void {
 export function clearRefreshOutcome(source: string): void {
   cooldowns.delete(source)
   lastFailureKind.delete(source)
+}
+
+/** Whether `source` has hit {@link MAX_CONSECUTIVE_TRANSIENT}. */
+export function transientFailuresExhausted(source: string): boolean {
+  return (cooldowns.get(source)?.consecutive ?? 0) >= MAX_CONSECUTIVE_TRANSIENT
 }
 
 export function isRefreshCooldownActive(

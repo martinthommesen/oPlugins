@@ -1,8 +1,46 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { once } from "node:events"
-import { config, getModelBetas } from "../dist/model-config.js"
+import { json } from "node:stream/consumers"
+import { config } from "../dist/model-config.js"
 import { SYSTEM_IDENTITY } from "../dist/transforms.js"
+
+/**
+ * Betas every request must carry, written out rather than read from the
+ * plugin, which is the thing under test. The effort beta depends on the
+ * model, so it is left to the unit tests.
+ */
+const REQUIRED_WIRE_BETAS = [
+  "claude-code-20250219",
+  "oauth-2025-04-20",
+  "interleaved-thinking-2025-05-14",
+  "prompt-caching-scope-2026-01-05",
+  "context-management-2025-06-27",
+  "advisor-tool-2026-03-01",
+  "thinking-token-count-2026-05-13",
+  "extended-cache-ttl-2025-04-11",
+]
+
+/** The parts of a Messages API request the mock reads. */
+interface MessageRequest {
+  model: string
+  stream?: boolean
+  system: Array<{ text: string }>
+  messages: Array<{ content: unknown }>
+  tools?: Array<{ name: string }>
+}
+
+/** Every content block of `type` across the request's messages. */
+function blocksOfType(
+  messages: MessageRequest["messages"],
+  type: string,
+): Array<{ type: string; name?: string }> {
+  return messages
+    .flatMap((message) =>
+      Array.isArray(message.content) ? message.content : [],
+    )
+    .filter((block: { type: string }) => block.type === type)
+}
 
 /** Local Messages API fixture: never contacts Anthropic or reads credentials. */
 export async function startMockAnthropic(sentinel: string, file: string) {
@@ -21,25 +59,18 @@ export async function startMockAnthropic(sentinel: string, file: string) {
         request.headers["user-agent"],
         `claude-cli/${config.ccVersion} (external, sdk-cli)`,
       )
-      const chunks: Buffer[] = []
-      for await (const chunk of request) chunks.push(Buffer.from(chunk))
-      const body = JSON.parse(Buffer.concat(chunks).toString())
+      const body = (await json(request)) as MessageRequest
       const betas = String(request.headers["anthropic-beta"]).split(",")
-      for (const beta of getModelBetas(body.model, {}))
+      for (const beta of REQUIRED_WIRE_BETAS) {
         assert.ok(betas.includes(beta), beta)
+      }
       assert.match(body.system[0].text, /^x-anthropic-billing-header:/)
       assert.ok(body.system[0].text.includes(`cc_version=${config.ccVersion}.`))
       assert.ok(body.system[0].text.includes("cch=00000;"))
       assert.equal(body.system[1].text, SYSTEM_IDENTITY)
       const primary = request.headers["x-claude-auth-test-kind"] === "primary"
-      const results = body.messages
-        .flatMap((message: { content: unknown }) =>
-          Array.isArray(message.content) ? message.content : [],
-        )
-        .filter((block: { type: string }) => block.type === "tool_result")
-      const read = body.tools?.find(
-        (tool: { name: string }) => tool.name === "mcp_Read",
-      )
+      const results = blocksOfType(body.messages, "tool_result")
+      const read = body.tools?.find((tool) => tool.name === "mcp_Read")
       if (primary) assert.ok(read, "read tool was not aliased")
       const useTool = primary && results.length === 0
       const content = useTool
@@ -57,13 +88,10 @@ export async function startMockAnthropic(sentinel: string, file: string) {
           JSON.stringify(results).includes(sentinel),
           "read result missing sentinel",
         )
-        const history = body.messages
-          .flatMap((message: { content: unknown }) =>
-            Array.isArray(message.content) ? message.content : [],
-          )
-          .filter((block: { type: string }) => block.type === "tool_use")
         assert.ok(
-          history.some((block: { name: string }) => block.name === "mcp_Read"),
+          blocksOfType(body.messages, "tool_use").some(
+            (block) => block.name === "mcp_Read",
+          ),
         )
       }
       const message = {

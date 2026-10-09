@@ -1,8 +1,9 @@
 import type { Credential } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it } from "node:test"
 import {
+  ClaudeAuthRefreshExhaustedError,
   ClaudeAuthTerminalError,
   createOAuthCredential,
   type CredentialRefreshResult,
@@ -13,6 +14,20 @@ import plugin, {
   type PluginDependencies,
 } from "./index.ts"
 import type { ClaudeAccount } from "./keychain.ts"
+import { captureWarnings, withEnv } from "./test-helpers.ts"
+
+// A default dependency that slips through must not reach the real Keychain.
+// Each test file runs in its own process, so this never needs restoring.
+withEnv("OPENCODE_CLAUDE_AUTH_SECURITY_BIN", "/nonexistent/security")
+
+let warnings: string[] = []
+let restoreWarnings = (): void => {}
+beforeEach(() => {
+  const capture = captureWarnings()
+  warnings = capture.lines
+  restoreWarnings = capture.restore
+})
+afterEach(() => restoreWarnings())
 
 type Hook = (event: never) => Promise<void> | void
 
@@ -164,6 +179,7 @@ function fakeContext(
   let reloadCount = 0
   let disposeCount = 0
   let rejectNextResolve = false
+  let holdResolve: Promise<void> | undefined
   let rejectNextDispose = false
   const createRegistration = () => ({
     dispose: async () => {
@@ -220,6 +236,11 @@ function fakeContext(
             : undefined,
         resolve: async () => {
           resolveCount++
+          if (holdResolve) {
+            const held = holdResolve
+            holdResolve = undefined
+            await held
+          }
           if (rejectNextResolve) {
             rejectNextResolve = false
             throw new Error("resolve failed")
@@ -268,6 +289,14 @@ function fakeContext(
     failNextResolve: () => {
       rejectNextResolve = true
     },
+    /** Hold the next resolve until the returned function is called. */
+    holdNextResolve: (): (() => void) => {
+      let release!: () => void
+      holdResolve = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return release
+    },
     failNextDispose: () => {
       rejectNextDispose = true
     },
@@ -283,6 +312,9 @@ function dependencies(
 ): Partial<PluginDependencies> {
   return {
     readAccounts: async () => accounts,
+    readSource: async (source) =>
+      accounts.find((candidate) => candidate.source === source)?.credentials ??
+      null,
     adopt: async (credential) => ({ credential, kind: "unchanged" }),
     refresh: async (credential) => ({ credential, kind: "unchanged" }),
     // Past SOURCE_CACHE_TTL_MS, so the request hook's source re-check is live
@@ -495,6 +527,8 @@ describe("v2 plugin contract", () => {
     })
     await waitFor(() => fake.reloadCount() === 1)
     assert.equal(fake.model.cost.length, 1)
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /resolve failed/)
     const failedRequest = requestEvent()
     const originalRequest = failedRequest.request
     await fake.hooks.get("http.request")!(failedRequest as never)
@@ -513,7 +547,58 @@ describe("v2 plugin contract", () => {
     await cleanup?.()
   })
 
-  it("surfaces a startup discovery failure from /connect instead of 'no credentials'", async () => {
+  it("keeps the current credential for a request that races a switch", async () => {
+    const fake = fakeContext(oauth(PRIMARY, "before"))
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()]),
+    )
+    const release = fake.holdNextResolve()
+    fake.setActive(oauth(PRIMARY, "after"))
+    fake.events.push({
+      type: "credential.switched",
+      data: { integrationID: "anthropic", credentialID: "after" },
+    })
+    await waitFor(() => fake.resolveCount() === 2)
+
+    const racing = requestEvent()
+    await fake.hooks.get("http.request")!(racing as never)
+    assert.equal(racing.request.headers.get("authorization"), "Bearer before")
+
+    release()
+    await waitFor(() => fake.reloadCount() === 1)
+    const later = requestEvent()
+    await fake.hooks.get("http.request")!(later as never)
+    assert.equal(later.request.headers.get("authorization"), "Bearer after")
+    await cleanup?.()
+  })
+
+  it("registers the session hooks while accounts are still being discovered", async () => {
+    const fake = fakeContext(oauth())
+    let release!: (accounts: ClaudeAccount[]) => void
+    const setup = setupClaudeAuth(
+      fake.context,
+      dependencies([account()], {
+        readAccounts: () =>
+          new Promise((resolve) => {
+            release = resolve
+          }),
+      }),
+    )
+    try {
+      // A slow Keychain should not hold back the hooks, which need no
+      // account list and do nothing until a credential loads.
+      await waitFor(() => fake.hooks.has("http.response"))
+      assert.equal(fake.resolveCount(), 0, "no credential loads before then")
+    } finally {
+      release([account()])
+      await (
+        await setup
+      )?.()
+    }
+  })
+
+  it("reports a startup discovery failure from /connect instead of 'no credentials'", async () => {
     const fake = fakeContext(undefined)
     const cleanup = await setupClaudeAuth(
       fake.context,
@@ -558,12 +643,38 @@ describe("v2 plugin contract", () => {
     const second = requestEvent()
     await hook(second as never)
     assert.equal(adoptCalls, 2)
-    assert.equal(second.request.headers.get("authorization"), "Bearer second")
+    // The re-check runs beside the request rather than in front of it, so a
+    // rotation is picked up by the request after. The token it replaces is
+    // still valid, and a 401 recovers through adoption anyway.
+    assert.equal(second.request.headers.get("authorization"), "Bearer first")
 
     const third = requestEvent()
     await hook(third as never)
     assert.equal(adoptCalls, 2)
     assert.equal(third.request.headers.get("authorization"), "Bearer second")
+    await cleanup?.()
+  })
+
+  it("waits for the re-check when the cached token has expired", async () => {
+    const original = oauth(PRIMARY, "first")
+    const rotated = oauth(PRIMARY, "second")
+    const fake = fakeContext(original)
+    let adoptCalls = 0
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()], {
+        // Past the cached token's expiry: sending it is a certain 401.
+        now: () => original.expires + 1,
+        adopt: async (): Promise<CredentialRefreshResult> => {
+          adoptCalls++
+          return { credential: rotated, kind: "adopted" }
+        },
+      }),
+    )
+    const request = requestEvent()
+    await fake.hooks.get("http.request")!(request as never)
+    assert.equal(adoptCalls, 1)
+    assert.equal(request.request.headers.get("authorization"), "Bearer second")
     await cleanup?.()
   })
 
@@ -635,22 +746,19 @@ describe("401 recovery contract", () => {
     const adopted = oauth(PRIMARY, "second")
     const refreshed = oauth(PRIMARY, "third")
     const fake = fakeContext(original)
-    let adoptCalls = 0
+    let refreshCalls = 0
     const bodies: string[] = []
     const authorizations: Array<string | null> = []
     let fetches = 0
     const cleanup = await setupClaudeAuth(
       fake.context,
       dependencies([account()], {
-        adopt: async (credential): Promise<CredentialRefreshResult> => {
-          adoptCalls++
-          // Call 1 is the request hook's source re-check; call 2 is the one
-          // 401 recovery makes.
-          return adoptCalls === 2
+        // A refresh adopts a rotated source before it spends a token, so the
+        // first call adopts and the second, after that 401s too, refreshes.
+        refresh: async (): Promise<CredentialRefreshResult> =>
+          ++refreshCalls === 1
             ? { credential: adopted, kind: "adopted" }
-            : { credential, kind: "unchanged" }
-        },
-        refresh: async () => ({ credential: refreshed, kind: "refreshed" }),
+            : { credential: refreshed, kind: "refreshed" },
         fetch: async (request) => {
           const value =
             request instanceof Request ? request : new Request(request)
@@ -687,7 +795,11 @@ describe("401 recovery contract", () => {
     const cleanup = await setupClaudeAuth(
       fake.context,
       dependencies([account()], {
-        refresh: async () => ({ credential: original, kind: "transient" }),
+        refresh: async () => ({
+          credential: original,
+          kind: "transient",
+          retryAfterMs: 12_300,
+        }),
         fetch: async () => {
           fetches++
           return new Response("unexpected")
@@ -703,18 +815,19 @@ describe("401 recovery contract", () => {
     await fake.hooks.get("http.response")!(responseEvent as never)
     assert.equal(responseEvent.response.status, 429)
     assert.equal(responseEvent.response.headers.get("x-should-retry"), "true")
-    assert.equal(responseEvent.response.headers.get("retry-after"), "5")
+    // Whole seconds, rounded up so a client never retries early.
+    assert.equal(responseEvent.response.headers.get("retry-after"), "13")
     assert.equal(fetches, 0)
     await cleanup?.()
   })
 
-  it("surfaces the original 401 when recovery throws", async () => {
+  it("returns the original 401 when recovery fails unexpectedly", async () => {
     const fake = fakeContext(oauth())
     const cleanup = await setupClaudeAuth(
       fake.context,
       dependencies([account()], {
         refresh: async () => {
-          throw new ClaudeAuthTerminalError()
+          throw new Error("unexpected")
         },
       }),
     )
@@ -724,11 +837,193 @@ describe("401 recovery contract", () => {
       request: request.request,
       response: new Response("unauthorized", { status: 401 }),
     }
-    // A terminal credential error must not escape the hook: the 401 is a
-    // well-formed provider error the SDK already knows how to report.
+    // An error must not escape the hook: the 401 is a well-formed provider
+    // error the SDK already knows how to report.
     await fake.hooks.get("http.response")!(responseEvent as never)
     assert.equal(responseEvent.response.status, 401)
     assert.equal(await responseEvent.response.text(), "unauthorized")
+    await cleanup?.()
+  })
+
+  for (const [name, error] of [
+    ["a terminal", new ClaudeAuthTerminalError()],
+    ["an exhausted", new ClaudeAuthRefreshExhaustedError(10, "network error")],
+  ] as const) {
+    it(`reports ${name} credential failure in the 401 the user sees`, async () => {
+      const fake = fakeContext(oauth())
+      const cleanup = await setupClaudeAuth(
+        fake.context,
+        dependencies([account()], {
+          refresh: async () => {
+            throw error
+          },
+        }),
+      )
+      const request = requestEvent()
+      await fake.hooks.get("http.request")!(request as never)
+      const original = new Response("unauthorized", { status: 401 })
+      const responseEvent = { request: request.request, response: original }
+      await fake.hooks.get("http.response")!(responseEvent as never)
+      assert.equal(responseEvent.response.status, 401)
+      assert.deepEqual(await responseEvent.response.json(), {
+        type: "error",
+        error: { type: "authentication_error", message: error.message },
+      })
+      await cleanup?.()
+    })
+  }
+
+  it("returns the replay after adoption without refreshing again", async () => {
+    const original = oauth(PRIMARY, "first")
+    const adopted = oauth(PRIMARY, "second")
+    const fake = fakeContext(original)
+    let refreshes = 0
+    const authorizations: Array<string | null> = []
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()], {
+        refresh: async (): Promise<CredentialRefreshResult> => {
+          refreshes++
+          return { credential: adopted, kind: "adopted" }
+        },
+        fetch: async (request) => {
+          const value =
+            request instanceof Request ? request : new Request(request)
+          authorizations.push(value.headers.get("authorization"))
+          return new Response("replayed", { status: 200 })
+        },
+      }),
+    )
+    const request = requestEvent()
+    await fake.hooks.get("http.request")!(request as never)
+    let cancelled = 0
+    const responseEvent = {
+      request: request.request,
+      response: new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled++
+          },
+        }),
+        { status: 401 },
+      ),
+    }
+    await fake.hooks.get("http.response")!(responseEvent as never)
+
+    // A replay that works with the adopted credential ends recovery.
+    assert.equal(responseEvent.response.status, 200)
+    assert.equal(await responseEvent.response.text(), "replayed")
+    assert.deepEqual(authorizations, ["Bearer second"])
+    assert.equal(refreshes, 1)
+    await waitFor(() => cancelled === 1)
+    await cleanup?.()
+  })
+
+  it("returns the original 401 when a refresh keeps the same access token", async () => {
+    const original = oauth(PRIMARY, "same")
+    const fake = fakeContext(original)
+    let fetches = 0
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account(PRIMARY, "same")], {
+        refresh: async () => ({
+          credential: oauth(PRIMARY, "same"),
+          kind: "refreshed",
+        }),
+        fetch: async () => {
+          fetches++
+          return new Response("unexpected", { status: 200 })
+        },
+      }),
+    )
+    const request = requestEvent()
+    await fake.hooks.get("http.request")!(request as never)
+    const responseEvent = {
+      request: request.request,
+      response: new Response("unauthorized", { status: 401 }),
+    }
+    await fake.hooks.get("http.response")!(responseEvent as never)
+
+    // Replaying the identical bearer token would just earn a second 401.
+    assert.equal(fetches, 0)
+    assert.equal(responseEvent.response.status, 401)
+    assert.equal(await responseEvent.response.text(), "unauthorized")
+    await cleanup?.()
+  })
+
+  it("returns the original 401 when the replay itself throws", async () => {
+    const original = oauth(PRIMARY, "first")
+    const fake = fakeContext(original)
+    let fetches = 0
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()], {
+        refresh: async () => ({
+          credential: oauth(PRIMARY, "second"),
+          kind: "adopted",
+        }),
+        fetch: async () => {
+          fetches++
+          throw new TypeError("fetch failed")
+        },
+      }),
+    )
+    const request = requestEvent()
+    await fake.hooks.get("http.request")!(request as never)
+    const responseEvent = {
+      request: request.request,
+      response: new Response("unauthorized", { status: 401 }),
+    }
+    // The hook must absorb the network error, not reject the whole turn.
+    await fake.hooks.get("http.response")!(responseEvent as never)
+    assert.equal(fetches, 1)
+    assert.equal(responseEvent.response.status, 401)
+    assert.equal(await responseEvent.response.text(), "unauthorized")
+    await cleanup?.()
+  })
+
+  it("releases a replay it opened but did not return when a later replay throws", async () => {
+    const original = oauth(PRIMARY, "first")
+    const fake = fakeContext(original)
+    let refreshCalls = 0
+    let fetches = 0
+    let replayCancelled = 0
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()], {
+        refresh: async (): Promise<CredentialRefreshResult> =>
+          ++refreshCalls === 1
+            ? { credential: oauth(PRIMARY, "second"), kind: "adopted" }
+            : { credential: oauth(PRIMARY, "third"), kind: "refreshed" },
+        fetch: async () => {
+          fetches++
+          if (fetches === 2) throw new TypeError("fetch failed")
+          // The adopted credential is rejected too; its body is left unread.
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                replayCancelled++
+              },
+            }),
+            { status: 401 },
+          )
+        },
+      }),
+    )
+    const request = requestEvent()
+    await fake.hooks.get("http.request")!(request as never)
+    const responseEvent = {
+      request: request.request,
+      response: new Response("unauthorized", { status: 401 }),
+    }
+    await fake.hooks.get("http.response")!(responseEvent as never)
+
+    assert.equal(fetches, 2)
+    // The caller still gets the untouched original, not the dropped replay.
+    assert.equal(responseEvent.response.status, 401)
+    assert.equal(await responseEvent.response.text(), "unauthorized")
+    // Without the release, undici holds the abandoned connection open.
+    await waitFor(() => replayCancelled === 1)
     await cleanup?.()
   })
 
@@ -855,6 +1150,26 @@ describe("tool name restoration contract", () => {
     const responseEvent = {
       sessionID: "session",
       request: request.request,
+      response: new Response(ALIASED_SSE),
+    }
+    await fake.hooks.get("http.response")!(responseEvent as never)
+    assert.match(await responseEvent.response.text(), /"name":"shell"/)
+    await cleanup?.()
+  })
+
+  it("restores the aliases a request body carried on an unknown request", async () => {
+    // No context hook ran, so only the request hook knows these aliases.
+    const fake = fakeContext(oauth())
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()]),
+    )
+    const request = requestEvent(JSON.stringify({ tools: [{ name: "shell" }] }))
+    await fake.hooks.get("http.request")!(request as never)
+
+    const responseEvent = {
+      sessionID: "session",
+      request: request.request.clone(),
       response: new Response(ALIASED_SSE),
     }
     await fake.hooks.get("http.response")!(responseEvent as never)

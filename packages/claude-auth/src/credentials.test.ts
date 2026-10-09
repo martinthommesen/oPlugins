@@ -1,10 +1,11 @@
 import type { Credential } from "@opencode/plugin"
 import assert from "node:assert/strict"
-import { beforeEach, describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it } from "node:test"
 import {
   adoptExternalCredential,
   authorizeAccount,
   buildAccountForm,
+  ClaudeAuthRefreshExhaustedError,
   ClaudeAuthTerminalError,
   createOAuthCredential,
   credentialLabel,
@@ -28,6 +29,17 @@ import {
   type ClaudeAccount,
   type ClaudeCredentials,
 } from "./keychain.ts"
+import type { LockAttempt } from "./refresh-lock.ts"
+import { captureWarnings, withEnv } from "./test-helpers.ts"
+
+// A default dependency that slips through must not reach the real Keychain.
+// Each test file runs in its own process, so this never needs restoring.
+withEnv("OPENCODE_CLAUDE_AUTH_SECURITY_BIN", "/nonexistent/security")
+
+// Warnings go to stderr in production; collected here so a test can assert
+// them and the suite's output stays clean.
+let warnings: string[] = []
+let restoreWarnings = (): void => {}
 
 const now = Date.now()
 
@@ -64,12 +76,30 @@ function successfulResponse(accessToken = "new-access"): Response {
   )
 }
 
+/** The token endpoint rejecting the refresh token for good. */
+function invalidGrant(): Response {
+  return new Response('{"error":"invalid_grant"}', { status: 400 })
+}
+
+/** The token endpoint rate limiting, optionally with a retry-after header. */
+function rateLimited(retryAfter?: string): Response {
+  return new Response('{"error":"rate_limit_error"}', {
+    status: 429,
+    ...(retryAfter === undefined
+      ? {}
+      : { headers: { "retry-after": retryAfter } }),
+  })
+}
+
 function fakeLock(options: { extend?: boolean } = {}) {
-  return () => ({
-    extend: () => options.extend ?? true,
-    defer() {},
-    release() {},
-    degraded: false,
+  return (): LockAttempt => ({
+    kind: "held",
+    lock: {
+      extend: () => options.extend ?? true,
+      defer() {},
+      release() {},
+      degraded: false,
+    },
   })
 }
 
@@ -91,7 +121,29 @@ function credentialDependencies(
 beforeEach(() => {
   resetCredentialStateForTests()
   resetRefreshBackoffState()
+  const capture = captureWarnings()
+  warnings = capture.lines
+  restoreWarnings = capture.restore
 })
+
+afterEach(() => restoreWarnings())
+
+/** A `readSource` answering from `accounts`, recording what it was asked. */
+function sourceReader(accounts: ClaudeAccount[]) {
+  const reads: Array<[string, string | undefined]> = []
+  return {
+    reads,
+    readSource: async (source: string, configDir?: string) => {
+      reads.push([source, configDir])
+      return (
+        accounts.find(
+          (candidate) =>
+            candidate.source === source && candidate.configDir === configDir,
+        )?.credentials ?? null
+      )
+    },
+  }
+}
 
 describe("Claude Code OAuth method", () => {
   it("builds a static account form only for multiple accounts", () => {
@@ -114,27 +166,30 @@ describe("Claude Code OAuth method", () => {
     )
   })
 
-  it("imports the selected startup account with label and source metadata", async () => {
-    const accounts = [account(ACCOUNT_A), account(ACCOUNT_B, "two-access")]
+  it("imports the selected account's current credentials with its startup label", async () => {
+    const startup = [account(ACCOUNT_A), account(ACCOUNT_B, "two-access")]
+    // The source rotated since startup; the import takes what it holds now.
+    const { reads, readSource } = sourceReader([
+      account(ACCOUNT_B, "rotated-access"),
+    ])
     const credential = await authorizeAccount(
-      accounts,
+      startup,
       { account: ACCOUNT_B },
-      {
-        readAccounts: async () => accounts,
-      },
+      { readSource },
     )
+    assert.deepEqual(reads, [[ACCOUNT_B, `/claude/${ACCOUNT_B}`]])
     assert.equal(credential.type, "oauth")
     assert.equal(credential.methodID, METHOD_ID)
-    assert.equal(credential.access, "two-access")
+    assert.equal(credential.access, "rotated-access")
     assert.equal(credentialLabel(credential), `Claude Pro: ${ACCOUNT_B}`)
     assert.deepEqual(readMetadata(credential), {
       source: ACCOUNT_B,
       configDir: `/claude/${ACCOUNT_B}`,
       accountLabel: `Claude Pro: ${ACCOUNT_B}`,
-      sourceTokenHash: tokenFingerprint("two-access"),
+      sourceTokenHash: tokenFingerprint("rotated-access"),
     })
     assert.equal(
-      JSON.stringify(credential.metadata).includes("two-access"),
+      JSON.stringify(credential.metadata).includes("rotated-access"),
       false,
     )
   })
@@ -145,9 +200,7 @@ describe("Claude Code OAuth method", () => {
       authorizeAccount(
         accounts,
         { account: ACCOUNT_B },
-        {
-          readAccounts: async () => [accounts[0]],
-        },
+        sourceReader([accounts[0]]),
       ),
       /no longer available/,
     )
@@ -155,30 +208,24 @@ describe("Claude Code OAuth method", () => {
 
   it("requires an explicit valid answer for a multiple-account form", async () => {
     const accounts = [account(ACCOUNT_A), account(ACCOUNT_B)]
+    const { reads, readSource } = sourceReader(accounts)
     await assert.rejects(
-      authorizeAccount(accounts, {}, { readAccounts: async () => accounts }),
+      authorizeAccount(accounts, {}, { readSource }),
       /Select a registered/,
     )
     await assert.rejects(
-      authorizeAccount(
-        accounts,
-        { account: true },
-        { readAccounts: async () => accounts },
-      ),
+      authorizeAccount(accounts, { account: true }, { readSource }),
       /Select a registered/,
     )
+    assert.deepEqual(reads, [])
   })
 
   it("does not expose accounts added after registration", async () => {
     const startup = [account(ACCOUNT_A)]
-    const imported = await authorizeAccount(
-      startup,
-      {},
-      {
-        readAccounts: async () => [account(ACCOUNT_C), startup[0]],
-      },
-    )
+    const { reads, readSource } = sourceReader([account(ACCOUNT_C), startup[0]])
+    const imported = await authorizeAccount(startup, {}, { readSource })
     assert.equal(readMetadata(imported)?.source, ACCOUNT_A)
+    assert.deepEqual(reads, [[ACCOUNT_A, `/claude/${ACCOUNT_A}`]])
   })
 })
 
@@ -204,6 +251,24 @@ describe("OAuth exchange", () => {
       refresh_token: "refresh-token",
       scope: OAUTH_SCOPE,
     })
+  })
+
+  it("reads retry-after as seconds or as an HTTP date", async () => {
+    const at = Date.parse("2026-01-01T00:00:00Z")
+    const exchangeAfter = (retryAfter: string) =>
+      exchangeRefreshToken("refresh-token", {
+        now: () => at,
+        fetch: async () => rateLimited(retryAfter),
+      })
+    const seconds = await exchangeAfter("7")
+    const date = await exchangeAfter("Thu, 01 Jan 2026 00:00:30 GMT")
+    const garbage = await exchangeAfter("soon")
+    assert.equal(seconds.kind === "transient" && seconds.retryAfterMs, 7000)
+    assert.equal(date.kind === "transient" && date.retryAfterMs, 30_000)
+    assert.equal(
+      garbage.kind === "transient" && garbage.retryAfterMs,
+      undefined,
+    )
   })
 
   it("parses absolute and relative expiries without losing refresh tokens", () => {
@@ -302,60 +367,6 @@ describe("credential refresh coordination", () => {
     assert.equal(writes, 1)
   })
 
-  it("retries an unreachable write-back against the same guard token", async () => {
-    const original = createOAuthCredential(account())
-    const expectations: string[] = []
-    const refreshed = await refreshClaudeCredentialDetailed(
-      original,
-      credentialDependencies(() => account().credentials, {
-        writeSource: async (_source, _credentials, _configDir, expected) => {
-          expectations.push(expected)
-          // "unavailable" is the store-unreachable case, the only one a
-          // retry can resolve.
-          return expectations.length === 1 ? "unavailable" : "written"
-        },
-      }),
-    )
-    assert.deepEqual(expectations, ["old-access", "old-access"])
-    assert.equal(refreshed.kind, "refreshed")
-    assert.equal(
-      readMetadata(refreshed.credential)?.sourceTokenHash,
-      tokenFingerprint("new-access"),
-    )
-  })
-
-  it("adopts instead of overwriting a source that rotated during a failed write", async () => {
-    // The write fails for its own reasons (a Keychain subprocess timeout),
-    // and the user runs `claude` before the retry. Re-reading the guard token
-    // here would compare the source against itself and destroy that login.
-    const original = createOAuthCredential(account())
-    let stored = account().credentials
-    const expectations: string[] = []
-    const refreshed = await refreshClaudeCredentialDetailed(
-      original,
-      credentialDependencies(() => stored, {
-        writeSource: async (_source, credentials, _configDir, expected) => {
-          expectations.push(expected)
-          if (expectations.length === 1) {
-            stored = {
-              accessToken: "external-access",
-              refreshToken: "external-refresh",
-              expiresAt: Date.now() + 60_000,
-            }
-            return "unavailable"
-          }
-          if (expected !== stored.accessToken) return "conflict"
-          stored = credentials
-          return "written"
-        },
-      }),
-    )
-    assert.deepEqual(expectations, ["old-access", "old-access"])
-    assert.equal(refreshed.kind, "adopted")
-    assert.equal(refreshed.credential.access, "external-access")
-    assert.equal(stored.accessToken, "external-access")
-  })
-
   it("waits for the lock holder's credential when the lease is lost", async () => {
     const original = createOAuthCredential(account())
     let stored = account().credentials
@@ -392,7 +403,7 @@ describe("credential refresh coordination", () => {
     const refreshed = await refreshClaudeCredentialDetailed(
       original,
       credentialDependencies(() => account().credentials, {
-        acquireLock: () => null,
+        acquireLock: () => ({ kind: "busy" }),
         lockWaitMs: 600,
         now: () => clock,
         sleep: async () => {
@@ -534,12 +545,78 @@ describe("credential refresh coordination", () => {
     const result = await refreshClaudeCredentialDetailed(
       original,
       credentialDependencies(() => account().credentials, {
-        acquireLock: () => null,
+        acquireLock: () => ({ kind: "busy" }),
         lockWaitMs: 0,
       }),
     )
     assert.equal(result.kind, "transient")
     assert.equal(result.credential, original)
+  })
+
+  it("returns at once with the cooldown another process is waiting out", async () => {
+    const original = createOAuthCredential(account())
+    const clock = Date.now()
+    let slept = 0
+    const result = await refreshClaudeCredentialDetailed(
+      original,
+      credentialDependencies(() => account().credentials, {
+        acquireLock: () => ({ kind: "cooldown", until: clock + 20_000 }),
+        lockWaitMs: 5_000,
+        now: () => clock,
+        sleep: async () => {
+          slept++
+        },
+      }),
+    )
+    // Nobody is refreshing, so polling for their result only adds latency.
+    assert.equal(slept, 0)
+    assert.deepEqual(result, {
+      credential: original,
+      kind: "transient",
+      retryAfterMs: 20_000,
+    })
+  })
+
+  // 401 recovery calls refresh first and relies on it to adopt a source
+  // rotated outside OpenCode before any cooldown can turn it away.
+  it("adopts a rotated source even while another process is cooling down", async () => {
+    let fetches = 0
+    const result = await refreshClaudeCredentialDetailed(
+      createOAuthCredential(account()),
+      credentialDependencies(
+        () => account(undefined, "rotated-access").credentials,
+        {
+          acquireLock: () => ({ kind: "cooldown", until: Date.now() + 20_000 }),
+          fetch: async () => {
+            fetches++
+            return successfulResponse()
+          },
+        },
+      ),
+    )
+    assert.equal(result.kind, "adopted")
+    assert.equal(result.credential.access, "rotated-access")
+    assert.equal(fetches, 0)
+  })
+
+  it("adopts a rotated source even during its own cooldown", async () => {
+    const original = createOAuthCredential(account())
+    let stored = account().credentials
+    let fetches = 0
+    const deps = credentialDependencies(() => stored, {
+      fetch: async () => {
+        fetches++
+        return rateLimited()
+      },
+    })
+    const failed = await refreshClaudeCredentialDetailed(original, deps)
+    assert.equal(failed.kind, "transient")
+
+    stored = account(undefined, "rotated-access").credentials
+    const result = await refreshClaudeCredentialDetailed(original, deps)
+    assert.equal(result.kind, "adopted")
+    assert.equal(result.credential.access, "rotated-access")
+    assert.equal(fetches, 1)
   })
 
   it("returns the existing credential and observes cooldown after a transient", async () => {
@@ -548,17 +625,18 @@ describe("credential refresh coordination", () => {
     const deps = credentialDependencies(() => account().credentials, {
       fetch: async () => {
         fetches++
-        return new Response('{"error":"rate_limit_error"}', {
-          status: 429,
-          headers: { "retry-after": "10" },
-        })
+        return rateLimited("10")
       },
     })
     const first = await refreshClaudeCredentialDetailed(original, deps)
     const second = await refreshClaudeCredentialDetailed(original, deps)
     assert.equal(first.kind, "transient")
     assert.equal(first.credential, original)
+    // The endpoint's retry-after becomes the cooldown, and the caller's.
+    assert.equal(first.kind === "transient" && first.retryAfterMs, 10_000)
     assert.equal(second.kind, "transient")
+    const remaining = second.kind === "transient" ? second.retryAfterMs : 0
+    assert.ok(remaining > 0 && remaining <= 10_000, String(remaining))
     assert.equal(fetches, 1)
   })
 
@@ -571,7 +649,7 @@ describe("credential refresh coordination", () => {
     const deps = credentialDependencies(() => null, {
       fetch: async () => {
         fetches++
-        return new Response('{"error":"rate_limit_error"}', { status: 429 })
+        return rateLimited()
       },
     })
     assert.equal(
@@ -585,14 +663,13 @@ describe("credential refresh coordination", () => {
     assert.equal(fetches, 1)
   })
 
-  it("surfaces a terminal refresh with reauthentication guidance", async () => {
+  it("reports a terminal refresh with reauthentication guidance", async () => {
     const original = createOAuthCredential(account())
     await assert.rejects(
       refreshClaudeCredentialDetailed(
         original,
         credentialDependencies(() => account().credentials, {
-          fetch: async () =>
-            new Response('{"error":"invalid_grant"}', { status: 400 }),
+          fetch: async () => invalidGrant(),
         }),
       ),
       ClaudeAuthTerminalError,
@@ -608,8 +685,7 @@ describe("credential refresh coordination", () => {
       refreshClaudeCredentialDetailed(
         stale,
         credentialDependencies(() => null, {
-          fetch: async () =>
-            new Response('{"error":"invalid_grant"}', { status: 400 }),
+          fetch: async () => invalidGrant(),
         }),
       ),
       ClaudeAuthTerminalError,
@@ -638,7 +714,7 @@ describe("credential refresh coordination", () => {
         bodies.push(body)
         if (bodies.length === 1) {
           await gate
-          return new Response('{"error":"invalid_grant"}', { status: 400 })
+          return invalidGrant()
         }
         return successfulResponse()
       },
@@ -653,15 +729,18 @@ describe("credential refresh coordination", () => {
     assert.equal(bodies.length, 2)
   })
 
-  it("escalates to terminal after too many consecutive transient failures", async () => {
+  it("reports repeated transient failures without demanding re-authentication", async () => {
     const original = createOAuthCredential(account())
     let clock = Date.now()
     let fetches = 0
+    let recovered = false
     const deps = credentialDependencies(() => account().credentials, {
       now: () => clock,
       fetch: async () => {
         fetches++
-        return new Response("{}", { status: 503 })
+        return recovered
+          ? successfulResponse()
+          : new Response("{}", { status: 503 })
       },
     })
     for (let attempt = 1; attempt < MAX_CONSECUTIVE_TRANSIENT; attempt++) {
@@ -671,23 +750,190 @@ describe("credential refresh coordination", () => {
       )
       clock += 61_000
     }
+    const exhausted = await refreshClaudeCredentialDetailed(
+      original,
+      deps,
+    ).then(
+      () => assert.fail("expected the ceiling to surface an error"),
+      (error: unknown) => error,
+    )
+    assert.ok(exhausted instanceof ClaudeAuthRefreshExhaustedError)
+    assert.match(exhausted.message, /failed 10 times in a row \(HTTP 503\)/)
+    assert.doesNotMatch(exhausted.message, /Run `claude`/)
+    assert.equal(fetches, MAX_CONSECUTIVE_TRANSIENT)
+
+    // The refresh token was never rejected, so once the outage ends the next
+    // attempt after the cooldown goes through instead of staying blocked.
+    recovered = true
+    clock += 61_000
+    const refreshed = await refreshClaudeCredentialDetailed(original, deps)
+    assert.equal(refreshed.kind, "refreshed")
+    assert.equal(fetches, MAX_CONSECUTIVE_TRANSIENT + 1)
+  })
+
+  it("does not spend the refresh token while the source cannot be read", async () => {
+    const original = createOAuthCredential(account())
+    let fetches = 0
+    const result = await refreshClaudeCredentialDetailed(
+      original,
+      credentialDependencies(() => null, {
+        readSource: async () => {
+          throw new Error("macOS Keychain is locked")
+        },
+        fetch: async () => {
+          fetches++
+          return successfulResponse()
+        },
+      }),
+    )
+    // Refreshing now would rotate the token Claude Code holds without any way
+    // to write the replacement back.
+    assert.equal(result.kind, "transient")
+    assert.equal(fetches, 0)
+  })
+
+  it("names the unreadable source once retries run out", async () => {
+    const original = createOAuthCredential(account())
+    let clock = Date.now()
+    const deps = credentialDependencies(() => null, {
+      now: () => clock,
+      readSource: async () => {
+        throw new Error("macOS Keychain is locked")
+      },
+    })
+    for (let attempt = 1; attempt < MAX_CONSECUTIVE_TRANSIENT; attempt++) {
+      await refreshClaudeCredentialDetailed(original, deps)
+      clock += 61_000
+    }
     await assert.rejects(
       refreshClaudeCredentialDetailed(original, deps),
-      ClaudeAuthTerminalError,
+      /Keychain is locked/,
     )
-    assert.equal(fetches, MAX_CONSECUTIVE_TRANSIENT)
+  })
+
+  it("warns that Claude Code will be signed out when write-back fails", async () => {
+    const original = createOAuthCredential(account())
+    await refreshClaudeCredentialDetailed(
+      original,
+      credentialDependencies(() => account().credentials, {
+        writeSource: async () => "failed",
+      }),
+    )
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /could not be saved/)
+  })
+
+  it("does not warn when write-back lands", async () => {
+    await refreshClaudeCredentialDetailed(
+      createOAuthCredential(account()),
+      credentialDependencies(() => account().credentials),
+    )
+    assert.deepEqual(warnings, [])
+  })
+
+  it("keeps the source hash when the store stays unreachable", async () => {
+    const original = createOAuthCredential(account())
+    let writes = 0
+    const refreshed = await refreshClaudeCredentialDetailed(
+      original,
+      credentialDependencies(() => account().credentials, {
+        writeSource: async () => {
+          writes++
+          return "unavailable"
+        },
+      }),
+    )
+    assert.equal(writes, 1, "the store retries; this layer does not")
+    assert.equal(refreshed.kind, "refreshed")
+    assert.equal(
+      readMetadata(refreshed.credential)?.sourceTokenHash,
+      tokenFingerprint("old-access"),
+    )
+  })
+
+  it("keeps its own refresh when a conflicting winner is not adoptable", async () => {
+    const original = createOAuthCredential(account())
+    let source = account().credentials
+    const refreshed = await refreshClaudeCredentialDetailed(
+      original,
+      credentialDependencies(() => source, {
+        writeSource: async () => {
+          source = {
+            accessToken: "expired-winner",
+            refreshToken: "r",
+            expiresAt: Date.now() - 1,
+          }
+          return "conflict"
+        },
+      }),
+    )
+    assert.equal(refreshed.kind, "refreshed")
+    assert.equal(refreshed.credential.access, "new-access")
+    assert.equal(
+      readMetadata(refreshed.credential)?.sourceTokenHash,
+      tokenFingerprint("old-access"),
+    )
+  })
+
+  it("adopts a rotated source instead of failing on invalid_grant", async () => {
+    const original = createOAuthCredential(account())
+    let source = account().credentials
+    const result = await refreshClaudeCredentialDetailed(
+      original,
+      credentialDependencies(() => source, {
+        fetch: async () => {
+          source = {
+            accessToken: "rotated-access",
+            refreshToken: "rotated-refresh",
+            expiresAt: Date.now() + 3600_000,
+          }
+          return invalidGrant()
+        },
+      }),
+    )
+    assert.equal(result.kind, "adopted")
+    assert.equal(result.credential.access, "rotated-access")
+  })
+
+  it("releases the lock on every path and defers it after a transient", async () => {
+    const events: string[] = []
+    const spyLock = (): LockAttempt => ({
+      kind: "held",
+      lock: {
+        extend: () => true,
+        defer: (ms: number) => events.push(`defer:${ms}`),
+        release: () => events.push("release"),
+        degraded: false,
+      },
+    })
+    await refreshClaudeCredentialDetailed(
+      createOAuthCredential(account()),
+      credentialDependencies(() => account().credentials, {
+        acquireLock: spyLock,
+        fetch: async () => rateLimited("10"),
+      }),
+    )
+    assert.deepEqual(events, ["defer:10000", "release"])
+
+    events.length = 0
+    resetRefreshBackoffState()
     await assert.rejects(
-      refreshClaudeCredentialDetailed(original, deps),
+      refreshClaudeCredentialDetailed(
+        createOAuthCredential(account()),
+        credentialDependencies(() => account().credentials, {
+          acquireLock: spyLock,
+          fetch: async () => invalidGrant(),
+        }),
+      ),
       ClaudeAuthTerminalError,
     )
-    assert.equal(fetches, MAX_CONSECUTIVE_TRANSIENT)
+    assert.deepEqual(events, ["release"])
   })
 
   it("clears terminal state when the account is imported again", async () => {
     const original = createOAuthCredential(account())
     const terminalDeps = credentialDependencies(() => account().credentials, {
-      fetch: async () =>
-        new Response('{"error":"invalid_grant"}', { status: 400 }),
+      fetch: async () => invalidGrant(),
     })
     await assert.rejects(
       refreshClaudeCredentialDetailed(original, terminalDeps),
@@ -702,7 +948,7 @@ describe("credential refresh coordination", () => {
     assert.equal(refreshed.kind, "refreshed")
   })
 
-  it("adopts the winning source after a compare-and-swap conflict", async () => {
+  it("adopts the winning source after a write-back conflict", async () => {
     const original = createOAuthCredential(account())
     let source = account().credentials
     const winner = {

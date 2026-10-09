@@ -4,16 +4,16 @@ import { computeVersionSuffix, buildBillingHeaderValue } from "./signing.ts"
 
 describe("signing", () => {
   describe("computeVersionSuffix", () => {
-    it("matches test vector: 'hey' + v2.1.37 → 0d9", () => {
+    it("matches test vector: 'hey' with v2.1.37 gives 0d9", () => {
       assert.equal(computeVersionSuffix("hey", "2.1.37"), "0d9")
     })
 
-    it("matches test vector: 'hey' + v2.1.90 → b39", () => {
+    it("matches test vector: 'hey' with v2.1.90 gives b39", () => {
       assert.equal(computeVersionSuffix("hey", "2.1.90"), "b39")
     })
 
     it("pads short messages with '0' for OOB indices", () => {
-      // "hey" is length 3, so indices 4, 7 and 20 all pad to "0" — the same
+      // "hey" is length 3, so indices 4, 7 and 20 all pad to "0", the same
       // sample any other sub-index-4 message produces.
       assert.equal(
         computeVersionSuffix("hey", "2.1.37"),

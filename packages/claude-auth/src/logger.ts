@@ -11,6 +11,7 @@ import {
 import { dirname, isAbsolute, join } from "node:path"
 import type { Writable } from "node:stream"
 import { opencodeDataDir } from "./env.ts"
+import { parseJsonRecord } from "./json.ts"
 
 const JWT_PATTERN = /^eyJ[A-Za-z0-9_-]{10,}/
 /** Anthropic OAuth and API tokens: `sk-ant-oat01-…`, `sk-ant-api03-…`. */
@@ -56,37 +57,29 @@ function isOwnLog(path: string): boolean {
   // an existing log can be arbitrarily large.
   const prefix = Buffer.alloc(4096)
   let read: number
-  let handle: number
+  let handle: number | undefined
   try {
     handle = openSync(path, "r")
-  } catch {
-    return false
-  }
-  try {
     read = readSync(handle, prefix, 0, prefix.length, 0)
   } catch {
     return false
   } finally {
-    closeSync(handle)
+    if (handle !== undefined) closeSync(handle)
   }
   const text = prefix.subarray(0, read).toString("utf-8")
   if (text.trim().length === 0) return true
-  try {
-    const first = JSON.parse(text.split("\n")[0]) as Record<string, unknown>
-    return typeof first.ts === "string" && typeof first.event === "string"
-  } catch {
-    return false
-  }
+  const first = parseJsonRecord(text.split("\n")[0])
+  return typeof first?.ts === "string" && typeof first.event === "string"
 }
 
 /**
  * Start a fresh log at `path`.
  *
- * Every service start truncates the log, so `CLAUDE_AUTH_DEBUG` is a delete
- * primitive pointed at an arbitrary path. Rather than blocklist filenames one
+ * Every service start truncates the log, so `CLAUDE_AUTH_DEBUG` could empty
+ * any file the user can write. Rather than blocklist filenames one
  * at a time, this refuses to overwrite any existing file that is not already
- * one of these logs — which covers `.credentials.json`, `auth.json`, `.env`,
- * and everything else nobody has thought of yet.
+ * one of these logs. That covers `.credentials.json`, `auth.json`, `.env`,
+ * and every other file nobody has thought of yet.
  */
 function truncate(path: string): void {
   if (existsSync(path) && !isOwnLog(path)) {
@@ -126,8 +119,49 @@ export function log(event: string, data?: Record<string, unknown>): void {
   }
   try {
     sink(JSON.stringify(entry) + "\n")
+  } catch (error) {
+    // A full disk must not turn a successful credential read into a failure,
+    // but a log that silently stops is worse than one that says it stopped.
+    sink = null
+    warn("log_write_failed", `debug log disabled: ${errorMessage(error)}`)
+  }
+}
+
+let warningStream: Pick<Writable, "write"> = process.stderr
+const warned = new Set<string>()
+
+/**
+ * Report a problem the user has to act on. The debug log is off by default,
+ * so the message also goes to stderr, once per event per process. The
+ * service outlives any one request, and a warning repeated on every request
+ * would bury everything else it prints. Messages must not carry secrets;
+ * `data` goes only to the redacted debug log.
+ */
+export function warn(
+  event: string,
+  message: string,
+  data?: Record<string, unknown>,
+): void {
+  log(event, { ...data, warning: message })
+  if (warned.has(event)) return
+  warned.add(event)
+  try {
+    warningStream.write(`opencode-claude-auth: ${message}\n`)
   } catch {
-    // A full disk must not turn a successful credential read into a failure.
+    // Nowhere left to report to.
+  }
+}
+
+/** For tests: capture warnings and forget which were already shown. */
+export function setWarningStreamForTests(
+  stream: Pick<Writable, "write">,
+): () => void {
+  const original = warningStream
+  warningStream = stream
+  warned.clear()
+  return () => {
+    warningStream = original
+    warned.clear()
   }
 }
 
@@ -147,9 +181,10 @@ function redactValue(key: string, value: unknown, depth: number): unknown {
       ? `${value.slice(0, 8)}...REDACTED`
       : value
   }
-  if (depth >= MAX_DEPTH || value === null || typeof value !== "object") {
-    return value
-  }
+  if (value === null || typeof value !== "object") return value
+  // Past the limit the structure is dropped rather than passed through,
+  // because an unvisited object could hold a key that should be redacted.
+  if (depth >= MAX_DEPTH) return "[nested]"
   if (Array.isArray(value)) {
     return value.map((item) => redactValue("", item, depth + 1))
   }

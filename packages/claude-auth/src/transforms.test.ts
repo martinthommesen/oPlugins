@@ -189,6 +189,51 @@ describe("native request transform", () => {
     }
   })
 
+  it("identifies as the Claude Code CLI by default", () => {
+    const restoreVersion = withEnv("ANTHROPIC_CLI_VERSION", undefined)
+    const restoreEntrypoint = withEnv("CLAUDE_CODE_ENTRYPOINT", undefined)
+    const restoreAgent = withEnv("ANTHROPIC_USER_AGENT", undefined)
+    try {
+      const headers = buildClaudeHeaders({}, "access", "claude-opus-5-5")
+      assert.equal(headers.get("x-app"), "cli")
+      // The version is the literal in model-config.ts; bump both together.
+      assert.equal(
+        headers.get("user-agent"),
+        "claude-cli/2.1.295 (external, sdk-cli)",
+      )
+    } finally {
+      restoreAgent()
+      restoreEntrypoint()
+      restoreVersion()
+    }
+  })
+
+  it("lets ANTHROPIC_USER_AGENT replace the user agent verbatim", () => {
+    const restoreEntrypoint = withEnv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    const restoreAgent = withEnv("ANTHROPIC_USER_AGENT", "custom-agent/9.9")
+    try {
+      assert.equal(
+        buildClaudeHeaders({}, "access", "claude-opus-5-5").get("user-agent"),
+        "custom-agent/9.9",
+      )
+    } finally {
+      restoreAgent()
+      restoreEntrypoint()
+    }
+  })
+
+  it("keeps a retry count the SDK already set and defaults an absent one", () => {
+    const retried = buildClaudeHeaders(
+      { "x-stainless-retry-count": "3" },
+      "access",
+      "claude-opus-5-5",
+    )
+    // A retried request must not be reported as a first attempt.
+    assert.equal(retried.get("x-stainless-retry-count"), "3")
+    const fresh = buildClaudeHeaders({}, "access", "claude-opus-5-5")
+    assert.equal(fresh.get("x-stainless-retry-count"), "0")
+  })
+
   it("buffers independent bodies for the original request and two retries", async () => {
     const body = JSON.stringify({ messages: [{ role: "user", content: "hi" }] })
     const event = {
@@ -416,6 +461,18 @@ describe("wire tool aliases", () => {
     )
   })
 
+  it("reads the model the body names before it rewrites anything", () => {
+    const result = aliasRequestBody(
+      encode({ model: "claude-opus-4-1", tools: [{ name: "read" }] }),
+    )
+    assert.equal(result.model, "claude-opus-4-1")
+    assert.equal(aliasRequestBody(encode({ model: 4 })).model, undefined)
+    assert.equal(
+      aliasRequestBody(new TextEncoder().encode("not json")).model,
+      undefined,
+    )
+  })
+
   it("passes through bodies with nothing to alias", () => {
     const plain = new TextEncoder().encode("complete-body")
     assert.equal(aliasRequestBody(plain).body, plain)
@@ -507,7 +564,7 @@ describe("wire tool aliases", () => {
     )
   })
 
-  it("carries the aliases on the snapshot for retries", async () => {
+  it("returns the aliases it applied and keeps them for replays", async () => {
     const event = {
       model: { id: "claude-sonnet-4-5" },
       request: new Request("https://api.anthropic.com/v1/messages", {
@@ -516,30 +573,12 @@ describe("wire tool aliases", () => {
       }),
     } as unknown as SessionHttpRequest
     const transformed = await transformRequest(event, oauth())
-    assert.deepEqual(transformed.snapshot.originalByAlias, {
-      mcp_Shell: "shell",
-    })
+    assert.deepEqual(transformed.originalByAlias, { mcp_Shell: "shell" })
     assert.match(await transformed.request.text(), /"mcp_Shell"/)
     assert.match(
       await buildRequestFromSnapshot(transformed.snapshot, oauth()).text(),
       /"mcp_Shell"/,
     )
-  })
-
-  it("keeps inherited aliases when the body already uses wire names", async () => {
-    const event = {
-      model: { id: "claude-sonnet-4-5" },
-      request: new Request("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        body: JSON.stringify({ tools: [{ name: "mcp_Shell" }] }),
-      }),
-    } as unknown as SessionHttpRequest
-    const transformed = await transformRequest(event, oauth(), {
-      mcp_Shell: "shell",
-    })
-    assert.deepEqual(transformed.snapshot.originalByAlias, {
-      mcp_Shell: "shell",
-    })
   })
 
   it("sends a fresh content-length for the aliased body", async () => {
@@ -553,7 +592,70 @@ describe("wire tool aliases", () => {
       }),
     } as unknown as SessionHttpRequest
     const transformed = await transformRequest(event, oauth())
+    // No copied header: fetch derives the length from the body it sends.
     assert.equal(transformed.request.headers.get("content-length"), null)
-    assert.notEqual((await transformed.request.text()).length, body.length)
+    assert.equal(
+      await transformed.request.text(),
+      '{"tools":[{"name":"mcp_Shell"}]}',
+    )
+  })
+})
+
+describe("large responses without event framing", () => {
+  // Larger than any reasonable streaming chunk, so a rewrite that splits the
+  // body anywhere other than an event boundary would show here.
+  const LARGE = 256 * 1024 + 4096
+
+  /**
+   * A JSON body of at least LARGE characters in which `marker` starts
+   * `distanceFromEnd` characters before the end. A rewrite that cut the body
+   * while keeping a fixed 1024-character tail would cut it exactly there.
+   */
+  function bodyEndingWith(marker: string, distanceFromEnd: number): string {
+    const head = '{"pad":"'
+    const middle = '","content":[{"type":"text","text":"'
+    const close = '"}]}'
+    const after = distanceFromEnd - marker.length - close.length
+    const filler = LARGE - head.length - middle.length - distanceFromEnd
+    return `${head}${"a".repeat(filler)}${middle}${marker}${"b".repeat(after)}${close}`
+  }
+
+  async function restoreInOneChunk(text: string): Promise<string> {
+    return restoreResponseToolNames(
+      new Response(text, { headers: { "content-type": "application/json" } }),
+      { mcp_Shell: "shell" },
+    ).text()
+  }
+
+  it("never splits a tool name across two rewrites", async () => {
+    const token = '"name":"mcp_Shell"'
+    // Places "mcp_" just before the cut, splitting "mcp_Shell".
+    const text = bodyEndingWith(`",${token},"x":"`, 1024 + 14)
+    assert.equal(text.slice(-1024 - 4, -1024), "mcp_")
+    const restored = await restoreInOneChunk(text)
+    assert.equal(restored.includes("mcp_Shell"), false)
+    assert.equal(restored.includes('"name":"shell"'), true)
+  })
+
+  it("never splits a character that spans two UTF-16 units", async () => {
+    const text = bodyEndingWith("🙂", 1025)
+    assert.equal(text.slice(-1025, -1023), "🙂")
+    const restored = await restoreInOneChunk(text)
+    assert.equal(restored.includes("\uFFFD"), false)
+    assert.equal(restored === text, true)
+  })
+
+  it("keeps the upstream status and status text", async () => {
+    const restored = restoreResponseToolNames(
+      new Response('{"name":"mcp_Shell"}', {
+        status: 201,
+        statusText: "Created",
+        headers: { "content-type": "application/json" },
+      }),
+      { mcp_Shell: "shell" },
+    )
+    assert.equal(restored.status, 201)
+    assert.equal(restored.statusText, "Created")
+    assert.equal(await restored.text(), '{"name":"shell"}')
   })
 })

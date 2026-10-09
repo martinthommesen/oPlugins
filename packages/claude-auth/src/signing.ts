@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 
 const BILLING_SALT = "59cf53e54c78"
 
+export const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
+
 /**
  * Compute the 3-char version suffix.
  * Samples characters at indices 4, 7, 20 from the message text (padding
@@ -23,7 +25,7 @@ export function computeVersionSuffix(
  * Build the complete billing header string for insertion into system[0].
  * `text` is the first user message's first text block, as Claude Code's own
  * extraction selects it.
- * Format: x-anthropic-billing-header: cc_version=V.S; cc_entrypoint=E; cch=H;
+ * Format: x-anthropic-billing-header: cc_version=V.S; cc_entrypoint=E; cch=00000;
  */
 export function buildBillingHeaderValue(
   text: string,
@@ -32,7 +34,7 @@ export function buildBillingHeaderValue(
 ): string {
   const suffix = computeVersionSuffix(text, version)
   return (
-    `x-anthropic-billing-header: ` +
+    `${BILLING_HEADER_PREFIX} ` +
     `cc_version=${version}.${suffix}; ` +
     `cc_entrypoint=${entrypoint}; ` +
     // The current CLI uses a fixed placeholder, not a user-message hash.

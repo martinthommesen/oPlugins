@@ -4,9 +4,22 @@ import { config, getModelBetas } from "./model-config.ts"
 
 const EFFORT = "effort-2025-11-24"
 
+/** The base set, written out so a change to the list has to change a test. */
+const BASE_BETAS = [
+  "claude-code-20250219",
+  "oauth-2025-04-20",
+  "interleaved-thinking-2025-05-14",
+  "prompt-caching-scope-2026-01-05",
+  "context-management-2025-06-27",
+  "advisor-tool-2026-03-01",
+  "thinking-token-count-2026-05-13",
+  EFFORT,
+  "extended-cache-ttl-2025-04-11",
+]
+
 describe("model beta configuration", () => {
   it("returns the required Claude Code flags", () => {
-    assert.deepEqual(getModelBetas("claude-fable-5-1", {}), config.baseBetas)
+    assert.deepEqual(getModelBetas("claude-fable-5-1", {}), BASE_BETAS)
   })
 
   it("sends effort for the models the CLI enables it on", () => {
@@ -64,15 +77,15 @@ describe("model beta configuration", () => {
         `${model} should not send effort from ANTHROPIC_BETA_FLAGS either`,
       )
       assert.ok(
-        !getModelBetas(model, {}, [EFFORT]).includes(EFFORT),
+        !getModelBetas(model, {}, EFFORT).includes(EFFORT),
         `${model} should not send effort from an inbound header either`,
       )
     }
   })
 
   it("merges inbound flags after the base set", () => {
-    assert.deepEqual(getModelBetas("claude-opus-5", {}, ["custom-beta", ""]), [
-      ...config.baseBetas,
+    assert.deepEqual(getModelBetas("claude-opus-5", {}, " custom-beta,, "), [
+      ...BASE_BETAS,
       "custom-beta",
     ])
   })
@@ -80,11 +93,11 @@ describe("model beta configuration", () => {
   it("falls back to the base set when the environment override is empty", () => {
     assert.deepEqual(
       getModelBetas("claude-opus-5", { ANTHROPIC_BETA_FLAGS: "" }),
-      config.baseBetas,
+      BASE_BETAS,
     )
     assert.deepEqual(
       getModelBetas("claude-opus-5", { ANTHROPIC_BETA_FLAGS: "  " }),
-      config.baseBetas,
+      BASE_BETAS,
     )
   })
 
@@ -106,11 +119,18 @@ describe("model beta configuration", () => {
     assert.ok(betas.includes("context-1m-2025-08-07"))
   })
 
+  it("cannot be changed by an importer", () => {
+    assert.throws(() => {
+      ;(config.baseBetas as string[]).push("injected")
+    }, TypeError)
+    assert.equal(getModelBetas("claude-opus-5", {}).includes("injected"), false)
+  })
+
   it("falls back to the base set for a separator-only override", () => {
     for (const value of [",", " , , "]) {
       assert.deepEqual(
         getModelBetas("claude-opus-5", { ANTHROPIC_BETA_FLAGS: value }),
-        config.baseBetas,
+        BASE_BETAS,
         `"${value}" must not produce an empty beta set`,
       )
     }

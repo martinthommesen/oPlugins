@@ -1,7 +1,7 @@
-export interface ModelConfig {
-  ccVersion: string
-  sdkVersion: string
-  baseBetas: string[]
+interface ModelConfig {
+  readonly ccVersion: string
+  readonly sdkVersion: string
+  readonly baseBetas: readonly string[]
 }
 
 const EFFORT_BETA = "effort-2025-11-24"
@@ -23,8 +23,13 @@ const REQUIRED_BETAS = ["claude-code-20250219", "oauth-2025-04-20"]
 //
 // Mirroring the denylist keeps new models correct by default; an allowlist
 // silently drops the flag for every model released after its last refresh.
-// Strip dated snapshots and the context suffix before exact matching; substring
-// matches would incorrectly deny future versions such as claude-sonnet-4-50.
+// Dated snapshots and the context suffix are stripped before exact matching;
+// substring matches would deny future versions such as
+// claude-sonnet-4-50. That stripping is why the set also holds the bare
+// `claude-opus-4` and `claude-sonnet-4`: they are what `claude-opus-4-20250514`
+// and `claude-sonnet-4-20250514` (the 4.0 releases) reduce to. The CLI's
+// `includes("claude-3-")` becomes `startsWith` on the canonical id, which is
+// the same test for first-party ids.
 const NO_EFFORT_MODELS = new Set([
   "claude-opus-4",
   "claude-opus-4-0",
@@ -35,12 +40,13 @@ const NO_EFFORT_MODELS = new Set([
   "claude-haiku-4-5",
 ])
 
-export const config: ModelConfig = {
+/** Frozen because every request shares it, so no importer may change it. */
+export const config: ModelConfig = Object.freeze({
   // Header and billing shape checked against the published native CLI bundle.
   ccVersion: "2.1.295",
   // @anthropic-ai/sdk version bundled with the Claude Code release above.
   sdkVersion: "0.128.0",
-  baseBetas: [
+  baseBetas: Object.freeze([
     ...REQUIRED_BETAS,
     "interleaved-thinking-2025-05-14",
     "prompt-caching-scope-2026-01-05",
@@ -49,8 +55,8 @@ export const config: ModelConfig = {
     "thinking-token-count-2026-05-13",
     EFFORT_BETA,
     "extended-cache-ttl-2025-04-11",
-  ],
-}
+  ]),
+})
 
 function supportsEffort(modelId: string): boolean {
   const canonical = modelId
@@ -62,15 +68,15 @@ function supportsEffort(modelId: string): boolean {
 
 /**
  * Beta flags for a model: the configured base set (or `ANTHROPIC_BETA_FLAGS`)
- * merged with any flags the caller already sent and the betas subscription
- * auth requires, minus the effort beta for models that do not support it. The
- * exclusion runs after the merge so an inbound header cannot reintroduce the
- * flag.
+ * merged with any flags the caller already sent (`incoming`, the raw
+ * `anthropic-beta` header) and the betas subscription auth requires, minus
+ * the effort beta for models that do not support it. The exclusion runs
+ * after the merge so an inbound header cannot reintroduce the flag.
  */
 export function getModelBetas(
   modelId: string,
   env: Record<string, string | undefined> = process.env,
-  incoming: string[] = [],
+  incoming = "",
 ): string[] {
   const override = splitBetas(env.ANTHROPIC_BETA_FLAGS ?? "")
   // An override of only separators parses to nothing; that is a malformed
@@ -79,7 +85,7 @@ export function getModelBetas(
   const betas = new Set([
     ...REQUIRED_BETAS,
     ...configured,
-    ...splitBetas(incoming.join(",")),
+    ...splitBetas(incoming),
   ])
   if (!supportsEffort(modelId)) betas.delete(EFFORT_BETA)
   return [...betas]

@@ -1,24 +1,22 @@
 import assert from "node:assert/strict"
 import { describe, it, beforeEach, afterEach } from "node:test"
-import {
-  mkdtempSync,
-  readFileSync,
-  existsSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs"
+import { readFileSync, existsSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import { PassThrough } from "node:stream"
 import { opencodeDataDir } from "./env.ts"
-import { withEnv } from "./test-helpers.ts"
+import {
+  captureWarnings,
+  removeTempDirs,
+  tempDir,
+  withEnv,
+} from "./test-helpers.ts"
 import {
   initLogger,
   log,
   closeLogger,
   redact,
   resolveLogPath,
+  warn,
 } from "./logger.ts"
 
 describe("logger", () => {
@@ -27,7 +25,7 @@ describe("logger", () => {
   let restore: Array<() => void> = []
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "claude-auth-log-test-"))
+    tmpDir = tempDir("claude-auth-log-test-")
     // Point the default log at the sandbox. Without this the tests below
     // truncate the developer's own debug log.
     restore = [
@@ -40,7 +38,7 @@ describe("logger", () => {
   afterEach(() => {
     closeLogger()
     for (const undo of restore.toReversed()) undo()
-    rmSync(tmpDir, { recursive: true, force: true })
+    removeTempDirs()
   })
 
   describe("no-op mode", () => {
@@ -148,7 +146,7 @@ describe("logger", () => {
       log("old_event", {})
       closeLogger()
 
-      // Second session — should truncate
+      // A second session truncates the log
       initLogger()
       log("new_event", {})
 
@@ -224,6 +222,56 @@ describe("logger", () => {
     })
   })
 
+  describe("warnings", () => {
+    it("reach stderr even with the debug log off, once per kind", () => {
+      const { lines, restore: undo } = captureWarnings()
+      restore.push(undo)
+
+      warn("writeback_failed", "credentials were not saved")
+      warn("writeback_failed", "credentials were not saved")
+      warn("lock_degraded", "lock unavailable")
+
+      assert.deepEqual(lines, [
+        "opencode-claude-auth: credentials were not saved\n",
+        "opencode-claude-auth: lock unavailable\n",
+      ])
+    })
+
+    it("also land in the debug log with their fields", () => {
+      const { restore: undo } = captureWarnings()
+      restore.push(undo)
+      const stream = new PassThrough()
+      const chunks: string[] = []
+      stream.on("data", (chunk) => chunks.push(chunk.toString()))
+      initLogger({ stream })
+
+      warn("writeback_failed", "not saved", { source: "file" })
+
+      const parsed = JSON.parse(chunks.join("").trim())
+      assert.equal(parsed.event, "writeback_failed")
+      assert.equal(parsed.source, "file")
+    })
+
+    it("disables a debug log that stopped accepting writes and says so", () => {
+      const { lines, restore: undo } = captureWarnings()
+      restore.push(undo)
+      const stream = new PassThrough()
+      let writes = 0
+      stream.write = (() => {
+        writes++
+        throw new Error("disk full")
+      }) as typeof stream.write
+      initLogger({ stream })
+
+      log("first")
+      log("second")
+
+      assert.equal(writes, 1)
+      assert.equal(lines.length, 1)
+      assert.match(lines[0], /debug log disabled: disk full/)
+    })
+  })
+
   describe("timestamp", () => {
     it("includes an ISO 8601 timestamp", () => {
       const logPath = join(tmpDir, "test.log")
@@ -285,6 +333,17 @@ describe("redact", () => {
       source: "file",
     })
     assert.deepEqual(result.headers, ["sk-ant-o...REDACTED", "plain"])
+  })
+
+  it("never logs a secret nested past the depth limit", () => {
+    let nested: Record<string, unknown> = {
+      accessToken: "plain-secret-value",
+      blob: { refreshToken: "another-secret" },
+    }
+    for (let level = 0; level < 8; level++) nested = { level: nested }
+    const output = JSON.stringify(redact(nested))
+    assert.equal(output.includes("plain-secret-value"), false)
+    assert.equal(output.includes("another-secret"), false)
   })
 
   it("redacts the Keychain account name", () => {

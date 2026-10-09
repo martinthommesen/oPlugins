@@ -3,46 +3,41 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, it } from "node:test"
 import {
   buildAccountLabels,
-  clearSuffixToDirCache,
   credentialSourceID,
-  credentialBlobMatches,
   keychainSuffixForDir,
   parseCredentials,
   PRIMARY_SERVICE,
   readCredentialsFile,
   readAllClaudeAccounts,
-  refreshAccount,
+  readSourceCredentials,
   tokenFingerprint,
   updateCredentialBlob,
   writeBackCredentials,
 } from "./keychain.ts"
-import { withEnv, withPlatform } from "./test-helpers.ts"
+import {
+  captureWarnings,
+  removeTempDirs,
+  tempDir,
+  withEnv,
+  withPlatform,
+} from "./test-helpers.ts"
 
-const tempDirs: string[] = []
 const restores: Array<() => void> = []
-
-function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "opencode-claude-auth-"))
-  tempDirs.push(dir)
-  return dir
-}
 
 afterEach(() => {
   for (const restore of restores.splice(0).toReversed()) restore()
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true })
-  }
+  removeTempDirs()
 })
 
 function credentialBlob(accessToken: string): string {
@@ -61,8 +56,26 @@ function credentialBlob(accessToken: string): string {
  * holding its blob, `<service>.account` for the item's account name,
  * `<service>.exit` to force an exit status, and `dump` for `dump-keychain`.
  * Writes land in `<service>` and record the account used in
- * `<service>.written-as`. The platform is forced to darwin so the Keychain
- * paths run on every CI host.
+ * `<service>.written-as`; `<service>.drop` makes every write exit 0 without
+ * storing anything, and `<service>.drop-once` loses one write and leaves its
+ * own content (when it has any) in the item, as another writer would. A
+ * `<service>.flip` replaces the item right after the account lookup, which
+ * models a rotation landing while a write is being prepared. Every
+ * invocation's argv is appended to `argv.log`. The platform is forced to
+ * darwin so the Keychain paths run on every CI host.
+ *
+ * It mirrors the real tool where the real tool is surprising, because the
+ * plugin's write path depends on those details (each was checked against
+ * `/usr/bin/security` on macOS):
+ * - `-w` as the last argument prompts twice through getpass, which reads
+ *   stdin when there is no terminal, keeps at most 128 characters, reads EOF
+ *   as an empty string, and accepts two matching empty entries.
+ * - `-i` executes commands read from stdin in 4096-byte line chunks; a longer
+ *   line is split, and its first fragment still runs.
+ * - Account names print verbatim between quotes, or as `0x<hex>` followed by
+ *   an octal-escaped form when they hold a backslash or non-ASCII bytes.
+ * - `find-generic-password -w` prints a password holding any byte outside
+ *   printable ASCII as bare lowercase hex.
  */
 function installFakeKeychain(): { state: string; home: string } {
   const home = tempDir()
@@ -71,46 +84,135 @@ function installFakeKeychain(): { state: string; home: string } {
   const security = join(bin, "security")
   writeFileSync(
     security,
-    `#!/bin/sh
-state=${JSON.stringify(state)}
-command="$1"
-shift
-service=""
-account=""
-password=0
-previous=""
-for value in "$@"; do
-  [ "$previous" = "-s" ] && service="$value"
-  [ "$previous" = "-a" ] && account="$value"
-  [ "$value" = "-w" ] && password=1
-  previous="$value"
-done
-case "$command" in
-  dump-keychain)
-    cat "$state/dump"
-    ;;
-  find-generic-password)
-    [ -f "$state/$service.exit" ] && exit "$(cat "$state/$service.exit")"
-    [ -f "$state/$service" ] || exit 44
-    if [ "$password" = 1 ]; then
-      cat "$state/$service"
-      # A queued "<service>.flip" lands after this read, so the next one sees
-      # a different blob. Models an external rotation mid-write-back.
-      if [ -f "$state/$service.flip" ]; then
-        mv "$state/$service.flip" "$state/$service"
-      fi
-    elif [ -f "$state/$service.account" ]; then
-      printf '"acct"<blob>="%s"\\n' "$(cat "$state/$service.account")"
-    fi
-    ;;
-  add-generic-password)
-    cat > "$state/$service"
-    printf '%s' "$account" > "$state/$service.written-as"
-    ;;
-  *)
-    exit 1
-    ;;
-esac
+    `#!${process.execPath}
+const fs = require("node:fs")
+const path = require("node:path")
+const state = ${JSON.stringify(state)}
+const file = (name) => path.join(state, name)
+
+fs.appendFileSync(file("argv.log"), JSON.stringify(process.argv.slice(2)) + "\\n")
+
+let stdinLines = null
+function nextStdinLine() {
+  stdinLines ??= fs.readFileSync(0, "utf8").split("\\n")
+  return stdinLines.shift() ?? ""
+}
+
+function getpass() {
+  return nextStdinLine().slice(0, 128)
+}
+
+function printAccount(account) {
+  const bytes = Buffer.from(account, "utf8")
+  const plain = [...bytes].every((b) => b >= 0x20 && b < 0x7f && b !== 0x5c)
+  if (plain) return '"acct"<blob>="' + account + '"'
+  const octal = [...bytes]
+    .map((b) => b >= 0x20 && b < 0x7f && b !== 0x5c
+      ? String.fromCharCode(b)
+      : "\\\\" + b.toString(8).padStart(3, "0"))
+    .join("")
+  return '"acct"<blob>=0x' + bytes.toString("hex").toUpperCase() + '  "' + octal + '"'
+}
+
+function run(argv) {
+  const [command, ...args] = argv
+  const option = (flag) => {
+    const index = args.indexOf(flag)
+    return index === -1 ? undefined : args[index + 1]
+  }
+  const service = option("-s") ?? ""
+  switch (command) {
+    case "dump-keychain":
+      process.stdout.write(fs.readFileSync(file("dump"), "utf8"))
+      return 0
+    case "find-generic-password": {
+      if (fs.existsSync(file(service + ".exit"))) {
+        return Number(fs.readFileSync(file(service + ".exit"), "utf8"))
+      }
+      if (!fs.existsSync(file(service))) return 44
+      if (args.includes("-w")) {
+        const stored = fs.readFileSync(file(service))
+        const printable = [...stored].every((b) => b >= 0x20 && b < 0x7f)
+        process.stdout.write(
+          (printable ? stored.toString("utf8") : stored.toString("hex")) + "\\n",
+        )
+        return 0
+      }
+      if (fs.existsSync(file(service + ".account"))) {
+        const account = fs.readFileSync(file(service + ".account"), "utf8")
+        process.stdout.write("    " + printAccount(account) + "\\n")
+      }
+      if (fs.existsSync(file(service + ".flip"))) {
+        fs.renameSync(file(service + ".flip"), file(service))
+      }
+      return 0
+    }
+    case "add-generic-password": {
+      let password
+      if (args.includes("-X")) {
+        password = Buffer.from(option("-X"), "hex").toString("utf8")
+      } else if (args.at(-1) === "-w") {
+        for (let attempt = 0; attempt < 3 && password === undefined; attempt++) {
+          const first = getpass()
+          if (getpass() === first) password = first
+        }
+        if (password === undefined) return 1
+      } else {
+        password = option("-w")
+      }
+      if (fs.existsSync(file(service + ".drop-once"))) {
+        const other = fs.readFileSync(file(service + ".drop-once"))
+        fs.unlinkSync(file(service + ".drop-once"))
+        if (other.length > 0) fs.writeFileSync(file(service), other)
+      } else if (!fs.existsSync(file(service + ".drop"))) {
+        fs.writeFileSync(file(service), password)
+      }
+      fs.writeFileSync(file(service + ".written-as"), option("-a") ?? "")
+      return 0
+    }
+    default:
+      return 1
+  }
+}
+
+/** Split one \`security -i\` line the way the real tool does. */
+function tokenize(line) {
+  const tokens = []
+  let current = null
+  let quoted = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === "\\\\" && i + 1 < line.length) {
+      current = (current ?? "") + line[++i]
+    } else if (c === '"') {
+      quoted = !quoted
+      current ??= ""
+    } else if (!quoted && /\\s/.test(c)) {
+      if (current !== null) tokens.push(current)
+      current = null
+    } else {
+      current = (current ?? "") + c
+    }
+  }
+  if (current !== null) tokens.push(current)
+  return tokens
+}
+
+const argv = process.argv.slice(2)
+if (argv[0] === "-i") {
+  let status = 0
+  const input = fs.readFileSync(0, "utf8")
+  for (const line of input.split("\\n")) {
+    for (let start = 0; start < Math.max(line.length, 1); start += 4095) {
+      const tokens = tokenize(line.slice(start, start + 4095))
+      if (tokens.length === 0) continue
+      const code = run(tokens)
+      if (code !== 0) status = code
+    }
+  }
+  process.exit(status)
+}
+process.exit(run(argv))
 `,
   )
   chmodSync(security, 0o755)
@@ -120,9 +222,7 @@ esac
     withEnv("OPENCODE_CLAUDE_AUTH_SECURITY_BIN", security),
     withEnv("CLAUDE_CONFIG_DIR", undefined),
     withPlatform("darwin"),
-    clearSuffixToDirCache,
   )
-  clearSuffixToDirCache()
   return { state, home }
 }
 
@@ -258,6 +358,22 @@ describe("Claude credential sources", () => {
       )
     })
 
+    it("falls back to the primary item and says so when listing fails", async () => {
+      const { lines: warnings, restore } = captureWarnings()
+      restores.push(restore)
+      const { state } = installFakeKeychain()
+      // No "dump" file, so dump-keychain exits non-zero.
+      writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("one-access"))
+
+      const accounts = await readAllClaudeAccounts()
+      assert.deepEqual(
+        accounts.map((account) => account.source),
+        [PRIMARY_SERVICE],
+      )
+      assert.equal(warnings.length, 1)
+      assert.match(warnings[0], /only the primary Claude Code account/)
+    })
+
     it("skips an inaccessible entry and reports it only when nothing loads", async () => {
       const { state } = installFakeKeychain()
       const suffixed = `${PRIMARY_SERVICE}-0123abcd`
@@ -307,6 +423,176 @@ describe("Claude credential sources", () => {
       )
     })
 
+    it("keeps the refreshed tokens off the command line", async () => {
+      const { state } = installFakeKeychain()
+      writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
+
+      assert.equal(
+        await writeBackCredentials(
+          PRIMARY_SERVICE,
+          {
+            accessToken: "new-access-secret",
+            refreshToken: "new-refresh-secret",
+            expiresAt: 3000,
+          },
+          undefined,
+          "old",
+        ),
+        "written",
+      )
+      const argv = readFileSync(join(state, "argv.log"), "utf8")
+      for (const secret of ["new-access-secret", "new-refresh-secret"]) {
+        assert.equal(argv.includes(secret), false)
+        assert.equal(
+          argv.toLowerCase().includes(Buffer.from(secret).toString("hex")),
+          false,
+        )
+      }
+    })
+
+    it("writes a blob too long for one interactive line in full", async () => {
+      const { state } = installFakeKeychain()
+      const large = JSON.parse(credentialBlob("old"))
+      large.mcpOAuth = { server: { accessToken: "m".repeat(6000) } }
+      writeFileSync(join(state, PRIMARY_SERVICE), JSON.stringify(large))
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
+
+      assert.equal(
+        await writeBackCredentials(
+          PRIMARY_SERVICE,
+          { accessToken: "new", refreshToken: "new-refresh", expiresAt: 3000 },
+          undefined,
+          "old",
+        ),
+        "written",
+      )
+      const stored = JSON.parse(
+        readFileSync(join(state, PRIMARY_SERVICE), "utf8"),
+      )
+      assert.equal(stored.claudeAiOauth.accessToken, "new")
+      assert.equal(stored.mcpOAuth.server.accessToken, "m".repeat(6000))
+    })
+
+    it("reads an item whose blob holds non-ASCII text", async () => {
+      const { state } = installFakeKeychain()
+      const blob = JSON.parse(credentialBlob("current"))
+      blob.claudeAiOauth.note = "ünïcode"
+      writeFileSync(join(state, PRIMARY_SERVICE), JSON.stringify(blob))
+
+      const credentials = await readSourceCredentials(PRIMARY_SERVICE)
+      assert.equal(credentials?.accessToken, "current")
+    })
+
+    it("keeps a written blob readable when it holds non-ASCII text", async () => {
+      const { state } = installFakeKeychain()
+      const blob = JSON.parse(credentialBlob("old"))
+      blob.claudeAiOauth.note = "ünïcode"
+      writeFileSync(join(state, PRIMARY_SERVICE), JSON.stringify(blob))
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
+
+      assert.equal(
+        await writeBackCredentials(
+          PRIMARY_SERVICE,
+          { accessToken: "new", refreshToken: "r", expiresAt: 3000 },
+          undefined,
+          "old",
+        ),
+        "written",
+      )
+      const stored = readFileSync(join(state, PRIMARY_SERVICE), "utf8")
+      assert.match(stored, /^[\x20-\x7e]*$/)
+      assert.equal(JSON.parse(stored).claudeAiOauth.note, "ünïcode")
+    })
+
+    it("tries once more when a write does not land", async () => {
+      const { state } = installFakeKeychain()
+      writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.drop-once`), "")
+
+      assert.equal(
+        await writeBackCredentials(
+          PRIMARY_SERVICE,
+          { accessToken: "new", refreshToken: "new-refresh", expiresAt: 3000 },
+          undefined,
+          "old",
+        ),
+        "written",
+      )
+      const writes = readFileSync(join(state, "argv.log"), "utf8")
+        .split("\n")
+        .filter((line) => line === '["-i"]')
+      assert.equal(writes.length, 2)
+    })
+
+    it("keeps the original guard token when it tries again", async () => {
+      // The write is lost and the user runs `claude` before the next attempt.
+      // Re-reading the guard token then would compare the item against itself
+      // and overwrite that login.
+      const { state } = installFakeKeychain()
+      writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
+      writeFileSync(
+        join(state, `${PRIMARY_SERVICE}.drop-once`),
+        credentialBlob("external"),
+      )
+
+      assert.equal(
+        await writeBackCredentials(
+          PRIMARY_SERVICE,
+          { accessToken: "new", refreshToken: "r", expiresAt: 3000 },
+          undefined,
+          "old",
+        ),
+        "conflict",
+      )
+      assert.equal(
+        JSON.parse(readFileSync(join(state, PRIMARY_SERVICE), "utf8"))
+          .claudeAiOauth.accessToken,
+        "external",
+      )
+    })
+
+    it("reports a write that did not land as unavailable", async () => {
+      const { state } = installFakeKeychain()
+      writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
+      writeFileSync(join(state, `${PRIMARY_SERVICE}.drop`), "")
+
+      assert.equal(
+        await writeBackCredentials(
+          PRIMARY_SERVICE,
+          { accessToken: "new", refreshToken: "new-refresh", expiresAt: 3000 },
+          undefined,
+          "old",
+        ),
+        "unavailable",
+      )
+    })
+
+    for (const account of ['has"quote', "back\\slash", "ünïcode", "sp ace"]) {
+      it(`writes under the exact account name ${JSON.stringify(account)}`, async () => {
+        const { state } = installFakeKeychain()
+        writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
+        writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), account)
+
+        assert.equal(
+          await writeBackCredentials(
+            PRIMARY_SERVICE,
+            { accessToken: "new", refreshToken: "r", expiresAt: 3000 },
+            undefined,
+            "old",
+          ),
+          "written",
+        )
+        assert.equal(
+          readFileSync(join(state, `${PRIMARY_SERVICE}.written-as`), "utf8"),
+          account,
+        )
+      })
+    }
+
     it("refuses to write when the item's account name is unknown", async () => {
       const { state } = installFakeKeychain()
       writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
@@ -318,9 +604,9 @@ describe("Claude credential sources", () => {
           undefined,
           "old",
         ),
-        // The lookup can fail for transient reasons too, so this reports the
-        // store as unreachable rather than as a decision against the write.
-        "unavailable",
+        // An item without an account cannot be updated in place, and asking
+        // again will not give it one.
+        "failed",
       )
       assert.equal(
         JSON.parse(readFileSync(join(state, PRIMARY_SERVICE), "utf8"))
@@ -364,7 +650,7 @@ describe("Claude credential sources", () => {
       )
     })
 
-    it("declines when the item rotates between the guard read and the write", async () => {
+    it("declines when the item rotates while the write is prepared", async () => {
       const { state } = installFakeKeychain()
       writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("old"))
       writeFileSync(join(state, `${PRIMARY_SERVICE}.account`), "me@example.com")
@@ -435,14 +721,25 @@ describe("Claude credential sources", () => {
       )
     })
 
+    it("will not read a source that is not a Claude Code item", async () => {
+      const { state } = installFakeKeychain()
+      writeFileSync(join(state, "Some Other App"), credentialBlob("theirs"))
+
+      assert.equal(await readSourceCredentials("Some Other App"), null)
+      assert.equal(existsSync(join(state, "argv.log")), false)
+    })
+
     it("reads an account's current credentials through the Keychain", async () => {
       const { state } = installFakeKeychain()
       writeFileSync(join(state, PRIMARY_SERVICE), credentialBlob("current"))
 
-      const credentials = await refreshAccount(PRIMARY_SERVICE)
+      const credentials = await readSourceCredentials(PRIMARY_SERVICE)
       assert.equal(credentials?.accessToken, "current")
       assert.equal(credentials?.refreshToken, "current-refresh")
-      assert.equal(await refreshAccount(`${PRIMARY_SERVICE}-deadbeef`), null)
+      assert.equal(
+        await readSourceCredentials(`${PRIMARY_SERVICE}-deadbeef`),
+        null,
+      )
     })
   })
 
@@ -462,9 +759,9 @@ describe("Claude credential sources", () => {
   it("reads an account's current credentials from the configured file", async () => {
     const dir = tempDir()
     writeFileSync(join(dir, ".credentials.json"), credentialBlob("from-file"))
-    const credentials = await refreshAccount("file", dir)
+    const credentials = await readSourceCredentials("file", dir)
     assert.equal(credentials?.accessToken, "from-file")
-    assert.equal(await refreshAccount("file", tempDir()), null)
+    assert.equal(await readSourceCredentials("file", tempDir()), null)
   })
 
   it("labels duplicate subscription tiers with account details", () => {
@@ -576,7 +873,57 @@ describe("guarded file write-back", () => {
     )
   })
 
-  it("updates blobs only after the expected-token guard", () => {
+  it("reports an unreadable credentials file instead of 'no credentials'", async () => {
+    const dir = tempDir()
+    mkdirSync(join(dir, ".credentials.json"))
+    await assert.rejects(readCredentialsFile(dir), /EISDIR/)
+    assert.equal(await readCredentialsFile(join(dir, "missing")), null)
+  })
+
+  it("refuses to update a blob that is not a credential object", () => {
+    for (const raw of ["null", "[]", "3", '{"claudeAiOauth":"text"}']) {
+      assert.equal(updateCredentialBlob(raw, refreshed), null, raw)
+    }
+  })
+
+  it("leaves no temp file behind when the rename fails", async () => {
+    const { dir, path } = credentialFile()
+    // A directory where the temp file would be renamed to: rename fails
+    // after the temp file was written.
+    rmSync(path)
+    mkdirSync(path)
+    writeFileSync(join(path, "keep"), "")
+    restores.push(() => rmSync(path, { recursive: true, force: true }))
+    assert.equal(
+      await writeBackCredentials("file", refreshed, dir, "old"),
+      "unavailable",
+    )
+    assert.deepEqual(
+      readdirSync(dir).filter((name) => name.endsWith(".tmp")),
+      [],
+    )
+  })
+
+  it("sweeps temp files a killed process left behind, and only those", async () => {
+    const { dir } = credentialFile()
+    const stale = join(dir, ".credentials.json.1.stale.tmp")
+    const fresh = join(dir, ".credentials.json.2.fresh.tmp")
+    const unrelated = join(dir, "notes.tmp")
+    for (const path of [stale, fresh, unrelated]) writeFileSync(path, "")
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    utimesSync(stale, twoHoursAgo, twoHoursAgo)
+    utimesSync(unrelated, twoHoursAgo, twoHoursAgo)
+
+    assert.equal(
+      await writeBackCredentials("file", refreshed, dir, "old"),
+      "written",
+    )
+    assert.equal(existsSync(stale), false)
+    assert.equal(existsSync(fresh), true)
+    assert.equal(existsSync(unrelated), true)
+  })
+
+  it("replaces the access token inside the wrapper", () => {
     const raw = JSON.stringify({
       claudeAiOauth: {
         accessToken: "old",
@@ -584,8 +931,6 @@ describe("guarded file write-back", () => {
         expiresAt: 1,
       },
     })
-    assert.equal(credentialBlobMatches(raw, "old"), true)
-    assert.equal(credentialBlobMatches(raw, "other"), false)
     assert.equal(
       JSON.parse(updateCredentialBlob(raw, refreshed)!).claudeAiOauth
         .accessToken,

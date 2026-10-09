@@ -1,9 +1,9 @@
 /**
  * Manual packed-package smoke test for OpenCode v2.
  *
- * Pass --offline to test plugin loading, import, and pricing with a fake
- * credential and a local mock API, without reading real credentials or
- * contacting Anthropic.
+ * Pass --offline to test plugin loading, import, pricing, and a streamed
+ * read-tool round trip with a fake credential and a local mock API, without
+ * reading real credentials or contacting Anthropic.
  *
  * By default this copies one valid Claude Code account into an isolated source
  * and verifies package loading, automatic import, account labeling, zero-cost
@@ -300,8 +300,18 @@ exit 44
     )
     chmodSync(security, 0o755)
 
+    // The plugin reads these to override what it sends. Inherited from the
+    // developer's shell (Claude Code itself sets CLAUDE_CODE_ENTRYPOINT), they
+    // would change the wire values the mock checks against.
+    const {
+      CLAUDE_CODE_ENTRYPOINT: _entrypoint,
+      ANTHROPIC_CLI_VERSION: _cliVersion,
+      ANTHROPIC_USER_AGENT: _userAgent,
+      ANTHROPIC_BETA_FLAGS: _betaFlags,
+      ...inherited
+    } = process.env
     const env = {
-      ...process.env,
+      ...inherited,
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
       XDG_CONFIG_HOME: configHome,
       XDG_DATA_HOME: dataHome,
@@ -395,6 +405,17 @@ exit 44
 
 try {
   await main()
+} catch (error) {
+  // The sandbox is removed below (it can hold a copied token), so the
+  // plugin's own account of the failure is printed before it goes.
+  try {
+    process.stderr.write(
+      `--- plugin.log ---\n${readFileSync(join(root, "plugin.log"), "utf8")}`,
+    )
+  } catch {
+    // No log was written.
+  }
+  throw error
 } finally {
   if (process.env.HEADLESS_KEEP) {
     console.log(`HEADLESS_KEEP set; sandbox preserved at ${root}`)

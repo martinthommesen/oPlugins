@@ -6,17 +6,19 @@ import type {
 } from "@opencode/plugin/promise/session"
 import { randomUUID } from "node:crypto"
 import { singleLineFromEnv } from "./env.ts"
-import { buildBillingHeaderValue } from "./signing.ts"
+import { isRecord, parseJsonRecord, type JsonRecord } from "./json.ts"
+import { log } from "./logger.ts"
+import { BILLING_HEADER_PREFIX, buildBillingHeaderValue } from "./signing.ts"
 import { config, getModelBetas } from "./model-config.ts"
 
 export const SYSTEM_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude."
 
-const BILLING_PREFIX = "x-anthropic-billing-header:"
 const CONTEXT_METADATA_KEY = "griffinmartin.claude-auth"
 const TOOL_PREFIX = "mcp_"
 const processSessionID = randomUUID()
 const encoder = new TextEncoder()
+const decoder = new TextDecoder()
 
 type ContextMessage = SessionContext["messages"][number]
 type ContextPart = ContextMessage["content"][number]
@@ -26,11 +28,12 @@ export type OriginalByAlias = Record<string, string>
 
 /**
  * Anthropic's OAuth billing validator rejects unknown tool names when several
- * tools are present. Claude Code sends third-party tools as `mcp_<PascalCase>`,
- * so subscription traffic uses the same convention on the wire. OpenCode's
- * tool registry and dispatch never see the alias: the request body is
- * rewritten on the way out and the response stream restores the original
- * names. The one OpenCode-visible trace is the name mapping the context hook
+ * tools are present. Claude Code sends third-party tools with an `mcp_`
+ * prefix, so subscription traffic does the same on the wire: `mcp_` plus the
+ * name with its first letter upper-cased, so `read_file` becomes
+ * `mcp_Read_file`. OpenCode's tool registry and dispatch never see the alias.
+ * The plugin rewrites the request body on the way out and restores the
+ * original names in the response stream. The one OpenCode-visible trace is the name mapping the context hook
  * adds to the first user message so the model can relate instructions that
  * use OpenCode names to the tools it is offered.
  */
@@ -45,8 +48,8 @@ function aliasToolName(name: string): string {
  * alias, keeps its own name so no two tools share one wire name.
  *
  * This only sees the names present in the request, so a real MCP tool the
- * request never mentions — one arriving from Anthropic's server-side MCP
- * connector, say — is not protected from colliding with a minted alias.
+ * request never mentions, such as one from Anthropic's server-side MCP
+ * connector, is not protected from colliding with a generated alias.
  */
 function buildToolAliases(names: Iterable<string>): Map<string, string> {
   const unique = [...new Set(names)]
@@ -103,7 +106,7 @@ export function transformContext(
 
   const moved: string[] = []
   for (const part of event.system) {
-    if (part.text.startsWith(BILLING_PREFIX)) continue
+    if (part.text.startsWith(BILLING_HEADER_PREFIX)) continue
     if (part.text.startsWith(SYSTEM_IDENTITY)) {
       const rest = part.text.slice(SYSTEM_IDENTITY.length).replace(/^\n+/, "")
       if (rest) moved.push(rest)
@@ -125,10 +128,11 @@ export function transformContext(
   const relocated = [...moved, guidance].filter(Boolean).join("\n\n")
 
   if (firstUser && relocated && !hasRelocatedPart) {
-    ;(firstUser as unknown as { content: ContextPart[] }).content = [
-      markRelocatedText(relocated),
-      ...firstUser.content,
-    ]
+    // The message type marks `content` read-only, so the message is replaced.
+    event.messages[event.messages.indexOf(firstUser)] = {
+      ...firstUser,
+      content: [markRelocatedText(relocated), ...firstUser.content],
+    }
   }
 
   event.system = [
@@ -184,8 +188,11 @@ export function buildClaudeHeaders(
   modelID: string,
 ): Headers {
   const headers = new Headers(original)
-  const incoming = (headers.get("anthropic-beta") ?? "").split(",")
-  const betas = getModelBetas(modelID, process.env, incoming)
+  const betas = getModelBetas(
+    modelID,
+    process.env,
+    headers.get("anthropic-beta") ?? "",
+  )
 
   headers.set("authorization", `Bearer ${accessToken}`)
   headers.set("anthropic-version", "2023-06-01")
@@ -202,12 +209,6 @@ export function buildClaudeHeaders(
   // The body is re-serialized after aliasing, so a copied length is stale.
   headers.delete("content-length")
   return headers
-}
-
-type JsonRecord = Record<string, unknown>
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 /** Server tools keep the exact name Anthropic defines for their `type`. */
@@ -241,19 +242,20 @@ function toolNameHolders(payload: JsonRecord): ToolNameHolder[] {
   )
 }
 
+type ToolReference = JsonRecord & { tool_name: string }
+
+function isToolReference(block: JsonRecord): block is ToolReference {
+  return block.type === "tool_reference" && typeof block.tool_name === "string"
+}
+
 /** Tool-search results reference deferred client tools inside content blocks. */
-function toolReferences(payload: JsonRecord): JsonRecord[] {
-  const references: JsonRecord[] = []
+function toolReferences(payload: JsonRecord): ToolReference[] {
+  const references: ToolReference[] = []
   const visit = (content: unknown): void => {
     if (!Array.isArray(content)) return
     for (const block of content) {
       if (!isRecord(block)) continue
-      if (
-        block.type === "tool_reference" &&
-        typeof block.tool_name === "string"
-      ) {
-        references.push(block)
-      }
+      if (isToolReference(block)) references.push(block)
       // Do not traverse tool inputs or arbitrary JSON results.
       visit(block.content)
     }
@@ -268,40 +270,43 @@ function toolReferences(payload: JsonRecord): JsonRecord[] {
 
 /**
  * Rewrite the outbound `/v1/messages` body to Claude Code tool names. Returns
- * the aliases applied so the response stream can restore the original names.
- * A body that is not the expected JSON shape is passed through untouched.
+ * the aliases applied so the response stream can restore the original names,
+ * and the model the body names. A body that is not the expected JSON shape is
+ * passed through untouched.
  */
 export function aliasRequestBody(body: Uint8Array<ArrayBuffer>): {
   body: Uint8Array<ArrayBuffer>
   originalByAlias: OriginalByAlias
+  model?: string
 } {
-  let payload: unknown
-  try {
-    payload = JSON.parse(new TextDecoder().decode(body))
-  } catch {
+  const payload = parseJsonRecord(decoder.decode(body))
+  if (!payload) {
+    // Sent un-aliased, which the billing validator may reject over tool names.
+    log("request_body_not_json", { bytes: body.byteLength })
     return { body, originalByAlias: {} }
   }
-  if (!isRecord(payload)) return { body, originalByAlias: {} }
+  const model = typeof payload.model === "string" ? payload.model : undefined
 
   const holders = toolNameHolders(payload)
   const references = toolReferences(payload)
   const aliases = buildToolAliases([
     ...holders.map((holder) => holder.name),
-    ...references.map((reference) => reference.tool_name as string),
+    ...references.map((reference) => reference.tool_name),
   ])
-  if (aliases.size === 0) return { body, originalByAlias: {} }
+  if (aliases.size === 0) return { body, originalByAlias: {}, model }
 
   for (const holder of holders) {
     const alias = aliases.get(holder.name)
     if (alias) holder.name = alias
   }
   for (const reference of references) {
-    const alias = aliases.get(reference.tool_name as string)
+    const alias = aliases.get(reference.tool_name)
     if (alias) reference.tool_name = alias
   }
   return {
     body: encoder.encode(JSON.stringify(payload)),
     originalByAlias: invert(aliases),
+    model,
   }
 }
 
@@ -322,16 +327,6 @@ export function restoreToolNames(
 const EVENT_BOUNDARIES = ["\r\n\r\n", "\n\n", "\r\r"]
 
 /**
- * Longest prefix retained when flushing a body that has no event boundary, so
- * a `"name":"mcp_…"` token is never split across two rewrites. Comfortably
- * above the longest plausible tool name plus its JSON framing.
- */
-const NAME_TOKEN_MARGIN = 1024
-
-/** Flush a boundary-less body once it exceeds this, instead of buffering it whole. */
-const MAX_BUFFERED_BYTES = 256 * 1024
-
-/**
  * Whether a response body is text this plugin may decode. Rewriting runs
  * through TextDecoder, which replaces every invalid byte with U+FFFD, so a
  * binary body a proxy returned must pass through untouched.
@@ -347,7 +342,7 @@ function isTextualBody(response: Response): boolean {
   )
 }
 
-/** Longest boundary minus one: the most that can straddle a chunk edge. */
+/** One less than the longest boundary: the most that can straddle a chunk edge. */
 const BOUNDARY_CARRY = Math.max(...EVENT_BOUNDARIES.map((b) => b.length)) - 1
 
 /**
@@ -360,9 +355,9 @@ const BOUNDARY_CARRY = Math.max(...EVENT_BOUNDARIES.map((b) => b.length)) - 1
  * Without that, a body with no framing rescans everything received so far on
  * every chunk, which is quadratic in the body size.
  */
-function lastEventBoundary(buffer: string, from = 0): number {
+function lastEventBoundary(buffer: string, from: number): number {
   const start = Math.max(0, from - BOUNDARY_CARRY)
-  const tail = start === 0 ? buffer : buffer.slice(start)
+  const tail = buffer.slice(start)
   let end = -1
   for (const boundary of EVENT_BOUNDARIES) {
     const index = tail.lastIndexOf(boundary)
@@ -375,7 +370,8 @@ function lastEventBoundary(buffer: string, from = 0): number {
  * Restore original tool names in the response body so OpenCode sees the tools
  * it registered. Chunks are flushed on SSE event boundaries so a tool name is
  * never split across two rewrites. A body without event boundaries, such as a
- * non-streaming JSON response, is rewritten whole when the stream ends.
+ * non-streaming JSON response, is rewritten whole when the stream ends. The
+ * caller reads such a body whole anyway, so holding it costs one more copy.
  */
 export function restoreResponseToolNames(
   response: Response,
@@ -389,21 +385,16 @@ export function restoreResponseToolNames(
     return response
   }
 
-  const decoder = new TextDecoder()
+  const streamDecoder = new TextDecoder()
   let buffer = ""
 
   const body = response.body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         const searched = buffer.length
-        buffer += decoder.decode(chunk, { stream: true })
-        let boundary = lastEventBoundary(buffer, searched)
-        if (boundary === -1) {
-          // No event framing: a non-streaming body would otherwise be held
-          // whole. Flush all but a tail long enough to contain any name token.
-          if (buffer.length < MAX_BUFFERED_BYTES) return
-          boundary = buffer.length - NAME_TOKEN_MARGIN
-        }
+        buffer += streamDecoder.decode(chunk, { stream: true })
+        const boundary = lastEventBoundary(buffer, searched)
+        if (boundary === -1) return
         const complete = buffer.slice(0, boundary)
         buffer = buffer.slice(boundary)
         controller.enqueue(
@@ -411,7 +402,7 @@ export function restoreResponseToolNames(
         )
       },
       flush(controller) {
-        buffer += decoder.decode()
+        buffer += streamDecoder.decode()
         if (!buffer) return
         controller.enqueue(
           encoder.encode(restoreToolNames(buffer, originalByAlias)),
@@ -435,7 +426,6 @@ export interface RequestSnapshot {
   method: string
   headers: Array<[string, string]>
   body: Uint8Array<ArrayBuffer> | null
-  originalByAlias: OriginalByAlias
   cache: RequestCache
   credentials: RequestCredentials
   integrity: string
@@ -448,36 +438,18 @@ export interface RequestSnapshot {
   modelID: string
 }
 
-/**
- * `inherited` carries the aliases of an earlier pass over the same request.
- * A body that already uses wire names yields no new aliases, so without it a
- * re-run of the hook would send aliases it could no longer restore.
- */
 async function snapshotRequest(
   event: SessionHttpRequest,
-  inherited: OriginalByAlias = {},
-): Promise<RequestSnapshot> {
+): Promise<{ snapshot: RequestSnapshot; originalByAlias: OriginalByAlias }> {
   const request = event.request
-  const original = request.body
-    ? new Uint8Array(await request.clone().arrayBuffer())
+  const aliased = request.body
+    ? aliasRequestBody(new Uint8Array(await request.clone().arrayBuffer()))
     : null
-  const aliased = original ? aliasRequestBody(original) : null
-  let modelID: string = event.model.id
-  try {
-    const payload: unknown = original
-      ? JSON.parse(new TextDecoder().decode(original))
-      : null
-    if (isRecord(payload) && typeof payload.model === "string")
-      modelID = payload.model
-  } catch {
-    // Non-JSON requests keep the host's model ID.
-  }
-  return {
+  const snapshot: RequestSnapshot = {
     url: transformURL(request.url),
     method: request.method,
     headers: [...request.headers.entries()],
     body: aliased?.body ?? null,
-    originalByAlias: { ...inherited, ...aliased?.originalByAlias },
     cache: request.cache,
     credentials: request.credentials,
     integrity: request.integrity,
@@ -487,8 +459,10 @@ async function snapshotRequest(
     referrer: request.referrer,
     referrerPolicy: request.referrerPolicy,
     signal: request.signal,
-    modelID,
+    // A body that names no model keeps the host's model ID.
+    modelID: aliased?.model ?? event.model.id,
   }
+  return { snapshot, originalByAlias: aliased?.originalByAlias ?? {} }
 }
 
 export function buildRequestFromSnapshot(
@@ -517,8 +491,16 @@ export function buildRequestFromSnapshot(
   })
 }
 
-/** The plugin's own 429 while token refresh is unavailable. */
-export function retryableRefreshResponse(retryAfterSeconds: number): Response {
+/**
+ * The plugin's own 429 while token refresh is unavailable. `retry-after` is
+ * whole seconds, rounded up so a client never retries early, and capped at
+ * the longest cooldown.
+ */
+export function retryableRefreshResponse(retryAfterMs: number): Response {
+  const retryAfterSeconds = Math.min(
+    60,
+    Math.max(1, Math.ceil(retryAfterMs / 1000)),
+  )
   return Response.json(
     {
       type: "error",
@@ -537,14 +519,30 @@ export function retryableRefreshResponse(retryAfterSeconds: number): Response {
   )
 }
 
+/**
+ * A 401 in the API's own error shape, so the SDK reports `message` the way it
+ * reports any provider error. Used when recovery from a 401 ended in a
+ * credential error the user has to act on.
+ */
+export function authenticationErrorResponse(message: string): Response {
+  return Response.json(
+    { type: "error", error: { type: "authentication_error", message } },
+    { status: 401 },
+  )
+}
+
 export async function transformRequest(
   event: SessionHttpRequest,
   credential: Credential.OAuth,
-  inherited: OriginalByAlias = {},
-): Promise<{ request: Request; snapshot: RequestSnapshot }> {
-  const snapshot = await snapshotRequest(event, inherited)
+): Promise<{
+  request: Request
+  snapshot: RequestSnapshot
+  originalByAlias: OriginalByAlias
+}> {
+  const { snapshot, originalByAlias } = await snapshotRequest(event)
   return {
     request: buildRequestFromSnapshot(snapshot, credential),
     snapshot,
+    originalByAlias,
   }
 }

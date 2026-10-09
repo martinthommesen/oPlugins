@@ -27,7 +27,20 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run build
+        # The keychain unit tests run against a stub; this lets the live test
+        # write throwaway items through the real `security` tool. A dedicated
+        # unlocked keychain keeps it from depending on the runner's login one.
+      - name: Create a throwaway default keychain
+        if: runner.os == 'macOS'
+        run: |
+          security create-keychain -p ci ci.keychain
+          security set-keychain-settings ci.keychain
+          security unlock-keychain -p ci ci.keychain
+          security list-keychains -d user -s ci.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s ci.keychain
       - run: pnpm test
+        env:
+          CLAUDE_AUTH_LIVE_KEYCHAIN: ${{ runner.os == 'macOS' && '1' || '' }}
         # dist is what consumers get, and nothing else loads it before publish.
       - run: pnpm run verify:dist
       - run: pnpm run test:host

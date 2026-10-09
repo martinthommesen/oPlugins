@@ -9,12 +9,13 @@ export function positiveIntFromEnv(name: string, fallback: number): number {
 }
 
 /**
- * A single-line string from the environment, or `fallback` when unset.
+ * A single-line string from the environment, or `fallback` when unset or
+ * empty. A value of only whitespace or control characters yields "".
  *
  * Values read through here land in request headers and in system prompt
  * blocks, where a control character would break out of its slot rather than
- * be rejected. Sanitizing at the read keeps that structural instead of
- * something each call site has to remember.
+ * be rejected. Sanitizing here covers every call site, so none has to
+ * remember to do it.
  */
 export function singleLineFromEnv(name: string, fallback: string): string {
   const raw = process.env[name]

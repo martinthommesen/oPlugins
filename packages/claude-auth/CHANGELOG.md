@@ -11,6 +11,45 @@
   deferred tool-search references without maintaining a model allowlist.
 - Exercise the packed plugin's streamed tool round trip against a local mock
   API on both supported host versions in CI.
+- Fix macOS Keychain write-back, as changed earlier in this release, storing
+  an empty password. A trailing `-w` makes `security` prompt twice and accept
+  two empty entries, so the first token refresh signed the Claude Code CLI out
+  while reporting success. Released 2.x versions passed the password in argv
+  and are not affected. The password now goes in as hex through
+  `security -i`, with argv as the fallback for a blob too long for one
+  interactive line, and the plugin reads every write back to confirm it. CI runs this path against the real `security` on macOS.
+- Read Keychain account names that hold quotes, backslashes, or non-ASCII
+  characters exactly. A misread name wrote a second item instead of updating
+  the existing one. Keychain items whose credential holds non-ASCII text are
+  readable again.
+- Do not refresh while the credential source cannot be read, because the new
+  tokens could not be saved back.
+- Report ten consecutive transient refresh failures with their cause instead
+  of asking for re-authentication, and keep retrying at the capped cooldown.
+- Return the plugin's credential error in the 401 OpenCode shows when recovery
+  fails for a reason the user has to act on.
+- Warn on stderr, even with the debug log off, about unsaved refreshed tokens,
+  an uncoordinated refresh lock, a Keychain that could not be listed, a failed
+  credential switch, and a debug log that stopped accepting writes.
+- Keep the current credential for a request racing a credential switch.
+- Report an unreadable credentials file instead of "no credentials".
+- Restore tool names in a non-streaming response in one piece, so a tool name
+  or a UTF-16 surrogate pair is never split between two rewrites.
+- Re-read the credential source beside the request instead of in front of it,
+  so a slow Keychain no longer delays a request every 30 seconds. A rotation
+  made outside OpenCode applies from the next request. A request whose cached
+  token has expired still waits for the re-read.
+- Answer a 401 at once with a retryable 429 when another OpenCode process is
+  waiting out a failed refresh for the same account, instead of waiting for a
+  credential that is not coming. `retry-after` now carries the cooldown left.
+- Read Keychain accounts in parallel at startup, and register the request
+  hooks while they are read.
+- Read only the selected account during `/connect`, not every account.
+- Look up a Keychain item's account name before the guard read on
+  write-back, so that subprocess no longer sits between the check and the
+  write. An item without an account name fails at once instead of retrying.
+- Replace debug-log structure nested deeper than four levels instead of
+  logging it unredacted.
 
 ## [2.1.6](https://github.com/griffinmartin/opencode-claude-auth/compare/v2.1.5...v2.1.6) (2026-08-03)
 

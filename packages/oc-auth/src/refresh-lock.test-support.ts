@@ -52,7 +52,7 @@ const BASE_TIME = 1_000_000,
    * ticket naming scheme fails here instead of silently orphaning every live
    * lock.
    */
-  PREFIX = "claude-auth-refresh-e9c5dce8a55501f4-",
+  PREFIX = "oc-auth-refresh-e9c5dce8a55501f4-",
   SOURCE = "Claude Code-credentials",
   /* Set the test clock `offset` milliseconds past the base time. */
   at = (offset: number): Effect.Effect<void> =>

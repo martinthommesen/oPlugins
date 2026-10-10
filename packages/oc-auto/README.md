@@ -35,21 +35,6 @@ package's directory to `plugins` in `opencode.jsonc`, globally or per project:
 }
 ```
 
-### Moving from opencode-auto-review
-
-oc-auto is the renamed `opencode-auto-review`. Replace the old path in
-`plugins` with oc-auto's. The plugin ID is now `martinthommesen.oc-auto`.
-
-Auto-review only has work to do when some permission rule asks. OpenCode's
-default policy allows most actions, so add `ask` rules for what you want
-reviewed, for example every shell command:
-
-```jsonc
-{
-  "permissions": [{ "action": "shell", "resource": "*", "effect": "ask" }],
-}
-```
-
 ## Options
 
 Pass options with the object form of the plugin entry:

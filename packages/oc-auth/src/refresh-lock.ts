@@ -158,7 +158,7 @@ const DEGRADED_LOCK = {
     const crypto = yield* Crypto.Crypto,
       digest = yield* crypto.digest("SHA-256", encoder.encode(source))
 
-    return `claude-auth-refresh-${Encoding.encodeHex(digest).slice(START, PREFIX_HEX_LENGTH)}-`
+    return `oc-auth-refresh-${Encoding.encodeHex(digest).slice(START, PREFIX_HEX_LENGTH)}-`
   }),
   /*
    * Take the ticket after the highest of the live tickets and `floor`, or

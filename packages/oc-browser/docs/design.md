@@ -251,7 +251,7 @@ a dev VM, a cloud workspace) as well as the local background service.
 ## Packaging and release
 
 - **Repository.** `packages/oc-browser` in the oc-plugins pnpm monorepo
-  ([ADR 0008](adr/0008-package-in-the-oc-plugins-monorepo.md)). It holds the
+  ([ADR 0001](../../../docs/adr/0001-every-plugin-lives-in-oc-plugins.md)). It holds the
   `@martinthommesen/oc-browser` plugin package (`src/`); the host source lives flat in `host/`,
   the extension flat in `extension/`.
 - **Release.** release-please in manifest mode versions the oc-browser

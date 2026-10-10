@@ -7,12 +7,11 @@ UI. Every other identifier follows from it: the npm name
 `martinthommesen.<name>` and `martinthommesen.<name>.cli`, command names,
 `OC_<WORD>_` environment variables, release tags, and PR scopes. The scope
 means no one else can take a plugin's name, or the name of a plugin's extra
-packages, before it is published; two of the old names, `opencode-advisor`
-and `opencode-auto-review`, already belonged to other people.
+packages, before it is published.
 
 ## Considered options
 
-- **Unscoped names**, such as `oclaude`: the shortest config entries, but
+- **Unscoped names**, such as `oc-auth`: the shortest config entries, but
   anyone can take a future name first, and a plugin's extra packages need
   an npm org of their own.
 - **`@owner/opencode-<name>`**, the most common pattern among OpenCode
@@ -25,5 +24,3 @@ and `opencode-auto-review`, already belonged to other people.
 - A plugin name says little about the service it works with: oc-auth signs
   in with Claude Code credentials, and oc-auto reviews permission prompts.
   An auth plugin for another service needs a different name.
-- Every plugin starts again at 0.1.0 under its new npm name, and
-  environment variables set for the old names stop working.

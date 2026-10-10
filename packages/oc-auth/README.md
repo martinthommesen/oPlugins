@@ -44,20 +44,6 @@ build up on its next start.
 See the [OpenCode v2 plugin guide](https://opencode.ai/v2/docs/build/plugins)
 for package and local-file configuration.
 
-### Moving from oClaude or opencode-claude-auth
-
-oc-auth is the renamed oClaude, itself a fork of `opencode-claude-auth`.
-Nothing migrates automatically:
-
-- Replace the old package or path in `plugins` with oc-auth's.
-- The plugin ID is now `martinthommesen.oc-auth`, and the CLI plugin's is
-  `martinthommesen.oc-auth.cli`.
-- The palette command is now `oc-auth.cache`.
-- Environment variables named `OPENCODE_CLAUDE_AUTH_*` are now
-  `OC_AUTH_*`.
-
-Claude Code's own credentials are read the same way as before.
-
 ## Connect
 
 1. Start `opencode`.

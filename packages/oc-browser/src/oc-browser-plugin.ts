@@ -7,7 +7,7 @@ interface Host {
 }
 
 /* Start the plugin for the project the host opened. */
-const setUp = Effect.fn("Obrowse.setUp")(function* setUp(context: Host) {
+const setUp = Effect.fn("OcBrowser.setUp")(function* setUp(context: Host) {
   const log = yield* DebugLog
 
   yield* log.log("plugin_started", { directory: context.location.directory })

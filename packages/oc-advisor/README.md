@@ -28,13 +28,6 @@ package's directory to `plugins` in `opencode.jsonc`, globally or per project:
 }
 ```
 
-### Moving from opencode-advisor
-
-oc-advisor is the renamed `opencode-advisor`. Replace the old path in
-`plugins` with oc-advisor's. The plugin ID is now
-`martinthommesen.oc-advisor`, so choices made with `/advisor` reset once;
-make them again.
-
 ## Use
 
 Choose an advisor model with `/advisor`, using the `provider/model` form shown

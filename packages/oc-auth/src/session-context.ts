@@ -12,11 +12,8 @@ type ContextMessage = SessionContext["messages"][number]
 
 type ContextPart = ContextMessage["content"][number]
 
-/*
- * Marks the message this plugin relocated a system prompt into. It keeps the
- * plugin's former id, so sessions that already carry it are still recognised.
- */
-const CONTEXT_METADATA_KEY = "griffinmartin.claude-auth",
+/* Marks the message this plugin relocated a system prompt into. */
+const CONTEXT_METADATA_KEY = "martinthommesen.oc-auth",
   LEADING_NEWLINES = /^\n+/u,
   PARAGRAPH = "\n\n",
   /** A text part this plugin moved into the first user message. */

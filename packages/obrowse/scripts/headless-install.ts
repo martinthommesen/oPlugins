@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Path, Schema } from "effect"
+import { Effect, Path, Schema } from "effect"
 import type { PlatformError, Stdio } from "effect"
 import type { ChildProcessSpawner } from "effect/unstable/process"
 import HeadlessSmokeError from "./headless-smoke-error.ts"
@@ -6,11 +6,14 @@ import commands from "./headless-command.ts"
 
 const NO_CHANGES = {},
   PLUGIN_ENTRY = ["node_modules", "obrowse", "dist", "index.js"],
-  /** What `npm pack --json` reports. */
+  /**
+   * What `pnpm pack --json` reports. pnpm, unlike npm, replaces the
+   * workspace's `catalog:` versions with real ones in the packed manifest.
+   */
   PackResult = Schema.fromJsonString(
-    Schema.NonEmptyArray(Schema.Struct({ filename: Schema.String })),
+    Schema.Struct({ filename: Schema.String }),
   ),
-  /* The repository root, where `npm pack` runs. */
+  /* The package directory, where `pnpm pack` runs. */
   checkout = Effect.gen(function* checkout() {
     const path = yield* Path.Path
 
@@ -75,7 +78,7 @@ const NO_CHANGES = {},
   ) {
     const fsPath = yield* Path.Path,
       pluginEntry = fsPath.join(install, ...PLUGIN_ENTRY),
-      report = yield* inCheckout("npm", [
+      report = yield* inCheckout("pnpm", [
         "pack",
         "--json",
         "--pack-destination",
@@ -85,13 +88,12 @@ const NO_CHANGES = {},
           Schema.decodeUnknownEffect(PackResult)(output),
         ),
       ),
-      tarball = fsPath.join(packed, Arr.headNonEmpty(report).filename),
       url = yield* inCheckout("npm", [
         "install",
         "--ignore-scripts",
         "--prefix",
         install,
-        tarball,
+        fsPath.resolve(packed, report.filename),
       ]).pipe(Effect.andThen(fsPath.toFileUrl(pluginEntry)))
 
     return url.href

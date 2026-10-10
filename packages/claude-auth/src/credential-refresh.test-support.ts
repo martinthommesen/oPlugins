@@ -1,0 +1,260 @@
+import { Clock, Effect, Fiber, Option, Ref } from "effect"
+import type ClaudeAccount from "./claude-account.ts"
+import CredentialRefresh from "./credential-refresh.ts"
+import LockAttempt from "./refresh-lock-attempt.ts"
+import RefreshRig from "./refresh-rig.test-support.ts"
+import type { Scope } from "effect"
+import { TestClock } from "effect/testing"
+import TokenExchange from "./token-exchange.ts"
+import accountMethod from "./claude-code-account-method.ts"
+import claudeCodeCredential from "./claude-code-credential.ts"
+
+type Script = Parameters<typeof RefreshRig.layer>[typeof FIRST]
+
+type Account = typeof ClaudeAccount.Type
+
+type Tokens = Account["credentials"]
+
+type Attempt = ReturnType<(typeof LockAttempt)["busy" | "cooldown" | "held"]>
+
+type Outcome = Effect.Success<ReturnType<TokenExchange["Service"]["exchange"]>>
+
+type Refresh = Effect.Success<
+  ReturnType<CredentialRefresh["Service"]["refresh"]>
+>
+
+type RefreshError = Effect.Error<
+  ReturnType<CredentialRefresh["Service"]["refresh"]>
+>
+
+type Asked = Parameters<CredentialRefresh["Service"]["refresh"]>[typeof FIRST]
+
+/** A refresh result reduced to what tests compare. */
+interface Summary {
+  readonly access: Option.Option<string>
+  readonly kind: string
+  readonly retryAfterMs: Option.Option<number>
+}
+
+// Test time starts here, so a token can expire before it.
+const BAD_REQUEST = 400,
+  BASE_TIME = 1_000_000,
+  FIRST = 0,
+  HOUR_MS = 3_600_000,
+  /** Long enough for the wait for another process's credential to give up. */
+  POLL_BUDGET_MS = 6000,
+  PRIMARY = "Claude Code-credentials",
+  RATE_LIMITED = 429,
+  SERVER_ERROR = 503,
+  SETTLE_YIELDS = 20,
+  /*
+   * A registered account in `source`, holding `accessToken`. Real Keychain
+   * service names, because credential metadata is validated on the way back
+   * in, so a fixture using an arbitrary name would not round-trip.
+   */
+  account = (source = PRIMARY, accessToken = "old-access"): Account => ({
+    configDir: `/claude/${source}`,
+    credentials: {
+      accessToken,
+      expiresAt: BASE_TIME + HOUR_MS,
+      refreshToken: "old-refresh",
+      subscriptionType: "pro",
+    },
+    label: `Claude Pro: ${source}`,
+    source,
+  }),
+  /* Ask the refresh service to adopt for `credential`. */
+  adopt = (
+    credential: Asked,
+  ): Effect.Effect<Refresh, never, CredentialRefresh> =>
+    Effect.gen(function* askAdopt() {
+      return yield* (yield* CredentialRefresh).adopt(credential)
+    }),
+  /* Set the test clock to the base time. */
+  begin = TestClock.setTime(BASE_TIME),
+  /* The lock busy in another process. */
+  busy: Effect.Effect<Attempt> = Effect.succeed(LockAttempt.busy()),
+  /* Another process cooling down until `until`. */
+  cooldownUntil = (until: number): Effect.Effect<Attempt> =>
+    Effect.succeed(LockAttempt.cooldown({ until })),
+  /* The host credential a result carries, if any. */
+  credentialAfter = (result: Refresh): Option.Option<Asked> =>
+    CredentialRefresh.Result.$match(result, {
+      Adopted: ({ credential }) =>
+        Option.some(claudeCodeCredential.toOAuth(credential)),
+      Refreshed: ({ credential }) =>
+        Option.some(claudeCodeCredential.toOAuth(credential)),
+      Transient: () => Option.none(),
+      Unchanged: () => Option.none(),
+    }),
+  /* The credential a result carries, if any. */
+  credentialOf = (
+    result: Refresh,
+  ): Option.Option<
+    Effect.Success<ReturnType<typeof accountMethod.importAccount>>["metadata"]
+  > =>
+    CredentialRefresh.Result.$match(result, {
+      Adopted: ({ credential }) => Option.some(credential.metadata),
+      Refreshed: ({ credential }) => Option.some(credential.metadata),
+      Transient: () => Option.none(),
+      Unchanged: () => Option.none(),
+    }),
+  /* The rig the current test runs against. */
+  currentRig: Effect.Effect<RefreshRig["Service"], never, RefreshRig> =
+    Effect.gen(function* rigOfTest() {
+      return yield* RefreshRig
+    }),
+  /* What the store holds now. */
+  currentlyStored = currentRig.pipe(
+    Effect.flatMap((rig) => Ref.get(rig.stored)),
+  ),
+  /* The lock held by this process, extending when asked only if `extend`. */
+  heldLock = (
+    extend: boolean,
+  ): Effect.Effect<Attempt, never, RefreshRig | Scope.Scope> =>
+    Effect.acquireRelease(
+      currentRig.pipe(
+        Effect.map((rig) =>
+          LockAttempt.held({
+            lock: {
+              defer: (ms) =>
+                Ref.update(rig.lockEvents, (events) => [
+                  ...events,
+                  `defer:${ms}`,
+                ]),
+              degraded: false,
+              extend: () => Effect.succeed(extend),
+              release: Effect.void,
+            },
+          }),
+        ),
+      ),
+      () =>
+        currentRig.pipe(
+          Effect.flatMap((rig) =>
+            Ref.update(rig.lockEvents, (events) => [...events, "release"]),
+          ),
+        ),
+    ),
+  /* The token endpoint rejecting the refresh token for good. */
+  invalidGrant: Effect.Effect<Outcome> = Effect.succeed(
+    TokenExchange.Outcome.Terminal({
+      oauthError: Option.some("invalid_grant"),
+      status: BAD_REQUEST,
+    }),
+  ),
+  /* The token endpoint issuing `accessToken`, valid for an hour. */
+  issued = (accessToken: string): Effect.Effect<Outcome> =>
+    Clock.currentTimeMillis.pipe(
+      Effect.map((now) =>
+        TokenExchange.Outcome.Ok({
+          credentials: {
+            accessToken,
+            expiresAt: now + HOUR_MS,
+            refreshToken: "new-refresh",
+          },
+        }),
+      ),
+    ),
+  /* Run `effect` to completion, letting the wait for another process run out. */
+  polled = <Value, Failure, Requirements>(
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ): Effect.Effect<Value, Failure, Requirements> =>
+    Effect.gen(function* awaitPolling() {
+      const fiber = yield* Effect.forkChild(effect)
+
+      yield* TestClock.adjust(POLL_BUDGET_MS)
+
+      return yield* Fiber.join(fiber)
+    }),
+  /* The token endpoint rate limiting, with `retryAfterMs` as its hint. */
+  rateLimited = (retryAfterMs: Option.Option<number>): Effect.Effect<Outcome> =>
+    Effect.succeed(
+      TokenExchange.Outcome.Transient({
+        oauthError: Option.some("rate_limit_error"),
+        retryAfterMs,
+        status: RATE_LIMITED,
+      }),
+    ),
+  /* Ask the refresh service to refresh `credential`. */
+  refresh = (
+    credential: Asked,
+  ): Effect.Effect<Refresh, RefreshError, CredentialRefresh> =>
+    Effect.gen(function* askRefresh() {
+      return yield* (yield* CredentialRefresh).refresh(credential)
+    }),
+  /* Fakes that answer as a healthy store, lock, and endpoint would. */
+  script: Script = {
+    acquire: heldLock(true),
+    exchange: () => issued("new-access"),
+    read: () => currentlyStored,
+    writeBack: () => Effect.succeed("written"),
+  },
+  /* The token endpoint failing with a 503 and no OAuth error. */
+  serverError: Effect.Effect<Outcome> = Effect.succeed(
+    TokenExchange.Outcome.Transient({
+      oauthError: Option.none(),
+      retryAfterMs: Option.none(),
+      status: SERVER_ERROR,
+    }),
+  ),
+  /* Let forked fibers run until they wait on something. */
+  settle = Effect.yieldNow.pipe(Effect.repeat({ times: SETTLE_YIELDS })),
+  /* `result` reduced to its kind, access token, and suggested wait. */
+  summary = (result: Refresh): Summary =>
+    CredentialRefresh.Result.$match(result, {
+      Adopted: ({ credential }) => ({
+        access: Option.some(credential.access),
+        kind: "adopted",
+        retryAfterMs: Option.none(),
+      }),
+      Refreshed: ({ credential }) => ({
+        access: Option.some(credential.access),
+        kind: "refreshed",
+        retryAfterMs: Option.none(),
+      }),
+      Transient: ({ retryAfterMs }) => ({
+        access: Option.none(),
+        kind: "transient",
+        retryAfterMs: Option.some(retryAfterMs),
+      }),
+      Unchanged: () => ({
+        access: Option.none(),
+        kind: "unchanged",
+        retryAfterMs: Option.none(),
+      }),
+    }),
+  /* Tokens as a store holds them, expiring at `expiresAt`. */
+  tokens = (
+    accessToken: string,
+    refreshToken = "old-refresh",
+    expiresAt = BASE_TIME + HOUR_MS,
+  ): Tokens => ({ accessToken, expiresAt, refreshToken })
+
+/** What the credential refresh tests share. */
+export default Object.freeze({
+  BASE_TIME,
+  HOUR_MS,
+  PRIMARY,
+  account,
+  adopt,
+  begin,
+  busy,
+  cooldownUntil,
+  credentialAfter,
+  credentialOf,
+  currentRig,
+  heldLock,
+  imported: accountMethod.importAccount,
+  invalidGrant,
+  issued,
+  polled,
+  rateLimited,
+  refresh,
+  script,
+  serverError,
+  settle,
+  storedNow: currentlyStored,
+  summary,
+  tokens,
+})

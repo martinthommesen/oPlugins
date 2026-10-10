@@ -4,19 +4,29 @@
     // Node 22 has the ES2023 array methods; only the emit target is ES2022.
     // DOM restores the fetch types the default `<target>.full` lib carried.
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "ES2022",
+    "module": "preserve",
     "moduleResolution": "bundler",
-    "outDir": "dist",
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "rootDir": "src",
+    "types": ["node"],
+    "noEmit": true,
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true
+    "skipLibCheck": true,
+
+    "strict": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "erasableSyntaxOnly": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/test-helpers.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "types/**/*.ts", "*.config.ts"]
 }

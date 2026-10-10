@@ -1,187 +1,199 @@
-import { describe, it, beforeEach } from "node:test"
-import assert from "node:assert/strict"
-import {
-  classifyRefreshFailure,
-  computeBackoffMs,
-  noteRefreshTransient,
-  noteRefreshTerminal,
-  clearRefreshOutcome,
-  cooldownRemainingMs,
-  getRefreshFailureKind,
-  transientFailureCount,
-  resetRefreshBackoffState,
-  BASE_COOLDOWN_MS,
-  MAX_COOLDOWN_MS,
-} from "./refresh-backoff.ts"
+import { Effect, Layer, Option, Random } from "effect"
+import { describe, expect, it } from "@effect/vitest"
+import type { Config } from "effect"
+import RefreshBackoff from "./refresh-backoff.ts"
+import { TestClock } from "effect/testing"
+import testEnvironment from "./test-environment.test-support.ts"
 
-const SRC = "Claude Code-credentials"
-
-// BASE_COOLDOWN_MS is read from the environment once at import, so literal
-// schedule assertions only hold when it is not overridden.
-const defaultBase = {
-  skip: process.env.OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS !== undefined,
-}
-
-describe("refresh-backoff", () => {
-  beforeEach(() => resetRefreshBackoffState())
-
-  describe("classifyRefreshFailure", () => {
-    it("treats rate limiting and errors without an OAuth code as transient", () => {
-      assert.equal(classifyRefreshFailure("rate_limit_error"), "transient")
-      // 5xx, network failures, and anything else without a body code.
-      assert.equal(classifyRefreshFailure(undefined), "transient")
-    })
-
-    it("treats a revoked/invalid refresh token as terminal", () => {
-      assert.equal(classifyRefreshFailure("invalid_grant"), "terminal")
-      assert.equal(classifyRefreshFailure("invalid_client"), "terminal")
-      assert.equal(classifyRefreshFailure("unauthorized_client"), "terminal")
-      assert.equal(classifyRefreshFailure("unsupported_grant_type"), "terminal")
-    })
-
-    it("defaults unknown 4xx to transient (never a spurious hard error)", () => {
-      assert.equal(classifyRefreshFailure("something_new"), "transient")
-    })
-  })
-
-  describe("computeBackoffMs", () => {
-    it("honors an explicit retry-after over the exponential schedule", () => {
-      assert.equal(
-        computeBackoffMs(1, { retryAfterMs: 12_345, rng: () => 0 }),
-        12_345,
-      )
-    })
-
-    it("clamps a large retry-after to the cap", () => {
-      // A server sending Retry-After: 3600 must not pin the cooldown to an hour.
-      assert.equal(
-        computeBackoffMs(1, { retryAfterMs: 3_600_000, rng: () => 0 }),
-        MAX_COOLDOWN_MS,
-      )
-    })
-
-    it("grows exponentially with consecutive failures and is capped", () => {
-      const a = computeBackoffMs(1, { rng: () => 0 })
-      const b = computeBackoffMs(2, { rng: () => 0 })
-      const c = computeBackoffMs(99, { rng: () => 0 })
-      assert.ok(b > a, "second failure backs off longer")
-      assert.ok(c <= MAX_COOLDOWN_MS, "backoff is capped")
-      assert.ok(a >= BASE_COOLDOWN_MS / 2, "first backoff near the base floor")
-    })
-
-    it("applies jitter within the [50%, 100%] band of the scheduled delay", () => {
-      const low = computeBackoffMs(1, { rng: () => 0 })
-      const high = computeBackoffMs(1, { rng: () => 1 })
-      assert.ok(high > low, "rng=1 yields a larger delay than rng=0")
-      assert.ok(low >= BASE_COOLDOWN_MS * 0.5)
-      assert.ok(high <= BASE_COOLDOWN_MS)
-    })
-
-    it(
-      "doubles from the base and stops at the cap, at full jitter",
-      defaultBase,
-      () => {
-        // base 15s * 2^(n-1) = 15s, 30s, 60s, then 120s and 240s clamped to 60s.
-        assert.deepEqual(
-          [1, 2, 3, 4, 5].map((n) => computeBackoffMs(n, { rng: () => 1 })),
-          [15_000, 30_000, 60_000, 60_000, 60_000],
-        )
-      },
-    )
-
-    it(
-      "halves every step at the bottom of the jitter band",
-      defaultBase,
-      () => {
-        assert.deepEqual(
-          [1, 2, 3, 4, 5].map((n) => computeBackoffMs(n, { rng: () => 0 })),
-          [7_500, 15_000, 30_000, 30_000, 30_000],
-        )
-      },
-    )
-
-    it("passes a short retry-after through and clamps a long one", () => {
-      assert.equal(
-        computeBackoffMs(1, { retryAfterMs: 10_000, rng: () => 1 }),
-        10_000,
-      )
-      assert.equal(
-        computeBackoffMs(1, { retryAfterMs: 3_600_000, rng: () => 1 }),
-        60_000,
-      )
-    })
-  })
-
-  describe("cooldown lifecycle", () => {
-    it("activates a cooldown on a transient failure and reports the failure kind", () => {
-      const now = 1_000_000
-      const ms = noteRefreshTransient(SRC, { now, rng: () => 0 })
-      assert.ok(ms > 0)
-      assert.equal(cooldownRemainingMs(SRC, now), ms)
-      assert.equal(cooldownRemainingMs(SRC, now + 1), ms - 1)
-      assert.equal(cooldownRemainingMs(SRC, now + ms + 1), 0)
-      assert.equal(getRefreshFailureKind(SRC), "transient")
-    })
-
-    it("escalates the cooldown across consecutive transient failures", () => {
-      const now = 1_000_000
-      const first = noteRefreshTransient(SRC, { now, rng: () => 0 })
-      const second = noteRefreshTransient(SRC, { now, rng: () => 0 })
-      assert.ok(second > first, "consecutive transients back off further")
-    })
-
-    it("records a terminal failure without a cooldown", () => {
-      noteRefreshTerminal(SRC)
-      assert.equal(getRefreshFailureKind(SRC), "terminal")
-      assert.equal(cooldownRemainingMs(SRC, Date.now()), 0)
-    })
-
-    it("clears cooldown, consecutive count, and failure kind on success", () => {
-      const now = 1_000_000
-      noteRefreshTransient(SRC, { now, rng: () => 0 })
-      noteRefreshTransient(SRC, { now, rng: () => 0 })
-      clearRefreshOutcome(SRC)
-      assert.equal(cooldownRemainingMs(SRC, now + 1), 0)
-      assert.equal(getRefreshFailureKind(SRC), null)
-      // consecutive count reset: the next transient starts from the base again
-      const afterReset = noteRefreshTransient(SRC, { now, rng: () => 0 })
-      const firstEver = (() => {
-        resetRefreshBackoffState()
-        return noteRefreshTransient(SRC, { now, rng: () => 0 })
-      })()
-      assert.equal(afterReset, firstEver)
-    })
-
-    it("ends the cooldown exactly at its deadline", defaultBase, () => {
-      const now = 1_000_000
-      assert.equal(noteRefreshTransient(SRC, { now, rng: () => 1 }), 15_000)
-      assert.equal(cooldownRemainingMs(SRC, now + 14_999), 1)
-      // A request at the deadline may refresh.
-      assert.equal(cooldownRemainingMs(SRC, now + 15_000), 0)
-    })
-
-    it("counts consecutive transients until the outcome is cleared", () => {
-      const now = 1_000_000
-      assert.equal(transientFailureCount(SRC), 0)
-      noteRefreshTransient(SRC, { now, rng: () => 0 })
-      assert.equal(transientFailureCount(SRC), 1)
-      noteRefreshTransient(SRC, { now, rng: () => 0 })
-      assert.equal(transientFailureCount(SRC), 2)
-      clearRefreshOutcome(SRC)
-      assert.equal(transientFailureCount(SRC), 0)
-      noteRefreshTransient(SRC, { now, rng: () => 0 })
-      assert.equal(transientFailureCount(SRC), 1, "counting restarts from one")
-    })
-
-    it("honors a retry-after hint when setting the cooldown", () => {
-      const now = 1_000_000
-      const ms = noteRefreshTransient(SRC, {
-        now,
-        retryAfterMs: 25_000,
-        rng: () => 0,
+const BOTTOM = 0,
+  DEFAULT_BASE_MS = 15_000,
+  DEFAULT_VARIABLES = { HOME: "/nonexistent-home" },
+  FIVE_ASSERTIONS = 5,
+  HINT_MS = 25_000,
+  NONE = 0,
+  NOW = 1_000_000,
+  ONCE = 1,
+  ONE_ASSERTION = 1,
+  ONE_MS = 1,
+  OVERRIDDEN_BASE_MS = 1000,
+  OVERRIDE_VARIABLES = {
+    HOME: "/nonexistent-home",
+    OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS: String(OVERRIDDEN_BASE_MS),
+  },
+  SRC = "Claude Code-credentials",
+  THREE_ASSERTIONS = 3,
+  TOP = 1,
+  TWICE = 2,
+  TWO_ASSERTIONS = 2,
+  /*
+   * A fresh tracker whose jitter is always `jitter`, reading `variables` as
+   * its environment, with the test clock at `NOW`.
+   */
+  backoffAt = (
+    jitter: number,
+    variables: Readonly<Record<string, string>> = DEFAULT_VARIABLES,
+  ): Layer.Layer<RefreshBackoff, Config.ConfigError> => {
+    const backoff = RefreshBackoff.layer.pipe(
+        Layer.provide(testEnvironment(variables)),
+      ),
+      random = Layer.succeed(Random.Random, {
+        nextDoubleUnsafe: () => jitter,
+        nextIntUnsafe: () => NONE,
       })
-      assert.equal(ms, 25_000)
-      assert.equal(cooldownRemainingMs(SRC, now), 25_000)
-    })
-  })
+
+    return Layer.mergeAll(
+      backoff,
+      random,
+      Layer.effectDiscard(TestClock.setTime(NOW)),
+    )
+  }
+
+describe("refresh cooldown", () => {
+  it.effect(
+    "activates a cooldown on a transient failure and reports the failure kind",
+    () =>
+      Effect.gen(function* run() {
+        expect.assertions(FIVE_ASSERTIONS)
+
+        const backoff = yield* RefreshBackoff,
+          ms = yield* backoff.noteTransient(SRC, Option.none())
+
+        expect(ms).toBeGreaterThan(NONE)
+        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ms)
+
+        yield* TestClock.adjust(ONE_MS)
+
+        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ms - ONE_MS)
+
+        yield* TestClock.adjust(ms)
+
+        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
+        expect(yield* backoff.failureKind(SRC)).toStrictEqual(
+          Option.some("transient"),
+        )
+      }).pipe(Effect.provide(backoffAt(BOTTOM))),
+  )
+
+  it.effect(
+    "escalates the cooldown across consecutive transient failures",
+    () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
+
+        const backoff = yield* RefreshBackoff,
+          first = yield* backoff.noteTransient(SRC, Option.none()),
+          second = yield* backoff.noteTransient(SRC, Option.none())
+
+        // Consecutive transients back off further.
+        expect(second).toBeGreaterThan(first)
+      }).pipe(Effect.provide(backoffAt(BOTTOM))),
+  )
+})
+
+describe("refresh failure latch", () => {
+  it.effect("records a terminal failure without a cooldown", () =>
+    Effect.gen(function* run() {
+      expect.assertions(TWO_ASSERTIONS)
+
+      const backoff = yield* RefreshBackoff
+
+      yield* backoff.noteTerminal(SRC)
+
+      expect(yield* backoff.failureKind(SRC)).toStrictEqual(
+        Option.some("terminal"),
+      )
+      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
+    }).pipe(Effect.provide(backoffAt(BOTTOM))),
+  )
+})
+
+describe("refresh cooldown reset", () => {
+  it.effect(
+    "clears cooldown, consecutive count, and failure kind on success",
+    () =>
+      Effect.gen(function* run() {
+        expect.assertions(THREE_ASSERTIONS)
+
+        const backoff = yield* RefreshBackoff,
+          firstEver = yield* backoff.noteTransient(SRC, Option.none())
+
+        yield* backoff.noteTransient(SRC, Option.none())
+        yield* backoff.clear(SRC)
+        yield* TestClock.adjust(ONE_MS)
+
+        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
+        expect(yield* backoff.failureKind(SRC)).toStrictEqual(Option.none())
+        // Consecutive count reset: the next transient starts from the base again.
+        expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(firstEver)
+      }).pipe(Effect.provide(backoffAt(BOTTOM))),
+  )
+
+  it.effect("counts consecutive transients until the outcome is cleared", () =>
+    Effect.gen(function* run() {
+      expect.assertions(FIVE_ASSERTIONS)
+
+      const backoff = yield* RefreshBackoff,
+        noteAndCount = backoff
+          .noteTransient(SRC, Option.none())
+          .pipe(Effect.andThen(backoff.transientCount(SRC)))
+
+      expect(yield* backoff.transientCount(SRC)).toBe(NONE)
+      expect(yield* noteAndCount).toBe(ONCE)
+      expect(yield* noteAndCount).toBe(TWICE)
+
+      yield* backoff.clear(SRC)
+
+      expect(yield* backoff.transientCount(SRC)).toBe(NONE)
+      // Counting restarts from one.
+      expect(yield* noteAndCount).toBe(ONCE)
+    }).pipe(Effect.provide(backoffAt(BOTTOM))),
+  )
+})
+
+describe("refresh cooldown length", () => {
+  it.effect("ends the cooldown exactly at its deadline", () =>
+    Effect.gen(function* run() {
+      expect.assertions(THREE_ASSERTIONS)
+
+      const backoff = yield* RefreshBackoff
+
+      expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(
+        DEFAULT_BASE_MS,
+      )
+
+      yield* TestClock.adjust(DEFAULT_BASE_MS - ONE_MS)
+
+      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ONE_MS)
+
+      yield* TestClock.adjust(ONE_MS)
+
+      // A request at the deadline may refresh.
+      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
+    }).pipe(Effect.provide(backoffAt(TOP))),
+  )
+
+  it.effect("honors a retry-after hint when setting the cooldown", () =>
+    Effect.gen(function* run() {
+      expect.assertions(TWO_ASSERTIONS)
+
+      const backoff = yield* RefreshBackoff
+
+      expect(yield* backoff.noteTransient(SRC, Option.some(HINT_MS))).toBe(
+        HINT_MS,
+      )
+      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(HINT_MS)
+    }).pipe(Effect.provide(backoffAt(BOTTOM))),
+  )
+
+  it.effect("takes its base cooldown from the environment", () =>
+    Effect.gen(function* run() {
+      expect.assertions(ONE_ASSERTION)
+
+      const backoff = yield* RefreshBackoff
+
+      expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(
+        OVERRIDDEN_BASE_MS,
+      )
+    }).pipe(Effect.provide(backoffAt(TOP, OVERRIDE_VARIABLES))),
+  )
 })

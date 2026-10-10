@@ -1,39 +1,45 @@
-# opencode-claude-auth
+# oClaude
 
-[![npm](https://img.shields.io/npm/v/opencode-claude-auth)](https://www.npmjs.com/package/opencode-claude-auth)
 [![CI](https://github.com/martinthommesen/opencode-claude-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/martinthommesen/opencode-claude-auth/actions/workflows/ci.yml)
 
-OpenCode v2 plugin that imports Claude Code subscription credentials into
+oClaude is an OpenCode v2 plugin that imports Claude Code subscription credentials into
 OpenCode's native Anthropic integration. It does not install a custom model
 provider or require another browser login.
 
 ## Requirements
 
-- OpenCode 2.0.7 or newer with the compatible V2 Promise plugin API
+- OpenCode 2.0.25 or newer
 - Claude Code installed and authenticated by running `claude`
 
-This release targets `@opencode/plugin@2.0.26` and uses `model.transform` and
-`model.reload`. Rather than match version strings, the plugin checks for the
-host capabilities it needs at load and reports any missing ones. Older beta
-builds that expose only `catalog.transform` and `catalog.reload` are not
-supported. OpenCode v1 is not supported.
+This release targets `@opencode/plugin@2.0.26` and is an Effect plugin: it
+runs on the `effect` instance the host provides to plugins. It is tested on
+OpenCode 2.0.25 and 2.0.26; on 2.0.24 the host could not load its `effect`
+import in our loader test. It uses
+`model.transform` and `model.reload`. Rather than match version strings, the
+plugin checks for the host capabilities it needs at load and reports any
+missing ones. OpenCode v1 is not supported.
 
 ## Install
 
-Install globally with the OpenCode v2 CLI:
+oClaude is not published to npm yet. Build it from a checkout:
 
 ```sh
-opencode plugin add opencode-claude-auth
+pnpm install
+pnpm run build
 ```
 
-Or add the package to the plural `plugins` field in `opencode.jsonc`:
+Then add the built plugin to the plural `plugins` field in
+`opencode.jsonc`, and restart OpenCode:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-claude-auth"],
+  "plugins": ["/path/to/oclaude/dist"],
 }
 ```
+
+After pulling changes, run `pnpm run build` again; OpenCode picks the new
+build up on its next start.
 
 See the [OpenCode v2 plugin guide](https://opencode.ai/v2/docs/build/plugins)
 for package and local-file configuration.
@@ -176,7 +182,7 @@ Pass options with the object form of the `plugins` entry:
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "opencode-claude-auth",
+      "package": "/path/to/oclaude/dist",
       "options": { "cost": "zero" },
     },
   ],
@@ -236,7 +242,7 @@ the plugin's message, so OpenCode shows what to do instead of a bare 401.
 
 Problems that need your attention but do not fail a request are written to
 the OpenCode service's stderr once per process, prefixed
-`opencode-claude-auth:`, even with the debug log off. They are: refreshed
+`oClaude:`, even with the debug log off. They are: refreshed
 tokens that could not be saved back to Claude Code (its CLI will need to sign
 in again), a refresh lock that is not coordinating processes, a Keychain that
 could not be listed, a credential switch that could not be loaded, and a debug
@@ -289,7 +295,7 @@ export CLAUDE_AUTH_DEBUG=1
 opencode service restart
 ```
 
-The default file is `~/.local/share/opencode/claude-auth-debug.log`, created
+The default file is `~/.local/share/opencode/oclaude-debug.log`, created
 owner-readable only. Values under keys such as `accessToken`, `refreshToken`,
 `account`, and `x-api-key`, plus any string shaped like an Anthropic token
 (`sk-ant-…`) or a JWT, are redacted. Structure nested more than four levels
@@ -318,7 +324,7 @@ against both OpenCode 2.0.7 and the targeted release on Linux and macOS.
 To check another V2 host version:
 
 ```sh
-CLAUDE_AUTH_HEADLESS_HOST_VERSION=2.0.7 pnpm run test:host
+CLAUDE_AUTH_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
 ```
 
 `CLAUDE_AUTH_HEADLESS_MODEL` selects a model for the smoke test. Set

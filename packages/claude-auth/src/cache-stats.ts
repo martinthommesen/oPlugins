@@ -1,12 +1,14 @@
+import { Array as Arr, Option } from "effect"
+
 /** OpenCode's token usage record. `input` excludes cache reads and writes. */
-export interface TokenUsage {
+interface TokenUsage {
   readonly input: number
   readonly output: number
   readonly reasoning: number
   readonly cache: { readonly read: number; readonly write: number }
 }
 
-export interface CacheStats {
+interface CacheStats {
   /** Prompt tokens served from the cache. */
   readonly read: number
   /** Prompt tokens written to the cache. */
@@ -26,54 +28,79 @@ interface MessageLike {
   readonly tokens?: TokenUsage
 }
 
-const count = (value: number | undefined): number =>
-  Number.isFinite(value) ? Math.max(0, value as number) : 0
+const COMPACT = new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    notation: "compact",
+  }),
+  NO_TOKENS = 0,
+  PERCENT = 100,
+  PERCENT_DIGITS = 1,
+  WHOLE = 1,
+  // A token count, with negative and non-finite counts as zero.
+  asCount = (value: number): number => {
+    if (!Number.isFinite(value)) {
+      return NO_TOKENS
+    }
 
-/** Cache statistics for a usage record, or undefined when it has no prompt. */
-export function cacheStats(
-  tokens: TokenUsage | undefined,
-): CacheStats | undefined {
-  if (!tokens) return undefined
-  const read = count(tokens.cache?.read)
-  const write = count(tokens.cache?.write)
-  const uncached = count(tokens.input)
-  const prompt = read + write + uncached
-  if (prompt === 0) return undefined
-  const hitRate = read / prompt
-  return { read, write, uncached, prompt, hitRate, missRate: 1 - hitRate }
-}
+    return Math.max(NO_TOKENS, value)
+  },
+  // The statistics for these counts of prompt tokens.
+  buildStats = (
+    counts: Pick<CacheStats, "read" | "uncached" | "write">,
+  ): CacheStats => {
+    const prompt = counts.read + counts.write + counts.uncached,
+      share = counts.read / prompt
 
-/** Cache statistics for the newest assistant message that reported usage. */
-export function lastRequestStats(
-  messages: readonly MessageLike[] | undefined,
-): CacheStats | undefined {
-  if (!messages) return undefined
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]
-    if (message.type !== "assistant") continue
-    const stats = cacheStats(message.tokens)
-    if (stats) return stats
-  }
-  return undefined
-}
+    return {
+      hitRate: share,
+      missRate: WHOLE - share,
+      prompt,
+      read: counts.read,
+      uncached: counts.uncached,
+      write: counts.write,
+    }
+  },
+  /* Cache statistics for a usage record, or none when it has no prompt. */
+  cacheStats = (tokens?: TokenUsage): Option.Option<CacheStats> =>
+    Option.fromNullishOr(tokens).pipe(
+      Option.map((usage: TokenUsage) =>
+        buildStats({
+          read: asCount(usage.cache.read),
+          uncached: asCount(usage.input),
+          write: asCount(usage.cache.write),
+        }),
+      ),
+      Option.filter((stats: CacheStats) => stats.prompt !== NO_TOKENS),
+    ),
+  compactTokens = (value: number): string => COMPACT.format(value),
+  formatBreakdown = (stats: CacheStats): string =>
+    `${compactTokens(stats.read)} read · ${compactTokens(stats.write)} write · ${compactTokens(stats.uncached)} uncached`,
+  formatPercent = (rate: number): string =>
+    `${(rate * PERCENT).toFixed(PERCENT_DIGITS)}%`,
+  formatRates = (stats: CacheStats): string =>
+    `${formatPercent(stats.hitRate)} hit · ${formatPercent(stats.missRate)} miss`,
+  /* Cache statistics for the newest assistant message that reported usage. */
+  lastRequestStats = (
+    messages?: readonly MessageLike[],
+  ): Option.Option<CacheStats> =>
+    Option.fromNullishOr(messages).pipe(
+      Option.flatMap(
+        Arr.findLast((message: MessageLike) => {
+          if (message.type !== "assistant") {
+            return Option.none()
+          }
 
-const compact = new Intl.NumberFormat("en-US", {
-  notation: "compact",
-  maximumFractionDigits: 1,
+          return cacheStats(message.tokens)
+        }),
+      ),
+    )
+
+/** Prompt cache statistics from OpenCode's token usage, and their wording. */
+export default Object.freeze({
+  cacheStats,
+  formatBreakdown,
+  formatPercent,
+  formatRates,
+  formatTokens: compactTokens,
+  lastRequestStats,
 })
-
-export function formatTokens(value: number): string {
-  return compact.format(value)
-}
-
-export function formatPercent(rate: number): string {
-  return `${(rate * 100).toFixed(1)}%`
-}
-
-export function formatRates(stats: CacheStats): string {
-  return `${formatPercent(stats.hitRate)} hit · ${formatPercent(stats.missRate)} miss`
-}
-
-export function formatBreakdown(stats: CacheStats): string {
-  return `${formatTokens(stats.read)} read · ${formatTokens(stats.write)} write · ${formatTokens(stats.uncached)} uncached`
-}

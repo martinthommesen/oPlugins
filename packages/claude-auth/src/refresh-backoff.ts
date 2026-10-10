@@ -1,152 +1,189 @@
-/**
- * Transient-vs-terminal classification and per-account backoff for OAuth token
- * refreshes.
- *
- * The token endpoint (`platform.claude.com/v1/oauth/token`) may rate-limit
- * refresh requests with HTTP 429 `rate_limit_error`. That is transient, because
- * the refresh token is still valid. This module tells a transient failure apart
- * from a genuinely dead refresh token (`invalid_grant`), and imposes a
- * cooldown so a rate-limited account is not re-hit until the window has
- * plausibly cleared.
- */
+import {
+  Clock,
+  Context,
+  Data,
+  Effect,
+  HashMap,
+  Layer,
+  Option,
+  Random,
+  Ref,
+} from "effect"
+import Environment from "./environment.ts"
+import policy from "./refresh-backoff-policy.ts"
 
-import { positiveIntFromEnv } from "./env.ts"
-
-type RefreshFailureKind = "transient" | "terminal"
-
-/** Base cooldown after the first transient failure (env-overridable). */
-export const BASE_COOLDOWN_MS = positiveIntFromEnv(
-  "OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS",
-  15_000,
-)
-
-/** Hard ceiling for a single cooldown, regardless of consecutive failures. */
-export const MAX_COOLDOWN_MS = 60_000
-
-/**
- * Consecutive transient failures after which the user is told. Unknown OAuth
- * errors are classified transient so a recoverable blip never demands
- * re-authentication. Without the ceiling, a permanent failure with an
- * unfamiliar code, such as a lapsed subscription, would retry behind a
- * synthetic 429 and never reach the user. Retries continue past the ceiling.
- * With the default base cooldown it is reached after about eight minutes at
- * worst (15 + 30 + 7 × 60 seconds), sooner with jitter.
- */
-export const MAX_CONSECUTIVE_TRANSIENT = 10
-
-/**
- * OAuth token-endpoint error codes that mean the refresh token itself is no
- * longer usable. Everything else is transient, including rate limits, 5xx
- * responses, network errors, and unknown codes, so a recoverable blip never
- * becomes a hard "re-authenticate" error.
- */
-const TERMINAL_OAUTH_ERRORS = new Set([
-  "invalid_grant",
-  "invalid_client",
-  "unauthorized_client",
-  "unsupported_grant_type",
-  "invalid_scope",
-])
-
-export function classifyRefreshFailure(
-  oauthError: string | undefined,
-): RefreshFailureKind {
-  return oauthError && TERMINAL_OAUTH_ERRORS.has(oauthError)
-    ? "terminal"
-    : "transient"
-}
-
-interface BackoffOptions {
-  retryAfterMs?: number
-  now?: number
-  rng?: () => number
-}
-
-/**
- * Delay before the next refresh attempt. An explicit `retry-after` from the
- * endpoint wins (still clamped to `MAX_COOLDOWN_MS`); otherwise an
- * exponential schedule (base · 2^(n-1), capped) with jitter in the
- * [50%, 100%] band to desynchronize refreshes.
- */
-export function computeBackoffMs(
-  consecutive: number,
-  opts: BackoffOptions = {},
-): number {
-  if (opts.retryAfterMs !== undefined && opts.retryAfterMs > 0) {
-    // Honor the server's hint, but keep it under the documented cap so a large
-    // `Retry-After` (e.g. an hour-long quota reset) can't pin every request to
-    // the full wait budget for that whole window.
-    return Math.min(MAX_COOLDOWN_MS, opts.retryAfterMs)
-  }
-  const rng = opts.rng ?? Math.random
-  const exponent = Math.max(0, consecutive - 1)
-  const scheduled = Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * 2 ** exponent)
-  const jitterFactor = 0.5 + rng() * 0.5
-  return Math.round(scheduled * jitterFactor)
-}
-
-/**
+/*
  * What is known about one key. Transient state is kept per source and
  * terminal state per credential generation, so the two never share a key in
  * practice. With one map they cannot hold conflicting state for a key anyway.
  */
 type BackoffState =
-  | { kind: "transient"; until: number; consecutive: number }
-  | { kind: "terminal" }
+  | { readonly _tag: "Terminal" }
+  | {
+      readonly _tag: "Transient"
+      readonly consecutive: number
+      readonly until: number
+    }
 
-const states = new Map<string, BackoffState>()
+type RefreshFailureKind = ReturnType<typeof policy.classify>
 
-function transientState(source: string) {
-  const state = states.get(source)
-  return state?.kind === "transient" ? state : undefined
+/** The state one backoff tracker owns for the plugin's lifetime. */
+interface Backoff {
+  /** Base cooldown after the first transient failure. */
+  readonly baseMs: number
+  readonly states: Ref.Ref<HashMap.HashMap<string, BackoffState>>
 }
+
+const NEXT = 1,
+  NO_WAIT = 0,
+  State = Data.taggedEnum<BackoffState>(),
+  /* The transient state recorded for `key`, if that is what it holds. */
+  activeTransient = (
+    states: HashMap.HashMap<string, BackoffState>,
+    key: string,
+  ): Option.Option<{ readonly consecutive: number; readonly until: number }> =>
+    HashMap.get(states, key).pipe(
+      Option.flatMap(
+        State.$match({
+          Terminal: () => Option.none(),
+          Transient: (state) => Option.some(state),
+        }),
+      ),
+    ),
+  /* How long the cooldown for `key` has left to run, or 0 when none. */
+  cooldownRemainingMs = Effect.fn("RefreshBackoff.cooldownRemainingMs")(
+    function* cooldownRemainingMs(backoff: Backoff, key: string) {
+      const now = yield* Clock.currentTimeMillis,
+        states = yield* Ref.get(backoff.states)
+
+      return Option.match(activeTransient(states, key), {
+        onNone: () => NO_WAIT,
+        onSome: (state) => Math.max(NO_WAIT, state.until - now),
+      })
+    },
+  ),
+  /* Consecutive transient failures recorded for `key`. */
+  countOf = (
+    states: HashMap.HashMap<string, BackoffState>,
+    key: string,
+  ): number =>
+    Option.match(activeTransient(states, key), {
+      onNone: () => NO_WAIT,
+      onSome: (state) => state.consecutive,
+    }),
+  /* Whether the last failure recorded for `key` was transient or terminal. */
+  failureKind = (
+    backoff: Backoff,
+    key: string,
+  ): Effect.Effect<Option.Option<RefreshFailureKind>> =>
+    Ref.get(backoff.states).pipe(
+      Effect.map((states) =>
+        HashMap.get(states, key).pipe(
+          Option.map(
+            State.$match({
+              Terminal: (): RefreshFailureKind => "terminal",
+              Transient: (): RefreshFailureKind => "transient",
+            }),
+          ),
+        ),
+      ),
+    ),
+  makeTerminal = State.Terminal,
+  makeTransient = State.Transient,
+  /*
+   * Record a transient refresh failure for `key` and return the cooldown
+   * duration applied. The cooldown escalates with consecutive transient
+   * failures and is exposed via `cooldownRemainingMs`.
+   */
+  noteTransient = Effect.fn("RefreshBackoff.noteTransient")(
+    function* noteTransient(
+      backoff: Backoff,
+      key: string,
+      retryAfterMs: Option.Option<number>,
+    ) {
+      const jitter = yield* Random.next,
+        now = yield* Clock.currentTimeMillis
+
+      return yield* Ref.modify(backoff.states, (states) => {
+        const consecutive = countOf(states, key) + NEXT,
+          ms = policy.backoffMs({
+            baseMs: backoff.baseMs,
+            consecutive,
+            jitter,
+            retryAfterMs,
+          })
+
+        return [
+          ms,
+          HashMap.set(
+            states,
+            key,
+            makeTransient({ consecutive, until: now + ms }),
+          ),
+        ]
+      })
+    },
+  )
 
 /**
- * Record a transient refresh failure for `source` and return the cooldown
- * duration applied. The cooldown escalates with consecutive transient
- * failures and is exposed via {@link cooldownRemainingMs}.
+ * Per-key backoff for OAuth token refreshes: an escalating cooldown after
+ * transient failures, and a latch for terminal ones. The state lives as long
+ * as the layer that built it.
  */
-export function noteRefreshTransient(
-  source: string,
-  opts: BackoffOptions = {},
-): number {
-  const now = opts.now ?? Date.now()
-  const consecutive = (transientState(source)?.consecutive ?? 0) + 1
-  const ms = computeBackoffMs(consecutive, opts)
-  states.set(source, { kind: "transient", until: now + ms, consecutive })
-  return ms
+class RefreshBackoff extends Context.Service<
+  RefreshBackoff,
+  {
+    /** Clear all backoff state for `key` after a successful refresh or adoption. */
+    readonly clear: (key: string) => Effect.Effect<void>
+    /** How long the cooldown for `key` has left to run, or 0 when none. */
+    readonly cooldownRemainingMs: (key: string) => Effect.Effect<number>
+    /** Whether the last failure recorded for `key` was transient or terminal. */
+    readonly failureKind: (
+      key: string,
+    ) => Effect.Effect<Option.Option<RefreshFailureKind>>
+    /** Record a terminal refresh failure (dead refresh token). No cooldown. */
+    readonly noteTerminal: (key: string) => Effect.Effect<void>
+    /** Record a transient refresh failure and return the cooldown applied. */
+    readonly noteTransient: (
+      key: string,
+      retryAfterMs: Option.Option<number>,
+    ) => Effect.Effect<number>
+    /** Consecutive transient failures recorded for `key`. */
+    readonly transientCount: (key: string) => Effect.Effect<number>
+  }
+>()("oclaude/RefreshBackoff") {
+  /** A fresh tracker whose base cooldown comes from the environment. */
+  public static readonly layer: Layer.Layer<
+    RefreshBackoff,
+    never,
+    Environment
+  > = Layer.effect(
+    RefreshBackoff,
+    Effect.gen(function* makeRefreshBackoff() {
+      const environment = yield* Environment,
+        tracker: Backoff = {
+          baseMs: environment.variables.refreshCooldownMs,
+          states: yield* Ref.make(HashMap.empty<string, BackoffState>()),
+        }
+
+      return RefreshBackoff.of({
+        clear: (key) =>
+          Ref.update(tracker.states, (states) => HashMap.remove(states, key)),
+        cooldownRemainingMs: (key) => cooldownRemainingMs(tracker, key),
+        failureKind: (key) => failureKind(tracker, key),
+        noteTerminal: (key) =>
+          Ref.update(tracker.states, (states) =>
+            HashMap.set(states, key, makeTerminal()),
+          ),
+        noteTransient: (key, retryAfterMs) =>
+          noteTransient(tracker, key, retryAfterMs),
+        transientCount: (key) =>
+          Ref.get(tracker.states).pipe(
+            Effect.map((states) => countOf(states, key)),
+          ),
+      })
+    }),
+  )
 }
 
-/** Record a terminal refresh failure (dead refresh token). No cooldown. */
-export function noteRefreshTerminal(source: string): void {
-  states.set(source, { kind: "terminal" })
-}
-
-/** Clear all backoff state for `source` after a successful refresh/adopt. */
-export function clearRefreshOutcome(source: string): void {
-  states.delete(source)
-}
-
-/** Consecutive transient failures recorded for `source`. */
-export function transientFailureCount(source: string): number {
-  return transientState(source)?.consecutive ?? 0
-}
-
-/** How long the cooldown for `source` has left to run, or 0 when none. */
-export function cooldownRemainingMs(
-  source: string,
-  now: number = Date.now(),
-): number {
-  return Math.max(0, (transientState(source)?.until ?? now) - now)
-}
-
-export function getRefreshFailureKind(
-  source: string,
-): RefreshFailureKind | null {
-  return states.get(source)?.kind ?? null
-}
-
-/** For tests: drop all in-memory backoff state. */
-export function resetRefreshBackoffState(): void {
-  states.clear()
-}
+export default RefreshBackoff

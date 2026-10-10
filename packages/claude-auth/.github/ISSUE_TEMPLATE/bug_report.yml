@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a problem with opencode-claude-auth
+description: Report a problem with oClaude
 labels: ["bug"]
 body:
   - type: textarea
@@ -80,7 +80,7 @@ body:
       label: Redacted logs
       description: |
         Reproduce with `CLAUDE_AUTH_DEBUG=1`, then include relevant plugin entries from
-        `~/.local/share/opencode/claude-auth-debug.log` and relevant v2 service entries
+        `~/.local/share/opencode/oclaude-debug.log` and relevant v2 service entries
         from `~/.local/share/opencode/log/opencode.log`.
 
         Review and redact authorization headers, prompts, file contents, and other

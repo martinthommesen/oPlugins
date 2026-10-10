@@ -1,7 +1,7 @@
 {
-  "name": "opencode-claude-auth",
+  "name": "oclaude",
   "version": "3.0.0",
-  "description": "OpenCode v2 plugin for Claude Code subscription credentials.",
+  "description": "oClaude: an OpenCode v2 plugin for Claude Code subscription credentials.",
   "keywords": [
     "anthropic",
     "auth",
@@ -10,6 +10,7 @@
     "plugin"
   ],
   "license": "MIT",
+  "author": "Martin Lammetun Thommesen <267603464+martinthommesen@users.noreply.github.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/martinthommesen/opencode-claude-auth.git"
@@ -18,6 +19,9 @@
     "dist"
   ],
   "type": "module",
+  "imports": {
+    "#src/*": "./src/*"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,28 +33,40 @@
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc",
-    "typecheck": "tsc -p tsconfig.test.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp types/index.d.ts types/tui.d.ts dist/",
+    "typecheck": "tsc -p tsconfig.json",
     "pretest": "node -e \"const n=require('node:fs').globSync('src/**/*.test.ts').length; if (n < 9) { console.error('expected at least 9 test files, found '+n); process.exit(1) }\"",
-    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'",
+    "test": "vitest run",
     "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-headless.ts",
     "test:host": "pnpm run test:headless --offline",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); if (!require('node:fs').existsSync('./dist/tui.js')) { throw new Error('dist/tui.js is missing') }\"",
     "lint": "oxlint && oxfmt --check .",
-    "lint:fix": "oxlint --fix . && oxfmt --write .",
+    "lint:fix": "oxlint --fix && oxfmt --write .",
     "format": "oxfmt --write .",
     "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run"
   },
+  "dependencies": {
+    "@effect/platform-node-shared": "4.0.0-rc.112"
+  },
   "devDependencies": {
+    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/vitest": "4.0.0-rc.112",
     "@opencode/plugin": "2.0.26",
-    "@oxlint/plugins": "1.56.0",
+    "@opencode/theme": "2.0.26",
+    "@opentui/solid": "0.5.17",
+    "@oxlint/plugins": "1.87.0",
     "@types/node": "^25.5.0",
+    "effect": "4.0.0-rc.112",
     "oxfmt": "0.41.0",
-    "oxlint": "1.56.0",
-    "typescript": "^5.0.0"
+    "oxlint": "1.87.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "solid-js": "1.9.12",
+    "typescript": "^5.0.0",
+    "vitest": "4.1.11"
   },
   "peerDependencies": {
     "@opentui/solid": ">=0.5.17",
+    "effect": "^4.0.0-rc.112",
     "solid-js": ">=1.9.0"
   },
   "peerDependenciesMeta": {

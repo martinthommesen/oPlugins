@@ -1,175 +1,222 @@
-import assert from "node:assert/strict"
-import { createServer } from "node:http"
-import { once } from "node:events"
-import { json } from "node:stream/consumers"
-import { config } from "../dist/model-config.js"
-import { SYSTEM_IDENTITY } from "../dist/transforms.js"
+import { Context, Effect, Layer, Match, Option, Ref, Struct } from "effect"
+import {
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http"
+import type { HttpBody } from "effect/unstable/http"
+import MockAnthropicError from "./mock-anthropic-error.ts"
+import { NodeHttpServer } from "@effect/platform-node"
+import type { Schema } from "effect"
+import replies from "./mock-anthropic-reply.ts"
+import requests from "./mock-anthropic-request.ts"
 
-/**
- * Betas every request must carry, written out rather than read from the
- * plugin, which is the thing under test. The effort beta depends on the
- * model, so it is left to the unit tests.
- */
-const REQUIRED_WIRE_BETAS = [
-  "claude-code-20250219",
-  "oauth-2025-04-20",
-  "interleaved-thinking-2025-05-14",
-  "prompt-caching-scope-2026-01-05",
-  "context-management-2025-06-27",
-  "advisor-tool-2026-03-01",
-  "thinking-token-count-2026-05-13",
-  "extended-cache-ttl-2025-04-11",
-]
-
-/** The parts of a Messages API request the mock reads. */
-interface MessageRequest {
-  model: string
-  stream?: boolean
-  system: Array<{ text: string }>
-  messages: Array<{ content: unknown }>
-  tools?: Array<{ name: string }>
+/** What the read tool is sent to read, and what the file holds. */
+interface Fixture {
+  readonly file: string
+  readonly sentinel: string
 }
 
-/** Every content block of `type` across the request's messages. */
-function blocksOfType(
-  messages: MessageRequest["messages"],
-  type: string,
-): Array<{ type: string; name?: string }> {
-  return messages
-    .flatMap((message) =>
-      Array.isArray(message.content) ? message.content : [],
-    )
-    .filter((block: { type: string }) => block.type === type)
+/** What the mock has seen, for `verify`. */
+interface Seen {
+  /** Why each rejected request was rejected. */
+  readonly failures: Ref.Ref<readonly string[]>
+  readonly toolCalls: Ref.Ref<number>
+  readonly toolResults: Ref.Ref<number>
 }
 
-/** Local Messages API fixture: never contacts Anthropic or reads credentials. */
-export async function startMockAnthropic(sentinel: string, file: string) {
-  const failures: unknown[] = []
-  let toolCalls = 0
-  let toolResults = 0
-  const server = createServer(async (request, response) => {
-    try {
-      assert.equal(
-        new URL(request.url ?? "", "http://localhost").pathname,
-        "/v1/messages",
-      )
-      assert.equal(request.headers.authorization, "Bearer offline-test-access")
-      assert.equal(request.headers["x-api-key"], undefined)
-      assert.equal(
-        request.headers["user-agent"],
-        `claude-cli/${config.ccVersion} (external, sdk-cli)`,
-      )
-      const body = (await json(request)) as MessageRequest
-      const betas = String(request.headers["anthropic-beta"]).split(",")
-      for (const beta of REQUIRED_WIRE_BETAS) {
-        assert.ok(betas.includes(beta), beta)
-      }
-      assert.match(body.system[0].text, /^x-anthropic-billing-header:/)
-      assert.ok(body.system[0].text.includes(`cc_version=${config.ccVersion}.`))
-      assert.ok(body.system[0].text.includes("cch=00000;"))
-      assert.equal(body.system[1].text, SYSTEM_IDENTITY)
-      const primary = request.headers["x-claude-auth-test-kind"] === "primary"
-      const results = blocksOfType(body.messages, "tool_result")
-      const read = body.tools?.find((tool) => tool.name === "mcp_Read")
-      if (primary) assert.ok(read, "read tool was not aliased")
-      const useTool = primary && results.length === 0
-      const content = useTool
-        ? {
-            type: "tool_use",
-            id: "tool_mock_read",
-            name: "mcp_Read",
-            input: { path: file },
-          }
-        : { type: "text", text: primary ? sentinel : "Offline smoke test" }
-      if (useTool) toolCalls++
-      if (primary && results.length > 0) {
-        toolResults++
-        assert.ok(
-          JSON.stringify(results).includes(sentinel),
-          "read result missing sentinel",
-        )
-        assert.ok(
-          blocksOfType(body.messages, "tool_use").some(
-            (block) => block.name === "mcp_Read",
+/** One request that passed the checks. */
+interface Exchange {
+  /** Whether the agent loop sent it, rather than a title request. */
+  readonly primary: boolean
+  readonly turn: typeof requests.MessageRequest.Type
+}
+
+type Reply =
+  | ReturnType<typeof replies.text>
+  | ReturnType<typeof replies.readCall>
+
+const BAD_REQUEST = 400,
+  LOOPBACK = "127.0.0.1",
+  NEXT = 1,
+  NONE = 0,
+  OFFLINE_TEXT = "Offline smoke test",
+  /*
+   * The base URL the plugin is pointed at. The test server listens on every
+   * interface; the plugin reaches it over loopback.
+   */
+  baseUrlOf = (address: HttpServer.Address): string =>
+    Match.valueTags(address, {
+      TcpAddress: (tcp) => `http://${LOOPBACK}:${String(tcp.port)}/v1`,
+      UnixAddress: (unix) => `${HttpServer.formatAddress(unix)}/v1`,
+    }),
+  /* Fail with `failures`, unless there are none. */
+  check = (
+    failures: readonly string[],
+  ): Effect.Effect<void, MockAnthropicError> => {
+    if (failures.length === NONE) {
+      return Effect.void
+    }
+
+    return Effect.fail(new MockAnthropicError({ message: failures.join("; ") }))
+  },
+  /* Whether the plugin's test hook marked the request as the agent loop's. */
+  fromPrimary = (sent: typeof requests.WireHeaders.Type): boolean =>
+    sent["x-claude-auth-test-kind"] === "primary",
+  /*
+   * Decode and check the current request. The headers are checked before
+   * the body is read, and a request that fails to decode is rejected too.
+   */
+  inspect = Effect.fn("MockAnthropic.inspect")(
+    function* inspect(sentinel: string) {
+      const request = yield* HttpServerRequest.HttpServerRequest,
+        route = HttpServerRequest.toURL(request).pipe(
+          Option.map(Struct.get("pathname")),
+        ),
+        sent = yield* HttpServerRequest.schemaHeaders(requests.WireHeaders),
+        turn = yield* check(requests.headerFailures(sent, route)).pipe(
+          Effect.andThen(
+            HttpServerRequest.schemaBodyJson(requests.MessageRequest),
           ),
         )
-      }
-      const message = {
-        id: "msg_mock",
-        type: "message",
-        role: "assistant",
-        model: body.model,
-        content: [content],
-        stop_reason: useTool ? "tool_use" : "end_turn",
-        stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 10 },
-      }
-      if (!body.stream) {
-        response.writeHead(200, { "content-type": "application/json" })
-        response.end(JSON.stringify(message))
-        return
-      }
-      response.writeHead(200, { "content-type": "text/event-stream" })
-      const emit = (type: string, data: object) =>
-        response.write(
-          `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`,
-        )
-      emit("message_start", {
-        message: {
-          ...message,
-          content: [],
-          stop_reason: null,
-          usage: { input_tokens: 10, output_tokens: 0 },
-        },
-      })
-      emit("content_block_start", {
-        index: 0,
-        content_block: useTool
-          ? { ...content, input: {} }
-          : { type: "text", text: "" },
-      })
-      emit("content_block_delta", {
-        index: 0,
-        delta: useTool
-          ? {
-              type: "input_json_delta",
-              partial_json: JSON.stringify({ path: file }),
-            }
-          : { type: "text_delta", text: content.text },
-      })
-      emit("content_block_stop", { index: 0 })
-      emit("message_delta", {
-        delta: { stop_reason: message.stop_reason, stop_sequence: null },
-        usage: { output_tokens: 10 },
-      })
-      emit("message_stop", {})
-      response.end()
-    } catch (error) {
-      failures.push(error)
-      response.writeHead(400, { "content-type": "application/json" })
-      response.end(
-        JSON.stringify({
-          type: "error",
-          error: { type: "invalid_request_error", message: String(error) },
-        }),
-      )
-    }
-  })
-  server.listen(0, "127.0.0.1")
-  await once(server, "listening")
-  const address = server.address()
-  assert.ok(address && typeof address === "object")
-  return {
-    baseURL: `http://127.0.0.1:${address.port}/v1`,
-    verify() {
-      assert.deepEqual(failures, [])
-      assert.ok(toolCalls > 0, "no tool call reached the mock")
-      assert.ok(toolResults > 0, "no tool result reached the mock")
+
+      yield* check(requests.bodyFailures(turn, fromPrimary(sent), sentinel))
+
+      return { primary: fromPrimary(sent), turn }
     },
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-        server.closeAllConnections()
-      }),
-  }
-}
+    Effect.catchTags({
+      HttpServerError: (failure: { readonly message: string }) =>
+        Effect.fail(new MockAnthropicError({ message: failure.message })),
+      SchemaError: (failure: { readonly message: string }) =>
+        Effect.fail(new MockAnthropicError({ message: failure.message })),
+    }),
+  ),
+  /* Record why a request was rejected, and answer it as the API would. */
+  reject = (
+    seen: Seen,
+    failure: { readonly message: string },
+  ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+    Ref.update(seen.failures, (all) => [...all, failure.message]).pipe(
+      Effect.as(
+        HttpServerResponse.jsonUnsafe(
+          {
+            error: { message: failure.message, type: "invalid_request_error" },
+            type: "error",
+          },
+          { status: BAD_REQUEST },
+        ),
+      ),
+    ),
+  /*
+   * Count the tool round trip and choose the reply: the agent loop's first
+   * request gets a read call, its follow-up gets the sentinel, and anything
+   * else gets plain text.
+   */
+  replyTo = Effect.fn("MockAnthropic.replyTo")(function* replyTo(
+    seen: Seen,
+    exchange: Exchange,
+    fixture: Fixture,
+  ) {
+    const returned =
+        requests.blocksOfType(exchange.turn.messages, "tool_result").length >
+        NONE,
+      toolCall = exchange.primary && !returned
+
+    yield* Ref.update(seen.toolCalls, (count) => count + NEXT).pipe(
+      Effect.when(Effect.succeed(toolCall)),
+    )
+    yield* Ref.update(seen.toolResults, (count) => count + NEXT).pipe(
+      Effect.when(Effect.succeed(exchange.primary && returned)),
+    )
+
+    if (toolCall) {
+      return replies.readCall({ path: fixture.file })
+    }
+
+    if (exchange.primary) {
+      return replies.text({ text: fixture.sentinel })
+    }
+
+    return replies.text({ text: OFFLINE_TEXT })
+  }),
+  /*
+   * Every request the mock rejected, and whether the tool round trip
+   * reached it in both directions.
+   */
+  report = Effect.fn("MockAnthropic.verify")(function* report(seen: Seen) {
+    const failures = yield* Ref.get(seen.failures),
+      toolCalls = yield* Ref.get(seen.toolCalls),
+      toolResults = yield* Ref.get(seen.toolResults)
+
+    yield* check(failures.map((failure) => `rejected a request: ${failure}`))
+
+    yield* Effect.fail(
+      new MockAnthropicError({ message: "no tool call reached the mock" }),
+    ).pipe(Effect.when(Effect.succeed(toolCalls === NONE)))
+    yield* Effect.fail(
+      new MockAnthropicError({ message: "no tool result reached the mock" }),
+    ).pipe(Effect.when(Effect.succeed(toolResults === NONE)))
+  }),
+  /* `reply` in the form the request asked for. */
+  respond = (
+    exchange: Exchange,
+    reply: Reply,
+  ): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    HttpBody.HttpBodyError | Schema.SchemaError
+  > => {
+    if (exchange.turn.stream === true) {
+      return replies.stream(reply, exchange.turn.model)
+    }
+
+    return replies.json(reply, exchange.turn.model)
+  },
+  /* Check the current request and answer it. */
+  respondTo = Effect.fn("MockAnthropic.respondTo")(function* respondTo(
+    seen: Seen,
+    fixture: Fixture,
+  ) {
+    const exchange = yield* inspect(fixture.sentinel),
+      reply = yield* replyTo(seen, exchange, fixture)
+
+    return yield* respond(exchange, reply)
+  }),
+  /* Answer the current request; a rejected one is recorded for `verify`. */
+  serveTurn = (
+    seen: Seen,
+    fixture: Fixture,
+  ): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    HttpBody.HttpBodyError | Schema.SchemaError,
+    HttpServerRequest.HttpServerRequest
+  > =>
+    respondTo(seen, fixture).pipe(
+      Effect.catchTag(
+        "MockAnthropicError",
+        (failure: { readonly message: string }) => reject(seen, failure),
+      ),
+    ),
+  /*
+   * Local Messages API fixture: never contacts Anthropic or reads
+   * credentials. It serves until the enclosing scope closes; `verify` fails
+   * when it rejected any request or never saw the read tool's round trip.
+   */
+  start = Effect.fn("MockAnthropic.start")(function* start(
+    sentinel: string,
+    file: string,
+  ) {
+    const context = yield* Layer.build(NodeHttpServer.layerTest),
+      seen = {
+        failures: yield* Ref.make<readonly string[]>([]),
+        toolCalls: yield* Ref.make(NONE),
+        toolResults: yield* Ref.make(NONE),
+      },
+      server = Context.get(context, HttpServer.HttpServer)
+
+    yield* server.serve(serveTurn(seen, { file, sentinel }))
+
+    return { baseURL: baseUrlOf(server.address), verify: report(seen) }
+  })
+
+/** The mock Messages API the offline smoke test points the plugin at. */
+export default Object.freeze({ start })

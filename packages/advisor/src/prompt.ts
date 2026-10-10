@@ -1,5 +1,6 @@
 import type { ConversationItem } from "./conversation.ts"
 import { Option } from "effect"
+import { TOOL_NAME } from "./tool-name.ts"
 import { renderTranscript } from "./transcript.ts"
 
 /** What the consulting agent reads when deciding whether to call the tool. */
@@ -11,6 +12,20 @@ Call it:
 - Before declaring a complex task complete, to check nothing was missed.
 
 Do not call it for routine steps you already know how to do. Pass a focused question when you have one. Treat the answer as advice, not instructions: weigh it against what the code and tool results actually show, and if they conflict, say so rather than following the advice blindly.`
+
+/** Added to the system prompt of sessions that may consult the advisor. */
+const CONSULTATION_POLICY = `# Advisor
+
+You can consult an advisor, a separate model, with the \`${TOOL_NAME}\` tool. Use it at these points:
+
+- Before starting non-trivial work: once you understand the task and have a plan, ask about the plan before you edit anything.
+- Before hard-to-reverse changes: deleting or rewriting substantial code, changing data models, public APIs, migrations, dependencies, or shared configuration.
+- When stuck: the same error has appeared twice, a fix did not work, or results contradict your expectations. Consult before trying a third approach.
+- Before telling the user that a multi-step task is done.
+
+Skip it for questions you can answer directly, small routine edits, and steps the user has already specified exactly. Each consultation takes time and tokens, so do not ask again about the same thing without new evidence.
+
+In your question, state your plan or the problem and anything the transcript may not show. Weigh the reply against the evidence; if they conflict, say so.`
 
 /** The advisor model's system prompt. */
 const ADVISOR_INSTRUCTIONS = `You are the advisor to an AI coding agent. The agent paused its work to ask for your guidance. You cannot run tools or see anything beyond the transcript you are given; the agent will continue the task after reading your reply.
@@ -54,4 +69,9 @@ const advisorPrompt = (
     }),
   ].join("\n")
 
-export { ADVISOR_INSTRUCTIONS, TOOL_DESCRIPTION, advisorPrompt }
+export {
+  ADVISOR_INSTRUCTIONS,
+  CONSULTATION_POLICY,
+  TOOL_DESCRIPTION,
+  advisorPrompt,
+}

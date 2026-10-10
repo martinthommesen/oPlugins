@@ -5,7 +5,7 @@ import {
   runCommand,
 } from "./command.ts"
 import { Context, Effect, Layer } from "effect"
-import { hideUnavailableAdvisor, instructConsultations } from "./hooks.ts"
+import { instructConsultations, presentAdvisor } from "./hooks.ts"
 import { Advisor } from "./advisor.ts"
 import { Host } from "./host.ts"
 import { Plugin } from "@opencode/plugin/effect"
@@ -42,7 +42,7 @@ export default Plugin.define({
         })
       })
 
-      yield* context.session.hook("context", hideUnavailableAdvisor(advisor))
+      yield* context.session.hook("context", presentAdvisor(advisor))
 
       yield* context.session.hook("generate", instructConsultations(host))
     }),

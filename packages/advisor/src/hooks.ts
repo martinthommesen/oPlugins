@@ -1,41 +1,56 @@
+import { ADVISOR_INSTRUCTIONS, CONSULTATION_POLICY } from "./prompt.ts"
+import { Boolean as Bool, Effect, Predicate } from "effect"
 import type {
   SessionContext,
   SessionGenerate,
 } from "@opencode/plugin/effect/session"
-import { ADVISOR_INSTRUCTIONS } from "./prompt.ts"
 import type { Advisor } from "./advisor.ts"
 import { Availability } from "./availability.ts"
-import { Effect } from "effect"
 import type { Host } from "./host.ts"
 import { TOOL_NAME } from "./tool-name.ts"
 
 /**
- * Removes the advisor tool from requests of sessions that may not consult it,
- * so agents are only offered the advisor when calling it can succeed.
+ * Offers the advisor only to sessions that may consult it. Sessions that may
+ * not lose the tool; sessions whose agent has the tool are told when to use it.
  * @param {Advisor["Service"]} advisor The advisor service.
  * @returns {(event: SessionContext) => Effect.Effect<void>} The hook.
  */
-const hideUnavailableAdvisor =
+const presentAdvisor =
   (advisor: Advisor["Service"]) =>
   (event: SessionContext): Effect.Effect<void> => {
-    const hidden = advisor.availability(event.sessionID).pipe(
-      Effect.map(Availability.$is("Unavailable")),
+    const available = advisor.availability(event.sessionID).pipe(
+      Effect.map(Availability.$is("Available")),
       Effect.catchTag("HostError", (failure) =>
         Effect.as(
           Effect.logWarning(
             "Hiding the advisor: availability check failed",
             failure,
           ),
-          true,
+          false,
         ),
       ),
     )
 
-    const hide = Effect.sync(() =>
-      Reflect.deleteProperty(event.tools, TOOL_NAME),
-    )
+    const hide = Effect.sync(() => {
+      Reflect.deleteProperty(event.tools, TOOL_NAME)
+    })
 
-    return hide.pipe(Effect.when(hidden), Effect.asVoid)
+    // Agents with a fixed tool list may lack the tool even when it is available.
+    const instruct = Effect.sync(() => {
+      if (Predicate.hasProperty(event.tools, TOOL_NAME)) {
+        event.system.push({ text: CONSULTATION_POLICY, type: "text" })
+      }
+    })
+
+    return available.pipe(
+      Effect.flatMap((isAvailable) =>
+        Bool.match(isAvailable, {
+          onFalse: () => hide,
+          onTrue: () => instruct,
+        }),
+      ),
+      Effect.asVoid,
+    )
   }
 
 /**
@@ -58,4 +73,4 @@ const instructConsultations =
     )
   }
 
-export { hideUnavailableAdvisor, instructConsultations }
+export { instructConsultations, presentAdvisor }

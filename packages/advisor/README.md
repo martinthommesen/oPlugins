@@ -81,6 +81,9 @@ Invalid options are logged and replaced by the defaults.
 - The plugin registers an `advisor` tool. Before each model request it removes
   the tool from sessions that may not use it: when the advisor is off, has no
   model, or the session is a subagent's and subagents are not allowed.
+  Sessions that keep the tool also get a short system-prompt section with the
+  consultation rules listed above, so agents use the advisor without being
+  asked.
 - A consultation renders the available messages as a transcript within
   `maxTranscriptChars`. It keeps the first available user message and the
   newest entries. Long messages, tool inputs and results are shortened.

@@ -1,6 +1,8 @@
+import { Effect, Layer } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import { Effect } from "effect"
 import Environment from "./environment.ts"
+import type { Plugin } from "@opencode/plugin/effect"
+import PluginOptions from "./plugin-options.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
 import claudeHeaders from "./claude-headers.ts"
@@ -8,7 +10,7 @@ import testEnvironment from "./test-environment.test-support.ts"
 
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
-  readonly effect: Vitest.Test<Environment | Scope.Scope>
+  readonly effect: Vitest.Test<Environment | PluginOptions | Scope.Scope>
 }
 
 const EFFORT = "effort-2025-11-24",
@@ -19,20 +21,21 @@ const EFFORT = "effort-2025-11-24",
   /* The anthropic-beta flags in `headers`. */
   betasOf = (headers: Headers): readonly string[] =>
     String(headers.get("anthropic-beta")).split(","),
-  /* An environment of `variables` plus a home. */
+  /* The plugin's `options`, on a machine with a home. */
   environmentOf = (
-    variables: Readonly<Record<string, string>> = {},
-  ): ReturnType<ReturnType<typeof testEnvironment>> =>
-    testEnvironment(
-      Object.fromEntries([["HOME", HOME], ...Object.entries(variables)]),
-    )(),
+    options: Plugin.Context["options"] = {},
+  ): Layer.Layer<Environment | PluginOptions> =>
+    Layer.merge(testEnvironment({ HOME })(), PluginOptions.layer(options)).pipe(
+      Layer.orDie,
+    ),
   /* The Claude Code headers for a request carrying `original`, for `model`. */
   headersFor = (
     original: Readonly<Record<string, string>>,
     model: string,
-  ): Effect.Effect<Headers, never, Environment> =>
+  ): Effect.Effect<Headers, never, Environment | PluginOptions> =>
     Effect.gen(function* build() {
-      const environment = yield* Environment
+      const environment = yield* Environment,
+        options = yield* PluginOptions
 
       return claudeHeaders.build(
         {
@@ -42,7 +45,7 @@ const EFFORT = "effort-2025-11-24",
           requestID: "request",
           sessionID: "session",
         },
-        environment.variables,
+        options,
         environment.process,
       )
     })
@@ -150,7 +153,7 @@ describe("claude headers replacing the caller's", () => {
 })
 
 describe("claude headers identity", () => {
-  test.layer(environmentOf({ CLAUDE_CODE_ENTRYPOINT: "cli" }))((it: Tests) => {
+  test.layer(environmentOf({ entrypoint: "cli" }))((it: Tests) => {
     it.effect(
       "uses the configured entrypoint consistently in the user agent",
       () =>
@@ -180,12 +183,9 @@ describe("claude headers identity", () => {
   })
 
   test.layer(
-    environmentOf({
-      ANTHROPIC_USER_AGENT: "custom-agent/9.9",
-      CLAUDE_CODE_ENTRYPOINT: "cli",
-    }),
+    environmentOf({ entrypoint: "cli", userAgent: "custom-agent/9.9" }),
   )((it: Tests) => {
-    it.effect("lets ANTHROPIC_USER_AGENT replace the user agent verbatim", () =>
+    it.effect("lets the userAgent option replace the user agent verbatim", () =>
       Effect.gen(function* run() {
         expect.assertions(ONE_ASSERTION)
         expect(

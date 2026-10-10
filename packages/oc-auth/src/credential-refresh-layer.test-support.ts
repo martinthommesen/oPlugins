@@ -4,10 +4,10 @@ import {
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedStderr from "./captured-stderr.test-support.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import CredentialRefresh from "./credential-refresh.ts"
-import DebugLog from "./debug-log.ts"
 import { Layer } from "effect"
+import PluginOptions from "./plugin-options.ts"
 import RefreshBackoff from "./refresh-backoff.ts"
 import RefreshRig from "./refresh-rig.test-support.ts"
 import testEnvironment from "./test-environment.test-support.ts"
@@ -21,25 +21,25 @@ type Tokens = Option.Option.Value<
 /** Everything a refresh test can reach. */
 type Provided =
   | CredentialRefresh
-  | DebugLog
   | Layer.Success<ReturnType<typeof RefreshRig.layer>>
   | Layer.Success<ReturnType<ReturnType<typeof testEnvironment>>>
   | Layer.Success<typeof platform>
+  | PluginOptions
   | RefreshBackoff
 
 const FIRST = 0,
   SECOND = 1,
-  /** Node's crypto, files, and paths, with stderr captured. */
+  /** Node's crypto, files, and paths, with the log captured. */
   platform = Layer.mergeAll(
     NodeCrypto.layer,
     NodeFileSystem.layer,
     NodePath.layer,
-    CapturedStderr.layer,
+    CapturedLogs.layer,
   ),
   /*
    * The refresh service over fakes answering per `script`, the store
-   * holding `stored`, with the real backoff and debug log on a machine
-   * whose home holds nothing.
+   * holding `stored`, with the real backoff and default options on a
+   * machine whose home holds nothing.
    */
   refreshLayer =
     (script: Script) =>
@@ -49,7 +49,7 @@ const FIRST = 0,
       CredentialRefresh.layer.pipe(
         Layer.provideMerge(RefreshRig.layer(script, stored)),
         Layer.provideMerge(RefreshBackoff.layer),
-        Layer.provideMerge(DebugLog.layer),
+        Layer.provideMerge(PluginOptions.layer({}).pipe(Layer.orDie)),
         Layer.provideMerge(testEnvironment({ HOME: "/nonexistent-home" })()),
         Layer.provideMerge(platform),
       )

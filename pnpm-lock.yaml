@@ -322,10 +322,6 @@ importers:
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2))
 
   packages/oc-browser:
-    dependencies:
-      '@effect/platform-node-shared':
-        specifier: 'catalog:'
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)
     devDependencies:
       '@effect/platform-node':
         specifier: 'catalog:'

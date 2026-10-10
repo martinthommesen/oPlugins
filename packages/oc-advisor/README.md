@@ -67,14 +67,19 @@ object form of a `plugins` entry in `opencode.json(c)`:
 }
 ```
 
-| Option               | Default  | Meaning                                                      |
-| -------------------- | -------- | ------------------------------------------------------------ |
-| `model`              | none     | Advisor model as `provider/model[#variant]`; turns it on     |
-| `subagents`          | `true`   | Whether subagent sessions may consult the advisor            |
-| `timeout`            | `300`    | Seconds to wait for the advisor before giving up             |
-| `maxTranscriptChars` | `200000` | Characters of conversation sent; the newest entries are kept |
+| Option               | Default  | Meaning                                                                    |
+| -------------------- | -------- | -------------------------------------------------------------------------- |
+| `model`              | none     | Advisor model as `provider/model[#variant]`; turns it on                   |
+| `subagents`          | `true`   | Boolean. Whether subagent sessions may consult the advisor                 |
+| `timeout`            | `300`    | Integer, at least `1`. Seconds to wait for the advisor before giving up    |
+| `maxTranscriptChars` | `200000` | Integer, at least `1000`. Characters of conversation sent; newest are kept |
 
-Invalid options are logged and replaced by the defaults.
+An invalid option stops the plugin from loading: a value of the wrong type,
+a value out of range, a `model` that isn't of the form
+`provider/model[#variant]`, or an option name not in the table. OpenCode's
+log then shows an error that names each invalid option and the problem, and
+the advisor is unavailable until you correct the option and restart
+OpenCode. No invalid option is replaced by its default.
 
 ## How it works
 
@@ -95,6 +100,8 @@ Invalid options are logged and replaced by the defaults.
   session's system prompt with the advisor's instructions and gives it no tools.
 - If the advisor cannot answer (no model, timeout, provider error), the agent
   is told why and continues without advice.
+- The plugin's log records go to OpenCode's log. They carry metadata such as
+  event names, session IDs, and model IDs, never the conversation or advice.
 
 ## Limitations
 

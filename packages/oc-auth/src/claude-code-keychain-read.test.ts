@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedStderr from "./captured-stderr.test-support.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"
 import type { Vitest } from "@effect/vitest"
 import sources from "./claude-code-sources.ts"
@@ -105,8 +105,11 @@ describe("keychain account discovery", () => {
       }),
     )
   })
+})
 
-  test.layer(support.layer)((it: Tests) => {
+test.layer(support.layer)(
+  "keychain account discovery that cannot list",
+  (it: Tests) => {
     it.effect(
       "falls back to the primary item and says so when listing fails",
       () =>
@@ -118,18 +121,22 @@ describe("keychain account discovery", () => {
               [[PRIMARY, support.credentialBlob("one-access")]],
               (stores) => stores.readAccounts,
             ),
-            warnings = (yield* (yield* CapturedStderr).text)
-              .split("\n")
-              .filter((line) => line !== "")
+            warnings = (yield* (yield* CapturedLogs).records).filter(
+              (record) => record.level === "Warn",
+            )
 
           expect(accounts.map((found) => found.source)).toStrictEqual([PRIMARY])
-          expect(warnings).toStrictEqual([
-            expect.stringMatching(/only the primary Claude Code account/u),
-          ])
+          // Metadata only: the kind of failure, not its message.
+          expect(
+            warnings.map((record) => [
+              record.message,
+              Object.keys(record.annotations),
+            ]),
+          ).toStrictEqual([["keychain_list_failed", ["errorType"]]])
         }),
     )
-  })
-})
+  },
+)
 
 test.layer(support.layer)(
   "keychain account discovery with a locked item",

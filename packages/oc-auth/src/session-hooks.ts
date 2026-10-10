@@ -1,12 +1,12 @@
 import { Effect, Option } from "effect"
 import ActiveCredential from "./active-credential.ts"
-import DebugLog from "./debug-log.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import RequestStates from "./request-states.ts"
 import RequestTransforms from "./request-transforms.ts"
 import SessionAliases from "./session-aliases.ts"
 import type { SessionHttpResponse } from "@opencode/plugin/effect/session"
 import claudeCodeCredential from "./claude-code-credential.ts"
+import pluginLog from "./plugin-log.ts"
 import recovery from "./unauthorized-recovery.ts"
 
 type Hook = Plugin.Context["session"]["hook"]
@@ -26,7 +26,6 @@ type RequestEvent = Parameters<
 /** What the session hooks use, captured once and handed to every callback. */
 type Hooks =
   | ActiveCredential
-  | DebugLog
   | RequestStates
   | RequestTransforms
   | SessionAliases
@@ -107,7 +106,6 @@ const CONTEXT_HOOKS = [
   ): Effect.Effect<void, never, Hooks> =>
     Effect.gen(function* responseHook() {
       const aliases = yield* SessionAliases,
-        debugLog = yield* DebugLog,
         known = yield* aliases.get(
           SessionAliases.keyOf(event.sessionID, kindOf(event)),
         ),
@@ -125,7 +123,7 @@ const CONTEXT_HOOKS = [
          * still restore from the session's aliases, which makes the
          * degradation invisible without this.
          */
-        yield* debugLog.log("request_state_missing", {
+        yield* pluginLog.debug("request_state_missing", {
           sessionID: event.sessionID,
         })
       }

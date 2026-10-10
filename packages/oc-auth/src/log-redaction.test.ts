@@ -68,6 +68,25 @@ describe("log redaction of token-shaped values", () => {
   )
 })
 
+describe("log redaction of tokens inside text", () => {
+  it(
+    "redacts a token an error message quotes, keeping the rest",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+      expect(
+        redact({
+          error:
+            "refresh failed: Bearer sk-ant-ort01-abcdefghijklmnop rejected, id eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
+        }),
+      ).toStrictEqual({
+        error:
+          "refresh failed: Bearer sk-ant-o...REDACTED rejected, id eyJhbGci...REDACTED",
+      })
+    },
+  )
+})
+
 describe("log redaction of structures", () => {
   it(
     "redacts nested and arrayed secrets, not just top-level ones",

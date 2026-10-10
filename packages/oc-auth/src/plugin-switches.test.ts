@@ -1,6 +1,6 @@
 import { Effect, Exit, Scope } from "effect"
 import { expect, it as test } from "@effect/vitest"
-import CapturedStderr from "./captured-stderr.test-support.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import FakeCatalog from "./fake-catalog.test-support.ts"
 import FakeConnection from "./fake-connection.test-support.ts"
 import FakeEvents from "./fake-events.test-support.ts"
@@ -59,6 +59,8 @@ const FIRST = 0,
   ),
   hostBefore = scenario.onHost(scenario.ours("before")),
   hostWithAccess = scenario.onHost(scenario.ours("access")),
+  /* A host whose active connection is ours, with zero costs configured. */
+  hostZeroCost = scenario.onConfiguredHost(ZERO_COST)(scenario.ours("access")),
   /*
    * Set the plugin up in a scope of its own and close it, as the host does
    * when it unloads the plugin: how many event subscriptions had finished
@@ -92,50 +94,61 @@ const FIRST = 0,
     return racing
   })
 
-test.layer(hostWithAccess)(
-  "pricing across credential switches",
-  (it: Tests) => {
-    it.effect(
-      "zeroes only active Anthropic model costs and restores pricing after a switch",
-      () =>
-        Effect.gen(function* run() {
-          expect.hasAssertions()
-          yield* fakeHost.setUpWith(ZERO_COST)
+test.layer(hostZeroCost)("pricing across credential switches", (it: Tests) => {
+  it.effect(
+    "zeroes only active Anthropic model costs and restores pricing after a switch",
+    () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* fakeHost.setUp
 
-          const before = yield* (yield* FakeCatalog).costs,
-            catalog = yield* FakeCatalog
+        const before = yield* (yield* FakeCatalog).costs,
+          catalog = yield* FakeCatalog
 
-          yield* changeTo(apiKeyActive, "key")
+        yield* changeTo(apiKeyActive, "key")
 
-          expect(before).toStrictEqual({ anthropic: ZERO, other: NATIVE })
-          expect(yield* catalog.reloads).toBe(ONE)
-          expect(yield* (yield* FakeConnection).resolves).toBe(TWO)
-          expect(yield* catalog.costs).toStrictEqual({
-            anthropic: NATIVE,
-            other: NATIVE,
-          })
-        }),
-    )
-  },
-)
+        expect(before).toStrictEqual({ anthropic: ZERO, other: NATIVE })
+        expect(yield* catalog.reloads).toBe(ONE)
+        expect(yield* (yield* FakeConnection).resolves).toBe(TWO)
+        expect(yield* catalog.costs).toStrictEqual({
+          anthropic: NATIVE,
+          other: NATIVE,
+        })
+      }),
+  )
+})
 
-test.layer(hostWithAccess)("a switch that fails", (it: Tests) => {
+test.layer(hostZeroCost)("a switch that fails", (it: Tests) => {
   it.effect(
     "fails a switch closed and continues processing later switches",
     () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
-        yield* fakeHost.setUpWith(ZERO_COST)
+        yield* fakeHost.setUp
         yield* failingChangeTo
 
         const catalog = yield* FakeCatalog,
           failed = yield* authorization,
-          warning = yield* (yield* CapturedStderr).text
+          reported = yield* (yield* CapturedLogs).named(
+            "credential_reload_failed",
+          )
 
         yield* changeTo(scenario.ours("replacement"), "replacement")
 
         expect(failed).toBeNull()
-        expect(warning).toMatch(/resolve failed/u)
+        // A warning without content, and the cause in a debug record.
+        expect(reported).toStrictEqual([
+          {
+            annotations: {},
+            level: "Warn",
+            message: "credential_reload_failed",
+          },
+          {
+            annotations: { error: "resolve failed" },
+            level: "Debug",
+            message: "credential_reload_failed",
+          },
+        ])
         expect(yield* catalog.reloads).toBe(TWO)
         expect(yield* catalog.costs).toStrictEqual({
           anthropic: ZERO,

@@ -8,6 +8,19 @@ import conversation from "./conversation.ts"
 
 type SessionId = PermissionEvaluation["sessionID"]
 
+type PluginContext = Plugin.Context
+
+/** The parts of the host's plugin context the reviewer reads. */
+interface HostContext {
+  readonly integration: {
+    readonly connection: Pick<
+      PluginContext["integration"]["connection"],
+      "active" | "resolve"
+    >
+  }
+  readonly session: Pick<PluginContext["session"], "context" | "get">
+}
+
 interface SessionSnapshot {
   readonly items: ReturnType<typeof conversation.fromSessionMessages>
   readonly parentId: Option.Option<SessionId>
@@ -30,7 +43,7 @@ const OPENAI_INTEGRATION = "openai",
    * Reads a session through the plugin context. The host's calls fail with
    * `unknown`; each is mapped to a `HostError` naming the call.
    */
-  sessionReader = (context: Plugin.Context): Interface["session"] =>
+  sessionReader = (context: HostContext): Interface["session"] =>
     Effect.fn("Host.session")(function* session(sessionId: SessionId) {
       const reads: Effect.Effect<
           readonly [Session.Info, readonly SessionMessage.Info[]],
@@ -59,7 +72,7 @@ class Host extends Context.Service<Host, Interface>()(
   "@martinthommesen/oc-auto/host",
 ) {
   public static readonly fromPlugin = (
-    context: Plugin.Context,
+    context: HostContext,
   ): Layer.Layer<Host> => {
     const { integration } = context,
       openAiCredential = Effect.gen(function* openAiCredential() {

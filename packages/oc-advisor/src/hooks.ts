@@ -38,12 +38,12 @@ const instructConsultations =
           Effect.catchTag(
             "HostError",
             (failure: { readonly operation: string }) =>
-              Effect.as(
-                Effect.logWarning(
-                  "Hiding the advisor: availability check failed",
-                  failure,
-                ),
-                false,
+              Effect.logWarning("advisor_availability_check_failed").pipe(
+                Effect.annotateLogs({
+                  operation: failure.operation,
+                  sessionID: event.sessionID,
+                }),
+                Effect.as(false),
               ),
           ),
         ),

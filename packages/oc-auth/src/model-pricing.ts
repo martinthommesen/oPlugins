@@ -1,6 +1,7 @@
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option } from "effect"
 import ActiveCredential from "./active-credential.ts"
 import type { Plugin } from "@opencode/plugin/effect"
+import PluginOptions from "./plugin-options.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
 
 /** The parts of the host's model editor that pricing uses. */
@@ -18,7 +19,7 @@ type ModelTransform = (
   callback: (editor: PricingEditor) => void,
 ) => ReturnType<Plugin.Context["model"]["transform"]>
 
-const ZeroCost = Schema.Struct({ cost: Schema.Literal("zero") }),
+const ZERO_COST = "zero",
   /* Price a model at nothing, as a subscription does. */
   // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- The host's model editor hands out a draft to edit in place, so it cannot be readonly.
   zeroCost = (draft: { cost: unknown[] }): void => {
@@ -26,17 +27,17 @@ const ZeroCost = Schema.Struct({ cost: Schema.Literal("zero") }),
   },
   /*
    * Native pricing stays by default, so OpenCode reports what the traffic
-   * would cost at API rates. `cost: "zero"` in the plugin's options restores
-   * the subscription view, for Anthropic models while a Claude Code
-   * credential is active.
+   * would cost at API rates. The `cost: "zero"` option restores the
+   * subscription view, for Anthropic models while a Claude Code credential
+   * is active.
    */
   zeroCosts = Effect.fn("ModelPricing.register")(function* zeroCosts(
     transform: ModelTransform,
-    options: Plugin.Context["options"],
   ) {
-    const active = yield* ActiveCredential
+    const active = yield* ActiveCredential,
+      options = yield* PluginOptions
 
-    if (!Schema.is(ZeroCost)(options)) {
+    if (options.cost !== ZERO_COST) {
       return
     }
 

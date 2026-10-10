@@ -9,7 +9,7 @@ import {
   Random,
   Ref,
 } from "effect"
-import Environment from "./environment.ts"
+import PluginOptions from "./plugin-options.ts"
 import policy from "./refresh-backoff-policy.ts"
 
 /*
@@ -152,17 +152,17 @@ class RefreshBackoff extends Context.Service<
     readonly transientCount: (key: string) => Effect.Effect<number>
   }
 >()("@martinthommesen/oc-auth/refresh-backoff/RefreshBackoff") {
-  /** A fresh tracker whose base cooldown comes from the environment. */
+  /** A fresh tracker whose base cooldown is the `refreshCooldownMs` option. */
   public static readonly layer: Layer.Layer<
     RefreshBackoff,
     never,
-    Environment
+    PluginOptions
   > = Layer.effect(
     RefreshBackoff,
     Effect.gen(function* makeRefreshBackoff() {
-      const environment = yield* Environment,
+      const options = yield* PluginOptions,
         tracker: Backoff = {
-          baseMs: environment.variables.refreshCooldownMs,
+          baseMs: options.refreshCooldownMs,
           states: yield* Ref.make(HashMap.empty<string, BackoffState>()),
         }
 

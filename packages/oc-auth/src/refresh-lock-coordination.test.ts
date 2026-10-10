@@ -1,7 +1,7 @@
 import { Effect, FileSystem } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedStderr from "./captured-stderr.test-support.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import type { Vitest } from "@effect/vitest"
 import support from "./refresh-lock.test-support.ts"
@@ -15,12 +15,17 @@ interface Tests {
 
 const COOLDOWN_MS = 30_000,
   COOLDOWN_OVER = 31_000,
+  /** The warning a degraded grant logs: its event and source, no content. */
+  DEGRADED_WARNING = {
+    annotations: { source: support.source },
+    level: "Warn",
+    message: "refresh_lock_degraded",
+  },
   FIVE_ASSERTIONS = 5,
   IN_COOLDOWN = 5000,
   LIVE_FOR_MS = 60_000,
   NOW = 0,
   ONE_ASSERTION = 1,
-  ONE_LINE = 1,
   ONE_TICKET = 1,
   SHORT_TTL_MS = 1000,
   THREE_ASSERTIONS = 3,
@@ -180,14 +185,26 @@ test.layer(support.layer)("refresh lock degradation", (it: Tests) => {
           fs = yield* FileSystem.FileSystem,
           lockDir = yield* support.blockedDir(dir),
           pair = yield* support.requestTwice(lockDir),
-          stderr = yield* CapturedStderr
+          reported = yield* (yield* CapturedLogs).named("refresh_lock_degraded")
 
         /*
-         * Uncoordinated refreshes can burn the shared refresh token, so the
-         * user hears about it even with the debug log off.
+         * Uncoordinated refreshes can burn the shared refresh token, so each
+         * degraded grant is a warning, with its cause only at debug level.
          */
-        expect((yield* stderr.text).trim().split("\n")).toHaveLength(ONE_LINE)
-        expect(yield* stderr.text).toMatch(/not coordinated/u)
+        expect(
+          reported.filter((record) => record.level === "Warn"),
+        ).toStrictEqual([DEGRADED_WARNING, DEGRADED_WARNING])
+        expect(
+          reported.map((record) => [
+            record.level,
+            Object.keys(record.annotations).toSorted(),
+          ]),
+        ).toStrictEqual([
+          ["Warn", ["source"]],
+          ["Debug", ["error", "source"]],
+          ["Warn", ["source"]],
+          ["Debug", ["error", "source"]],
+        ])
         /*
          * Without this the degraded lock is indistinguishable from a real one,
          * and a caller cannot tell that nothing is being serialized.

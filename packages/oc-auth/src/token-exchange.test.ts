@@ -1,19 +1,15 @@
-import type { Config, Scope } from "effect"
-import { Context, Effect, Fiber, Layer, Option, Path, Schema } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Schema } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import DebugLog from "./debug-log.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
+import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import TokenEndpoint from "./token-endpoint.test-support.ts"
 import TokenExchange from "./token-exchange.ts"
 import type { Vitest } from "@effect/vitest"
-import logSupport from "./debug-log.test-support.ts"
-import testEnvironment from "./test-environment.test-support.ts"
 
-/** The `it` of a `test.layer` block giving the debug log's platform. */
+/** The `it` of a `test.layer` block giving the captured log. */
 interface Tests {
-  readonly effect: Vitest.Test<
-    Layer.Success<typeof logSupport.layer> | Scope.Scope
-  >
+  readonly effect: Vitest.Test<CapturedLogs | Scope.Scope>
 }
 
 /** The `it` of a `test.layer` block giving an exchange and its endpoint. */
@@ -42,7 +38,6 @@ interface Summary {
 const AT = 1_767_225_600_000,
   BAD_REQUEST = 400,
   DATE_HINT_MS = 30_000,
-  DEFAULT_VARIABLES = { HOME: "/nonexistent-home" },
   Json = Schema.fromJsonString(Schema.Unknown),
   NETWORK_FAILURE = 0,
   OK = 200,
@@ -54,22 +49,13 @@ const AT = 1_767_225_600_000,
   TIMEOUT_MS = 30_000,
   TOKEN_URL = "https://platform.claude.com/v1/oauth/token",
   TWO_ASSERTIONS = 2,
-  /* An exchange whose endpoint answers `reply`, logging per `variables`. */
+  /* An exchange whose endpoint answers `reply`. */
   exchangeLayer = (
     reply: Effect.Effect<Response, string>,
-    variables: Readonly<Record<string, string>> = DEFAULT_VARIABLES,
-  ): Layer.Layer<
-    TokenEndpoint | TokenExchange,
-    Config.ConfigError,
-    Layer.Success<typeof logSupport.layer>
-  > => {
-    const log = DebugLog.layer.pipe(Layer.provide(testEnvironment(variables)()))
-
-    return TokenExchange.layerWithClient.pipe(
+  ): Layer.Layer<TokenEndpoint | TokenExchange> =>
+    TokenExchange.layerWithClient.pipe(
       Layer.provideMerge(TokenEndpoint.layer(reply)),
-      Layer.provide(log),
-    )
-  },
+    ),
   /* The endpoint answering `status` with the JSON `body`. */
   failing = (status: number, body: string): Effect.Effect<Response> =>
     Effect.sync(() => new Response(body, { status })),
@@ -113,10 +99,10 @@ const AT = 1_767_225_600_000,
       }),
     }),
   /* Exchange `token` once through an exchange `layer` builds, then release it. */
-  throughLayer = <Requirements>(
-    layer: Layer.Layer<TokenExchange, Config.ConfigError, Requirements>,
+  throughLayer = (
+    layer: Layer.Layer<TokenExchange>,
     token: string,
-  ): Effect.Effect<Summary, Config.ConfigError, Requirements> =>
+  ): Effect.Effect<Summary> =>
     Layer.build(layer).pipe(
       Effect.flatMap((context) =>
         Context.get(context, TokenExchange).exchange(token),
@@ -127,15 +113,10 @@ const AT = 1_767_225_600_000,
   /* Exchange "refresh-token" with the endpoint answering `reply`. */
   tryExchange = (
     reply: Effect.Effect<Response, string>,
-  ): Effect.Effect<Summary, Config.ConfigError> =>
-    throughLayer(
-      exchangeLayer(reply).pipe(Layer.provide(logSupport.layer)),
-      "refresh-token",
-    ),
+  ): Effect.Effect<Summary> =>
+    throughLayer(exchangeLayer(reply), "refresh-token"),
   /* Exchange with the endpoint rate limiting with the given `retry-after`. */
-  whenThrottled = (
-    retryAfter: string,
-  ): Effect.Effect<Summary, Config.ConfigError> =>
+  whenThrottled = (retryAfter: string): Effect.Effect<Summary> =>
     tryExchange(rateLimited(retryAfter)),
   /* What `sent` put on the wire, with its JSON body decoded. */
   wireOf = (sent: SentRequest): readonly unknown[] => [
@@ -145,36 +126,37 @@ const AT = 1_767_225_600_000,
     Schema.decodeOption(Json)(sent.body),
   ]
 
-test.layer(
-  exchangeLayer(successfulResponse).pipe(Layer.provide(logSupport.layer)),
-)("token exchange request", (it: ExchangeTests) => {
-  it.effect("uses the platform JSON contract exactly once", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
+test.layer(exchangeLayer(successfulResponse))(
+  "token exchange request",
+  (it: ExchangeTests) => {
+    it.effect("uses the platform JSON contract exactly once", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
 
-      const exchange = yield* TokenExchange,
-        outcome = summary(yield* exchange.exchange("refresh-token")),
-        requests = yield* (yield* TokenEndpoint).requests,
-        wire = requests.map((sent) => wireOf(sent))
+        const exchange = yield* TokenExchange,
+          outcome = summary(yield* exchange.exchange("refresh-token")),
+          requests = yield* (yield* TokenEndpoint).requests,
+          wire = requests.map((sent) => wireOf(sent))
 
-      expect(outcome.kind).toBe("ok")
-      expect(wire).toStrictEqual([
-        [
-          "POST",
-          TOKEN_URL,
-          Option.some("application/json"),
-          Option.some({
-            client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-            grant_type: "refresh_token",
-            refresh_token: "refresh-token",
-            scope:
-              "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload",
-          }),
-        ],
-      ])
-    }),
-  )
-})
+        expect(outcome.kind).toBe("ok")
+        expect(wire).toStrictEqual([
+          [
+            "POST",
+            TOKEN_URL,
+            Option.some("application/json"),
+            Option.some({
+              client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+              grant_type: "refresh_token",
+              refresh_token: "refresh-token",
+              scope:
+                "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload",
+            }),
+          ],
+        ])
+      }),
+    )
+  },
+)
 
 test.layer(Layer.empty)("token exchange rejections", (it: PureTests) => {
   it.effect("reads retry-after as seconds or as an HTTP date", () =>
@@ -253,19 +235,16 @@ test.layer(Layer.empty)(
 )
 
 describe("token exchange network failures", () => {
-  test.layer(logSupport.layer)((it: Tests) => {
+  test.layer(CapturedLogs.layer)((it: Tests) => {
     it.effect("turns a failed request into a logged transient failure", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
-        const home = yield* logSupport.sandbox,
-          path = (yield* Path.Path).join(home, "exchange.log"),
-          recordedLayer = exchangeLayer(Effect.fail("fetch failed"), {
-            CLAUDE_AUTH_DEBUG: path,
-            HOME: home,
-          }),
-          result = yield* throughLayer(recordedLayer, "token"),
-          written = yield* logSupport.readRecords(path)
+        const result = yield* throughLayer(
+            exchangeLayer(Effect.fail("fetch failed")),
+            "token",
+          ),
+          written = yield* (yield* CapturedLogs).records
 
         expect(result).toStrictEqual({
           kind: "transient",
@@ -273,7 +252,7 @@ describe("token exchange network failures", () => {
           retryAfterMs: Option.none(),
           status: NETWORK_FAILURE,
         })
-        expect(written.map((record) => record.event)).toStrictEqual([
+        expect(written.map((record) => record.message)).toStrictEqual([
           "refresh_request_failed",
         ])
       }),

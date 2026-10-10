@@ -61,8 +61,15 @@ Pass options with the object form of the plugin entry:
 | `extraPolicy`           | (empty)                                 | Text added to the security policy, such as trusted hosts or repositories.   |
 | `baseUrl`               | `https://chatgpt.com/backend-api/codex` | HTTP(S) backend URL without credentials, a query, or a fragment.            |
 
-Invalid options stop the plugin from loading. OpenCode's log then shows the
-error, and permission prompts behave as if the plugin were not installed.
+`timeout` is a string such as `"60 seconds"`, and the denial limits are
+numbers, not strings.
+
+An invalid option stops the plugin from loading: a value of the wrong type,
+a value out of range, a `reasoningEffort` not in the list, or an option name
+not in the table. No invalid option is replaced by its default. OpenCode's
+log then shows an error that names each invalid option and the problem, and
+permission prompts behave as if the plugin were not installed until you
+correct the option and restart OpenCode.
 
 Only set `baseUrl` to a backend you trust. It receives your ChatGPT access token
 and conversation. Use HTTPS unless testing a local backend. Requests do not
@@ -105,6 +112,11 @@ until a new user turn, even after an approval.
 
 Missing or expired sign-ins, backend errors, timeouts, unfinished response
 streams, and unreadable answers leave the prompt for you, with the reason.
+
+The plugin's log records go to OpenCode's log. Each verdict is logged at info
+level with metadata only: the permission action, the verdict, and the
+reviewer model. The reviewer's rationale and the reason a review failed are
+logged only at debug level, after secrets are redacted.
 
 ## Limitations
 

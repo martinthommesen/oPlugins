@@ -1,4 +1,6 @@
-import { Config, Context, Duration, Effect, Layer, Schema } from "effect"
+import { Context, Duration, Effect, Layer, Schema } from "effect"
+import InvalidOptions from "./invalid-options-error.ts"
+import type { PluginOptions } from "@opencode/plugin/options"
 
 interface Interface {
   /** Base URL of the Codex Responses backend. */
@@ -33,23 +35,61 @@ const BackendUrl = Schema.URLFromString.check(
         "Expected an HTTP(S) backend URL without credentials, a query, or a fragment.",
     ),
   ),
+  BaseUrl = BackendUrl.pipe(
+    Schema.withDecodingDefaultKey(
+      Effect.succeed("https://chatgpt.com/backend-api/codex"),
+    ),
+  ),
   DEFAULT_MAX_CONSECUTIVE_DENIALS = 3,
   DEFAULT_MAX_TOTAL_DENIALS = 10,
-  DEFAULT_TIMEOUT_SECONDS = 90,
   DenialLimit = Schema.Int.check(
     Schema.isBetween({
       maximum: Number.MAX_SAFE_INTEGER,
       minimum: 1,
     }),
   ),
+  ExtraPolicy = Schema.String.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+  ),
+  FallbackModel = Schema.NonEmptyString.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("gpt-5.5")),
+  ),
+  MaxConsecutiveDenials = DenialLimit.pipe(
+    Schema.withDecodingDefaultKey(
+      Effect.succeed(DEFAULT_MAX_CONSECUTIVE_DENIALS),
+    ),
+  ),
+  MaxTotalDenials = DenialLimit.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_MAX_TOTAL_DENIALS)),
+  ),
+  Model = Schema.NonEmptyString.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("codex-auto-review")),
+  ),
   REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const,
+  ReasoningEffort = Schema.Literals(REASONING_EFFORTS).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("low")),
+  ),
   ReviewTimeout = Schema.DurationFromString.check(
     Schema.makeFilter(
       (duration: Duration.Duration) =>
         (Duration.isFinite(duration) && Duration.isPositive(duration)) ||
         "Expected a positive, finite review timeout.",
     ),
-  )
+  ),
+  Timeout = ReviewTimeout.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("90 seconds")),
+  ),
+  /** The plugin options accepted in `opencode.jsonc`, with their defaults. */
+  ValidOptions = Schema.Struct({
+    baseUrl: BaseUrl,
+    extraPolicy: ExtraPolicy,
+    fallbackModel: FallbackModel,
+    maxConsecutiveDenials: MaxConsecutiveDenials,
+    maxTotalDenials: MaxTotalDenials,
+    model: Model,
+    reasoningEffort: ReasoningEffort,
+    timeout: Timeout,
+  }).annotate({ messageUnexpectedKey: "Unknown option" })
 
 /** The plugin's options, validated, with their defaults. */
 class Settings extends Context.Service<Settings, Interface>()(
@@ -58,50 +98,35 @@ class Settings extends Context.Service<Settings, Interface>()(
   /** The reasoning efforts the backend accepts. */
   public static readonly reasoningEfforts = REASONING_EFFORTS
 
-  /** Reads the plugin options through the current `ConfigProvider`. */
-  public static readonly layer = Layer.effect(
-    Settings,
-    Effect.gen(function* readSettings() {
-      const baseUrl = yield* Config.schema(BackendUrl, "baseUrl").pipe(
-          Config.withDefault(new URL("https://chatgpt.com/backend-api/codex")),
-        ),
-        extraPolicy = yield* Config.string("extraPolicy").pipe(
-          Config.withDefault(""),
-        ),
-        fallbackModel = yield* Config.nonEmptyString("fallbackModel").pipe(
-          Config.withDefault("gpt-5.5"),
-        ),
-        maxConsecutiveDenials = yield* Config.schema(
-          DenialLimit,
-          "maxConsecutiveDenials",
-        ).pipe(Config.withDefault(DEFAULT_MAX_CONSECUTIVE_DENIALS)),
-        maxTotalDenials = yield* Config.schema(
-          DenialLimit,
-          "maxTotalDenials",
-        ).pipe(Config.withDefault(DEFAULT_MAX_TOTAL_DENIALS)),
-        model = yield* Config.nonEmptyString("model").pipe(
-          Config.withDefault("codex-auto-review"),
-        ),
-        reasoningEffort = yield* Config.literals(
-          REASONING_EFFORTS,
-          "reasoningEffort",
-        ).pipe(Config.withDefault("low")),
-        timeout = yield* Config.schema(ReviewTimeout, "timeout").pipe(
-          Config.withDefault(Duration.seconds(DEFAULT_TIMEOUT_SECONDS)),
+  /*
+   * Decodes the plugin options. Any invalid or unknown option fails, so a
+   * typo stops the plugin from loading instead of passing unnoticed.
+   */
+  public static readonly fromOptions = (
+    options: PluginOptions,
+  ): Layer.Layer<Settings, InvalidOptions> =>
+    Layer.effect(
+      Settings,
+      Effect.gen(function* readSettings() {
+        const decoded = yield* Schema.decodeEffect(ValidOptions)(options, {
+          errors: "all",
+          onExcessProperty: "error",
+        }).pipe(
+          Effect.mapError((failure) => InvalidOptions.fromIssue(failure.issue)),
         )
 
-      return Settings.of({
-        baseUrl: baseUrl.href,
-        extraPolicy,
-        fallbackModel,
-        maxConsecutiveDenials,
-        maxTotalDenials,
-        model,
-        reasoningEffort,
-        timeout,
-      })
-    }),
-  )
+        return Settings.of({
+          baseUrl: decoded.baseUrl.href,
+          extraPolicy: decoded.extraPolicy,
+          fallbackModel: decoded.fallbackModel,
+          maxConsecutiveDenials: decoded.maxConsecutiveDenials,
+          maxTotalDenials: decoded.maxTotalDenials,
+          model: decoded.model,
+          reasoningEffort: decoded.reasoningEffort,
+          timeout: decoded.timeout,
+        })
+      }),
+    )
 }
 
 export default Settings

@@ -9,10 +9,10 @@ import {
   Stream,
 } from "effect"
 import ActiveCredential from "./active-credential.ts"
-import DebugLog from "./debug-log.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { Scope } from "effect"
 import claudeCodeCredential from "./claude-code-credential.ts"
+import pluginLog from "./plugin-log.ts"
 
 type Connection = Plugin.Context["integration"]["connection"]
 
@@ -32,7 +32,7 @@ type ClaudeCodeCredential = ReturnType<typeof claudeCodeCredential.fromSource>
 type Resolved = Effect.Success<ReturnType<Connection["resolve"]>>
 
 /** What following credential switches uses. */
-type Switches = ActiveCredential | DebugLog
+type Switches = ActiveCredential
 
 const AnthropicSwitch = Schema.Struct({
     data: Schema.Struct({
@@ -42,12 +42,23 @@ const AnthropicSwitch = Schema.Struct({
   }),
   /** How long to wait before re-subscribing after the host's stream ends. */
   RESUBSCRIBE_DELAY = "1 second",
-  /* The message of a failure, for a warning. */
+  /* The message of a failure, for a debug record. */
   describe = (cause: unknown): string =>
     Option.liftPredicate(cause, Predicate.isError).pipe(
       Option.map((error: { readonly message: string }) => error.message),
       Option.getOrElse(() => String(cause)),
     ),
+  /*
+   * Warn that the selected credential could not be loaded, with no content;
+   * its `cause` goes in a debug record.
+   */
+  failedReload = (cause: unknown): Effect.Effect<void> => {
+    const fields = { error: describe(cause) }
+
+    return pluginLog
+      .warning("credential_reload_failed", {})
+      .pipe(Effect.andThen(pluginLog.debug("credential_reload_failed", fields)))
+  },
   /*
    * The Claude Code credential behind the host's active Anthropic connection.
    * The host leaves a failed resolve untyped; it is kept as the cause.
@@ -87,32 +98,25 @@ const AnthropicSwitch = Schema.Struct({
         ),
       ),
     ),
-  /* Load the active credential, telling the user when it could not be. */
+  /*
+   * Load the active credential, warning when it could not be: Claude Code
+   * credentials are then not applied until the next switch.
+   */
   noteActive = (
     connection: Host["connection"],
   ): Effect.Effect<void, never, Switches> =>
-    DebugLog.pipe(
-      Effect.flatMap((debugLog) =>
-        makeActive(connection).pipe(
-          Effect.tapError((failure: { readonly cause?: unknown }) =>
-            debugLog.warn("credential_reload_failed", {
-              warning: `could not load the newly selected Anthropic credential, so Claude Code credentials are not applied until the next switch: ${describe(failure.cause)}`,
-            }),
-          ),
-          Effect.ignore,
-        ),
+    makeActive(connection).pipe(
+      Effect.tapError((failure: { readonly cause?: unknown }) =>
+        failedReload(failure.cause),
       ),
+      Effect.ignore,
     ),
   /* Reload the credential and the models after a switch. */
   onSwitch = (host: Host): Effect.Effect<void, never, Switches> =>
-    DebugLog.pipe(
-      Effect.flatMap((debugLog) =>
-        noteActive(host.connection).pipe(
-          Effect.andThen(host.reload()),
-          Effect.catchDefect((cause) =>
-            debugLog.log("model_reload_failed", { error: describe(cause) }),
-          ),
-        ),
+    noteActive(host.connection).pipe(
+      Effect.andThen(host.reload()),
+      Effect.catchDefect((cause) =>
+        pluginLog.debug("model_reload_failed", { error: describe(cause) }),
       ),
     ),
   /*
@@ -120,20 +124,16 @@ const AnthropicSwitch = Schema.Struct({
    * is logged rather than raised, so the caller can subscribe again.
    */
   watchSwitches = (host: Host): Effect.Effect<void, never, Switches> =>
-    DebugLog.pipe(
-      Effect.flatMap((debugLog) =>
-        host.subscribe().pipe(
-          Stream.filter(Schema.is(AnthropicSwitch)),
-          Stream.runForEach(() => onSwitch(host)),
-          Effect.catchCause((cause) =>
-            Match.value(Cause.hasInterrupts(cause)).pipe(
-              Match.when(true, () => Effect.interrupt),
-              Match.orElse(() =>
-                debugLog.log("credential_event_failed", {
-                  error: Cause.pretty(cause),
-                }),
-              ),
-            ),
+    host.subscribe().pipe(
+      Stream.filter(Schema.is(AnthropicSwitch)),
+      Stream.runForEach(() => onSwitch(host)),
+      Effect.catchCause((cause) =>
+        Match.value(Cause.hasInterrupts(cause)).pipe(
+          Match.when(true, () => Effect.interrupt),
+          Match.orElse(() =>
+            pluginLog.debug("credential_event_failed", {
+              error: Cause.pretty(cause),
+            }),
           ),
         ),
       ),

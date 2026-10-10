@@ -3,17 +3,16 @@ import { Effect, Option } from "effect"
 import type { ChildProcessSpawner } from "effect/unstable/process"
 import type ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import ClaudeCodeWriteRefusedError from "./claude-code-write-refused-error.ts"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
 import fileStores from "./claude-code-file-store.ts"
 import keychainItems from "./keychain-items.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 /** What reading and writing a store needs from the platform. */
 type StoreServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
-  | DebugLog
   | Environment
   | FileSystem.FileSystem
   | Path.Path
@@ -76,8 +75,7 @@ const keychainStore = (
     configDir: Option.Option<string>,
     readTimeout: Duration.Input,
   ) {
-    const debug = yield* DebugLog,
-      environment = yield* Environment
+    const environment = yield* Environment
 
     if (source === sources.FILE_SOURCE) {
       return Option.some<CredentialStore>(
@@ -93,7 +91,7 @@ const keychainStore = (
       // `source` round-trips through OpenCode's credential store, so it is
       // Not trusted to still name a Claude Code item by the time it comes
       // Back.
-      yield* debug.log("store_rejected_source", { source })
+      yield* pluginLog.debug("store_rejected_source", { source })
 
       return Option.none<CredentialStore>()
     }

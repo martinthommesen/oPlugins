@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 const ACCOUNT_FILE = ".claude.json",
@@ -91,14 +91,13 @@ const ACCOUNT_FILE = ".claude.json",
    */
   suffixMap = Effect.fn("ClaudeConfigDirs.bySuffix")(
     function* suffixMap(needed: readonly string[]) {
-      const debug = yield* DebugLog,
-        environment = yield* Environment,
+      const environment = yield* Environment,
         scanned = yield* homeConfigDirs.pipe(
           Effect.catchTag(
             "PlatformError",
             (failure: { readonly message: string }) =>
-              debug
-                .log("suffix_scan_failed", { error: failure.message })
+              pluginLog
+                .debug("suffix_scan_failed", { error: failure.message })
                 .pipe(Effect.as([])),
           ),
         ),

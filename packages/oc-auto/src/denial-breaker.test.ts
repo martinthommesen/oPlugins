@@ -10,10 +10,11 @@ const FIRST_DENIAL = 1,
   SECOND_DENIAL = 2,
   SECOND_TURN = { sessionId: "session", userMessageId: "turn-2" },
   THIRD_DENIAL = 3,
+  TOTAL_LIMIT = 4,
   /* Escalates at three denials in a row or four in total. */
   breakerLimits = support.settingsFrom({
-    maxConsecutiveDenials: "3",
-    maxTotalDenials: "4",
+    maxConsecutiveDenials: THIRD_DENIAL,
+    maxTotalDenials: TOTAL_LIMIT,
   }),
   /* A breaker of its own for one test. */
   freshBreaker = Layer.build(

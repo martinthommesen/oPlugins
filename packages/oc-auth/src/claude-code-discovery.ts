@@ -1,11 +1,11 @@
 import { Effect, Option, Result, Schema } from "effect"
 import type ClaudeAccount from "./claude-account.ts"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
 import accountLabels from "./claude-code-account-labels.ts"
 import configDirs from "./claude-config-dirs.ts"
 import fileAccounts from "./claude-code-file-accounts.ts"
 import keychainItems from "./keychain-items.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 import storeSelect from "./claude-code-store-select.ts"
 
@@ -100,13 +100,12 @@ const Captured = Schema.Tuple([Schema.String, Schema.String]),
           ),
         ),
       ),
-      debug = yield* DebugLog,
       email = yield* Option.match(configDir, {
         onNone: () => Effect.succeed(Option.none<string>()),
         onSome: (dir) => configDirs.readEmail(dir),
       })
 
-    yield* debug.log(
+    yield* pluginLog.debug(
       "account_config_dir",
       Option.match(configDir, {
         onNone: () => ({ source: item.source }),

@@ -15,6 +15,8 @@ type Accounts = Parameters<typeof PluginRig.layer>[typeof SECOND]
 
 type Active = Parameters<typeof FakeConnection.layer>[typeof FIRST]
 
+type Options = Parameters<ReturnType<typeof pluginServices>>[typeof SECOND]
+
 type Refresh = Effect.Success<ReturnType<Script["refresh"]>>
 
 /** Everything a plugin scenario provides. */
@@ -59,13 +61,23 @@ const FIRST = 0,
       body,
       method: "POST",
     }),
+  /*
+   * The plugin with `options` on a host whose active connection is
+   * `active`, over `script`.
+   */
+  onConfiguredHost =
+    (options: Options) =>
+    (
+      active: Active,
+      script: Script = PluginRig.quiet,
+      accounts: Accounts = [],
+    ): Layer.Layer<Scenario> =>
+      Layer.merge(
+        pluginServices(script)(accounts, options),
+        fakeHost.domains(active),
+      ),
   /* The plugin on a host whose active connection is `active`, over `script`. */
-  onHost = (
-    active: Active,
-    script: Script = PluginRig.quiet,
-    accounts: Accounts = [],
-  ): Layer.Layer<Scenario> =>
-    Layer.merge(pluginServices(script)(accounts), fakeHost.domains(active)),
+  onHost = onConfiguredHost({}),
   /* A host whose active connection is this plugin's credential for `access`. */
   ours = (access: string): Active => FakeConnection.oauth(access),
   /* What a refresh came to: `access` renewed by the endpoint. */
@@ -129,6 +141,7 @@ export default Object.freeze({
   contextEvent: transformsSupport.contextEvent,
   imported,
   messages,
+  onConfiguredHost,
   onHost,
   ours,
   refreshed,

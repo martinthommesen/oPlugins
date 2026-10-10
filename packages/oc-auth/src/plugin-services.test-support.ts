@@ -1,5 +1,6 @@
 import ActiveCredential from "./active-credential.ts"
 import { Layer } from "effect"
+import type { Plugin } from "@opencode/plugin/effect"
 import PluginRig from "./plugin-rig.test-support.ts"
 import RequestStates from "./request-states.ts"
 import SessionAliases from "./session-aliases.ts"
@@ -9,16 +10,18 @@ const FIRST = 0,
   SECOND = 1,
   /*
    * The plugin's own state and request handling over the rig scripted by
-   * `script`, with `accounts` registered in the stores.
+   * `script`, with `accounts` registered in the stores and the plugin's
+   * `options`.
    */
   pluginServices =
     (script: Parameters<typeof PluginRig.layer>[typeof FIRST]) =>
     (
       accounts: Parameters<typeof PluginRig.layer>[typeof SECOND],
+      options: Plugin.Context["options"],
     ): Layer.Layer<
       | ActiveCredential
       | Layer.Success<ReturnType<typeof PluginRig.layer>>
-      | Layer.Success<typeof pluginPlatform>
+      | Layer.Success<ReturnType<typeof pluginPlatform>>
       | RequestStates
       | SessionAliases
     > =>
@@ -28,7 +31,7 @@ const FIRST = 0,
         SessionAliases.layer,
       ).pipe(
         Layer.provideMerge(PluginRig.layer(script, accounts)),
-        Layer.provideMerge(pluginPlatform),
+        Layer.provideMerge(pluginPlatform(options)),
       )
 
 export default pluginServices

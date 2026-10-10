@@ -1,10 +1,11 @@
 import { Crypto, Effect, Option, Stream } from "effect"
 import type { Credential } from "@opencode/plugin/effect"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
+import PluginOptions from "./plugin-options.ts"
 import RequestBodyError from "./request-body-error.ts"
 import type { SessionHttpRequest } from "@opencode/plugin/effect/session"
 import claudeHeaders from "./claude-headers.ts"
+import pluginLog from "./plugin-log.ts"
 import requestBodyAliases from "./request-body-aliases.ts"
 import requestSnapshot from "./request-snapshot.ts"
 
@@ -39,17 +40,17 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
   aliasBody = Effect.fn("RequestTransforms.aliasBody")(function* aliasBody(
     body: Uint8Array<ArrayBuffer>,
   ) {
-    const debugLog = yield* DebugLog
-
     return yield* Option.match(requestBodyAliases.alias(body), {
       onNone: () =>
-        debugLog.log("request_body_not_json", { bytes: body.byteLength }).pipe(
-          Effect.as<AliasedBody>({
-            body,
-            model: Option.none(),
-            originalByAlias: NO_ALIASES,
-          }),
-        ),
+        pluginLog
+          .debug("request_body_not_json", { bytes: body.byteLength })
+          .pipe(
+            Effect.as<AliasedBody>({
+              body,
+              model: Option.none(),
+              originalByAlias: NO_ALIASES,
+            }),
+          ),
       onSome: (aliased) => Effect.succeed(aliased),
     })
   }),
@@ -81,6 +82,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
   ) {
     const crypto = yield* Crypto.Crypto,
       environment = yield* Environment,
+      options = yield* PluginOptions,
       requestID = yield* crypto.randomUUIDv4.pipe(Effect.orDie)
 
     return requestSnapshot.rebuild(
@@ -93,7 +95,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
           requestID,
           sessionID,
         },
-        environment.variables,
+        options,
         environment.process,
       ),
     )

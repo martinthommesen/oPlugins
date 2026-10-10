@@ -189,9 +189,31 @@ Pass options with the object form of the `plugins` entry:
 }
 ```
 
-| Option | Values                      | Effect                                                                                                              |
-| ------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `cost` | `"api"` (default), `"zero"` | `"api"` shows API-equivalent cost. `"zero"` reports zero cost while a Claude Code subscription connection is active |
+| Option              | Type                    | Default                                            | Meaning                                                                                                             |
+| ------------------- | ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `cost`              | `"api"` or `"zero"`     | `"api"`                                            | `"api"` shows API-equivalent cost. `"zero"` reports zero cost while a Claude Code subscription connection is active |
+| `cliVersion`        | string                  | `"2.1.295"`, the pinned Claude Code version        | Claude Code version in the billing header and the user agent                                                        |
+| `entrypoint`        | string                  | `"sdk-cli"`                                        | Claude Code entrypoint in the billing header and the user agent                                                     |
+| `userAgent`         | string                  | `claude-cli/<cliVersion> (external, <entrypoint>)` | Complete user-agent override, sent verbatim                                                                         |
+| `betaFlags`         | string, comma-separated | The built-in base set                              | Replaces the base beta set; the required flags and the request's own `anthropic-beta` flags still merge in          |
+| `refreshCooldownMs` | integer above 0         | `15000`                                            | Base cooldown after a transient token refresh failure, in milliseconds                                              |
+| `refreshLockTtlMs`  | integer above 0         | `20000`                                            | Base lease of the cross-process refresh lock, in milliseconds. A larger value than `120000` is capped at `120000`   |
+
+In `cliVersion`, `entrypoint`, and `userAgent`, every control character
+becomes a space and the value is trimmed, because these values land in
+request headers and the system prompt; something printable must remain.
+
+`betaFlags` must name at least one flag. It cannot drop `oauth-2025-04-20`
+or `claude-code-20250219`: subscription auth does not work without them, so
+they are re-added after any override. It also cannot add `effort-2025-11-24`
+for a model that Claude Code does not send it for. The plugin removes that
+flag per model after merging everything else.
+
+An invalid option stops the plugin from starting: a value of the wrong type,
+a number out of range, or a name the plugin does not know. OpenCode logs the
+failure, naming each problem, for example
+`Invalid oc-auth options: refreshCooldownMs: Expected a value greater than 0`.
+Nothing is replaced by a default.
 
 Restart the service after changing an option: `opencode service restart`.
 Costs are recorded per message when it completes, so a change applies to new
@@ -240,40 +262,53 @@ after at most about eight minutes, and closer to six with typical jitter.
 When recovery from a 401 ends in either kind of error, the response carries
 the plugin's message, so OpenCode shows what to do instead of a bare 401.
 
-Problems that need your attention but do not fail a request are written to
-the OpenCode service's stderr once per process, prefixed
-`oc-auth:`, even with the debug log off. They are: refreshed
-tokens that could not be saved back to Claude Code (its CLI will need to sign
-in again), a refresh lock that is not coordinating processes, a Keychain that
-could not be listed, a credential switch that could not be loaded, and a debug
-log that stopped accepting writes.
+Problems that need your attention but do not fail a request are logged as
+warnings (see [Logs](#logs)).
 
 The plugin has no Claude CLI subprocess fallback. After an expired or
 terminal credential failure, run `claude` for the selected account and retry.
 Use `/connect` again only when the stored OpenCode connection itself must be
 replaced.
 
+## Logs
+
+The plugin logs through OpenCode's own log, by default
+`~/.local/share/opencode/log/opencode.log`, and keeps no log file of its own.
+Each record's message is a stable event name, such as
+`refresh_lock_degraded`, with fields such as the credential source attached.
+
+Warnings carry metadata only: event names, credential sources, counts,
+durations, status codes, and the like, never a token, a message, or a path.
+
+| Warning                    | Meaning                                                                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refresh_writeback_failed` | Refreshed tokens could not be saved back to Claude Code, so its CLI will need to sign in again once its current token expires                |
+| `refresh_lock_degraded`    | The refresh lock directory cannot be used, so refreshes are not coordinated between OpenCode processes; two at once can sign Claude Code out |
+| `keychain_list_failed`     | Keychain items could not be listed, so only the primary Claude Code account is offered                                                       |
+| `credential_reload_failed` | The newly selected Anthropic credential could not be loaded; Claude Code credentials apply again from the next switch                        |
+
+Debug records add the details, such as error messages and config paths,
+and OpenCode keeps them only when it logs at debug level (its
+`--log-level` flag). They pass through redaction first: values under keys
+such as `accessToken`, `refreshToken`, `account`, and `x-api-key`, and any
+Anthropic token (`sk-ant-…`) or JWT inside a string, are redacted, and
+structure nested more than four levels deep is replaced with a placeholder.
+Keychain service names and config paths are not redacted, so review debug
+records before sharing them. No record carries a prompt, a request or
+response body, or model output.
+
 ## Environment variables
 
-| Variable                      | Purpose                                                                                            | Default                                              |
-| ----------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `CLAUDE_CONFIG_DIR`           | Claude Code config directory for file credentials and account mapping                              | `~/.claude`                                          |
-| `ANTHROPIC_CLI_VERSION`       | Claude CLI version in billing and user-agent values                                                | Pinned runtime value                                 |
-| `ANTHROPIC_USER_AGENT`        | Complete user-agent override                                                                       | Claude CLI user agent                                |
-| `ANTHROPIC_BETA_FLAGS`        | Replaces the base beta set; the required flags and inbound header flags still merge in             | Built-in base set, also used when the value is empty |
-| `CLAUDE_CODE_ENTRYPOINT`      | Billing entrypoint override                                                                        | `sdk-cli`                                            |
-| `CLAUDE_AUTH_DEBUG`           | `1` for the default debug log, or an absolute log file path. `0`, `false`, `no`, `off` all disable | Disabled                                             |
-| `OC_AUTH_SECURITY_BIN`        | Path to the macOS `security` binary. For tests only. Changing it hands credentials to that program | `/usr/bin/security`                                  |
-| `OC_AUTH_REFRESH_COOLDOWN_MS` | Base transient refresh cooldown                                                                    | `15000`                                              |
-| `OC_AUTH_REFRESH_LOCK_TTL_MS` | Base cross-process refresh lock lease, capped at `120000`                                          | `20000`                                              |
-| `OC_AUTH_REFRESH_LOCK_DIR`    | Refresh lock directory                                                                             | OpenCode data directory                              |
-| `XDG_DATA_HOME`               | Selects the data directory holding the debug log and refresh locks                                 | `~/.local/share`                                     |
+Every setting of the plugin's own is an [option](#options). The plugin reads
+only these variables:
 
-`ANTHROPIC_BETA_FLAGS` cannot drop `oauth-2025-04-20` or `claude-code-20250219`.
-Subscription auth does not work without them, so they are re-added after any
-override. It also cannot add `effort-2025-11-24` for a model that Claude Code
-does not send it for. The plugin removes that flag per model after merging
-everything else.
+| Variable                   | Purpose                                                                                              | Default                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
+| `CLAUDE_CONFIG_DIR`        | Claude Code config directory for file credentials and account mapping                                | `~/.claude`             |
+| `HOME`                     | Home directory, where the Claude Code and OpenCode directories default to (`USERPROFILE` on Windows) | Set by the system       |
+| `XDG_DATA_HOME`            | Selects the OpenCode data directory, which holds the refresh locks                                   | `~/.local/share`        |
+| `OC_AUTH_REFRESH_LOCK_DIR` | Refresh lock directory. For tests only                                                               | OpenCode data directory |
+| `OC_AUTH_SECURITY_BIN`     | Path to the macOS `security` binary. For tests only. Changing it hands credentials to that program   | `/usr/bin/security`     |
 
 The long-running OpenCode service reads every variable above. Setting or
 unsetting one takes effect only after `opencode service restart`.
@@ -282,39 +317,18 @@ unsetting one takes effect only after `opencode service restart`.
 
 | Problem                              | Action                                                                                                                                                                          |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No Claude Code account in `/connect` | Run `claude`, then `opencode service restart`. If the Keychain failed, the `/connect` error text names the cause. Set `CLAUDE_AUTH_DEBUG=1` for the log events                  |
+| No Claude Code account in `/connect` | Run `claude`, then `opencode service restart`. If the Keychain failed, the `/connect` error text names the cause                                                                |
+| The plugin does not start            | Check the OpenCode log: an invalid option is named there. Fix the `options` in `opencode.jsonc`, then `opencode service restart`                                                |
 | Keychain locked or denied            | Unlock Keychain and grant the `security` command access                                                                                                                         |
 | Credentials expired or rejected      | Run `claude` for that account and retry                                                                                                                                         |
 | File credentials not found           | Check `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`                                                                                                   |
 | Host compatibility error             | Check `opencode --version` and use a plugin release that supports that host. For a local checkout, update its source and run `pnpm run build`, then `opencode service restart`. |
 
-For structured diagnostics:
-
-```sh
-export CLAUDE_AUTH_DEBUG=1
-opencode service restart
-```
-
-The default file is `~/.local/share/opencode/oclaude-debug.log`, created
-owner-readable only. Values under keys such as `accessToken`, `refreshToken`,
-`account`, and `x-api-key`, plus any string shaped like an Anthropic token
-(`sk-ant-…`) or a JWT, are redacted. Structure nested more than four levels
-deep is replaced with a placeholder rather than logged. Account labels,
-Keychain service names, and absolute config paths are not redacted, so review
-logs before sharing them.
-
-The plugin treats any value other than `1`/`true`/`yes`/`on` or
-`0`/`false`/`no`/`off` as an absolute log file path, and the file is truncated on every
-service start. A relative path is refused, and so is any existing file that is
-not already one of these logs, such as `.credentials.json`. Disable logging
-with `unset CLAUDE_AUTH_DEBUG` (or set it to `0`) followed by
-`opencode service restart`. Copy the log first: each service start truncates
-it.
-
 ## Verify host compatibility
 
 Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
-The test installs the pinned CLI in a temporary directory and checks plugin
+The test installs the pinned CLI in a temporary directory, loads the plugin
+with options from the generated `opencode.json`, and checks plugin
 activation, credential import, catalog pricing, billing headers, and a
 streamed read-tool round trip against a local mock API with a fake credential.
 It does not read your credentials or send requests to Anthropic. Package

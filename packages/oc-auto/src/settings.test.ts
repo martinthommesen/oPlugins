@@ -7,18 +7,21 @@ import {
   Layer,
   pipe,
 } from "effect"
-import type { Config, Scope } from "effect"
 import { describe, expect, it } from "@effect/vitest"
+import type InvalidOptions from "./invalid-options-error.ts"
+import type { Scope } from "effect"
 import Settings from "./settings.ts"
 import support from "./testing.test-support.ts"
 
 const FIRST = 0,
+  NEGATIVE_LIMIT = -1,
   NINETY_SECONDS = 90,
   TWENTY_SECONDS = 20,
+  ZERO_LIMIT = 0,
   /* The settings the plugin reads from `options`. */
   settingsOf = (
     options: Parameters<typeof support.settingsFrom>[typeof FIRST],
-  ): Effect.Effect<Settings["Service"], Config.ConfigError, Scope.Scope> =>
+  ): Effect.Effect<Settings["Service"], InvalidOptions, Scope.Scope> =>
     Layer.build(support.settingsFrom(options)).pipe(
       Effect.map((built) => Context.get(built, Settings)),
     )
@@ -63,11 +66,13 @@ describe("settings", () => {
     Effect.gen(function* invalidEffort() {
       expect.hasAssertions()
 
-      const exit = yield* settingsOf({ reasoningEffort: "extreme" }).pipe(
-        Effect.exit,
+      const failure = yield* settingsOf({ reasoningEffort: "extreme" }).pipe(
+        Effect.flip,
       )
 
-      expect(Exit.isFailure(exit)).toBe(true)
+      expect(failure.message).toContain(
+        'reasoningEffort: Expected "minimal" | "low" | "medium" | "high".',
+      )
     }),
   )
 })
@@ -78,8 +83,8 @@ describe("denial limit and timeout validation", () => {
       expect.hasAssertions()
 
       const exits = yield* Effect.all([
-        settingsOf({ maxConsecutiveDenials: "-1" }).pipe(Effect.exit),
-        settingsOf({ maxTotalDenials: "0" }).pipe(Effect.exit),
+        settingsOf({ maxConsecutiveDenials: NEGATIVE_LIMIT }).pipe(Effect.exit),
+        settingsOf({ maxTotalDenials: ZERO_LIMIT }).pipe(Effect.exit),
       ])
 
       expect(pipe(exits, Arr.every(Exit.isFailure))).toBe(true)

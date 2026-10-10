@@ -27,19 +27,18 @@ const STORAGE_KEY = "preferences",
     onNone: () => Effect.succeed<Choices>({}),
     onSome: Schema.decodeUnknownEffect(Stored),
   }),
-  /* Reads the saved choices under `key`, ignoring a value this version cannot decode. */
+  /*
+   * Reads the saved choices under `key`, ignoring a value this version
+   * cannot decode. The warning names the key only, not the stored value.
+   */
   loadStored = (storage: Storage, key: string): Effect.Effect<Choices> =>
     storage.get(key).pipe(
       Effect.map(Option.fromUndefinedOr),
       Effect.flatMap(decodeStored),
-      Effect.catchTag("SchemaError", (failure) =>
-        Effect.as(
-          Effect.logWarning(
-            "Ignoring unreadable advisor preferences",
-            key,
-            failure,
-          ),
-          {},
+      Effect.catchTag("SchemaError", () =>
+        Effect.logWarning("advisor_preferences_unreadable").pipe(
+          Effect.annotateLogs({ key }),
+          Effect.as({}),
         ),
       ),
     ),

@@ -1,17 +1,17 @@
-import type { Config, Option } from "effect"
-import { ConfigProvider, Effect, Encoding, HashMap, Layer } from "effect"
+import { Effect, Encoding, HashMap, Layer } from "effect"
 import type { Credential } from "@opencode/plugin/effect"
 import Host from "./host.ts"
 import HostError from "./host-error.ts"
 import { Integration } from "@opencode/plugin/effect"
+import type InvalidOptions from "./invalid-options-error.ts"
+import type { Option } from "effect"
+import type { PluginOptions } from "@opencode/plugin/options"
 import { Session } from "@opencode/schema/session"
 import Settings from "./settings.ts"
 
 type SessionId = Parameters<Host["Service"]["session"]>[typeof FIRST]
 
 type SessionSnapshot = Effect.Success<ReturnType<Host["Service"]["session"]>>
-
-type Options = Readonly<Record<string, string>>
 
 type Claims = Readonly<
   Record<string, Readonly<Record<string, string>> | string>
@@ -55,12 +55,8 @@ const FIRST = 0,
   sessionId = (id: string): SessionId => Session.ID.make(id),
   /* The settings the plugin reads from `options`. */
   settingsFrom = (
-    options: Options,
-  ): Layer.Layer<Settings, Config.ConfigError> => {
-    const provider = ConfigProvider.layer(ConfigProvider.fromUnknown(options))
-
-    return Settings.layer.pipe(Layer.provide(provider))
-  }
+    options: PluginOptions,
+  ): Layer.Layer<Settings, InvalidOptions> => Settings.fromOptions(options)
 
 /** Fakes and fixtures the tests share. */
 export default Object.freeze({

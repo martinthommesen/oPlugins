@@ -1,10 +1,20 @@
 import { Context, Duration, Effect, Layer, Option, Schema } from "effect"
+import InvalidOptions from "./invalid-options-error.ts"
+import { Model } from "@opencode/plugin/effect"
 import type { PluginOptions } from "@opencode/plugin/options"
 
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 200_000,
   DEFAULT_TIMEOUT_SECONDS = 300,
   MIN_TIMEOUT_SECONDS = 1,
   MIN_TRANSCRIPT_CHARS = 1000,
+  /** An advisor model reference, `provider/model[#variant]`. */
+  ModelReference = Schema.NonEmptyString.check(
+    Schema.makeFilter(
+      (model: string) =>
+        Option.isSome(Option.liftThrowable(Model.Ref.parse)(model)) ||
+        "Expected provider/model or provider/model#variant",
+    ),
+  ),
   OptionMaxTranscriptChars = Schema.Int.check(
     Schema.isGreaterThanOrEqualTo(MIN_TRANSCRIPT_CHARS),
   ).pipe(
@@ -21,16 +31,10 @@ const DEFAULT_MAX_TRANSCRIPT_CHARS = 200_000,
   /** The plugin options accepted in `opencode.json(c)`. */
   Options = Schema.Struct({
     maxTranscriptChars: OptionMaxTranscriptChars,
-    model: Schema.optionalKey(Schema.NonEmptyString),
+    model: Schema.optionalKey(ModelReference),
     subagents: OptionSubagents,
     timeout: OptionTimeout,
-  }),
-  /** The options in effect when the configured ones are invalid. */
-  defaults: typeof Options.Type = {
-    maxTranscriptChars: DEFAULT_MAX_TRANSCRIPT_CHARS,
-    subagents: true,
-    timeout: DEFAULT_TIMEOUT_SECONDS,
-  }
+  }).annotate({ messageUnexpectedKey: "Unknown option" })
 
 /** The plugin options, decoded once when the plugin loads. */
 class Settings extends Context.Service<
@@ -47,22 +51,20 @@ class Settings extends Context.Service<
   }
 >()("@martinthommesen/oc-advisor/settings") {
   /*
-   * Decodes the plugin options, falling back to defaults when they are
-   * invalid so a typo cannot stop OpenCode from loading the plugin.
+   * Decodes the plugin options. Any invalid or unknown option fails, so a
+   * typo stops the plugin from loading instead of passing unnoticed.
    */
   public static readonly fromOptions = (
     options: PluginOptions,
-  ): Layer.Layer<Settings> =>
+  ): Layer.Layer<Settings, InvalidOptions> =>
     Layer.effect(
       Settings,
       Effect.gen(function* readSettings() {
-        const decoded = yield* Schema.decodeEffect(Options)(options).pipe(
-          Effect.catchTag("SchemaError", (error) =>
-            Effect.as(
-              Effect.logError("Invalid oc-advisor options", error),
-              defaults,
-            ),
-          ),
+        const decoded = yield* Schema.decodeEffect(Options)(options, {
+          errors: "all",
+          onExcessProperty: "error",
+        }).pipe(
+          Effect.mapError((failure) => InvalidOptions.fromIssue(failure.issue)),
         )
 
         return Settings.of({

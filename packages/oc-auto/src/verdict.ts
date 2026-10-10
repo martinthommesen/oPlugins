@@ -1,13 +1,26 @@
 import { Data } from "effect"
 
-/** The permission effect a review settles on, with the message to show. */
+/**
+ * The permission effect a review settles on, with the message to show and,
+ * when the reviewer decided, its model and rationale.
+ */
 type Settled = Data.TaggedEnum<{
   /** Run the action without asking. */
   Allow: { readonly model: string; readonly rationale: string }
-  /** Ask the user, with the reviewer's context in the prompt. */
+  /** Ask the user, because the review could not decide. */
   Ask: { readonly message: string }
   /** Refuse the action and tell the agent why. */
-  Deny: { readonly message: string }
+  Deny: {
+    readonly message: string
+    readonly model: string
+    readonly rationale: string
+  }
+  /** Ask the user, because the reviewer denied too often this turn. */
+  Escalate: {
+    readonly message: string
+    readonly model: string
+    readonly rationale: string
+  }
 }>
 
 /** Builds and matches review verdicts. */

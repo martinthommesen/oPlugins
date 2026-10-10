@@ -1,10 +1,12 @@
-import type { Config, Scope } from "effect"
 import { Effect, Layer, Option, Random } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
+import type { Plugin } from "@opencode/plugin/effect"
+import PluginOptions from "./plugin-options.ts"
+import type PluginOptionsError from "./plugin-options-error.ts"
 import RefreshBackoff from "./refresh-backoff.ts"
+import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import type { Vitest } from "@effect/vitest"
-import testEnvironment from "./test-environment.test-support.ts"
 
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
@@ -15,7 +17,6 @@ interface Tests {
 
 const BOTTOM = 0,
   DEFAULT_BASE_MS = 15_000,
-  DEFAULT_VARIABLES = { HOME: "/nonexistent-home" },
   FIVE_ASSERTIONS = 5,
   HINT_MS = 25_000,
   NONE = 0,
@@ -24,25 +25,22 @@ const BOTTOM = 0,
   ONE_ASSERTION = 1,
   ONE_MS = 1,
   OVERRIDDEN_BASE_MS = 1000,
-  OVERRIDE_VARIABLES = {
-    HOME: "/nonexistent-home",
-    OC_AUTH_REFRESH_COOLDOWN_MS: String(OVERRIDDEN_BASE_MS),
-  },
+  OVERRIDE_OPTIONS = { refreshCooldownMs: OVERRIDDEN_BASE_MS },
   SRC = "Claude Code-credentials",
   THREE_ASSERTIONS = 3,
   TOP = 1,
   TWICE = 2,
   TWO_ASSERTIONS = 2,
   /*
-   * A fresh tracker whose jitter is always `jitter`, reading `variables` as
-   * its environment, with the test clock at `NOW`.
+   * A fresh tracker whose jitter is always `jitter`, with the plugin's
+   * `options`, and the test clock at `NOW`.
    */
   backoffAt = (
     jitter: number,
-    variables: Readonly<Record<string, string>> = DEFAULT_VARIABLES,
-  ): Layer.Layer<RefreshBackoff, Config.ConfigError> => {
+    options: Plugin.Context["options"] = {},
+  ): Layer.Layer<RefreshBackoff, PluginOptionsError> => {
     const backoff = RefreshBackoff.layer.pipe(
-        Layer.provide(testEnvironment(variables)()),
+        Layer.provide(PluginOptions.layer(options)),
       ),
       random = Layer.succeed(Random.Random, {
         nextDoubleUnsafe: () => jitter,
@@ -207,8 +205,8 @@ describe("refresh cooldown length", () => {
     )
   })
 
-  test.layer(backoffAt(TOP, OVERRIDE_VARIABLES))((it: Tests) => {
-    it.effect("takes its base cooldown from the environment", () =>
+  test.layer(backoffAt(TOP, OVERRIDE_OPTIONS))((it: Tests) => {
+    it.effect("takes its base cooldown from the refreshCooldownMs option", () =>
       Effect.gen(function* run() {
         expect.assertions(ONE_ASSERTION)
 

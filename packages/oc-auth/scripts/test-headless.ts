@@ -53,11 +53,6 @@ interface HostSetup {
 
 /** The variables the host runs with, over the inherited environment. */
 type HostVariable =
-  | "ANTHROPIC_BETA_FLAGS"
-  | "ANTHROPIC_CLI_VERSION"
-  | "ANTHROPIC_USER_AGENT"
-  | "CLAUDE_AUTH_DEBUG"
-  | "CLAUDE_CODE_ENTRYPOINT"
   | "CLAUDE_CONFIG_DIR"
   | "OC_AUTH_SECURITY_BIN"
   | "PATH"
@@ -93,18 +88,19 @@ const asOfflinePass = (config: Settings): string => {
       onSome: (server) => server.verify.pipe(Effect.andThen(offlinePass)),
     })
   }),
-  /* The plugin wrapper, the host config, and the file the model reads. */
+  /*
+   * The plugin wrapper's package, the host config that loads it with the
+   * plugin's options, and the file the model reads.
+   */
   furnishHost = Effect.fn("Headless.writeHostFiles")(function* furnishHost(
     setup: HostSetup,
   ) {
     const fs = yield* FileSystem.FileSystem,
       mockBaseUrl = setup.mock.pipe(Option.map((server) => server.baseURL)),
-      path = yield* Path.Path,
-      wrapper = path.join(setup.layout.install, "claude-auth-wrapper.js"),
-      wrapperUrl = yield* path.toFileUrl(wrapper)
+      path = yield* Path.Path
 
     yield* fs.writeFileString(
-      wrapper,
+      path.join(setup.layout.plugin, "index.js"),
       hostFiles.pluginWrapper({
         modelsPath: setup.layout.models,
         offline: setup.config.offline,
@@ -112,37 +108,31 @@ const asOfflinePass = (config: Settings): string => {
       }),
     )
     yield* fs.writeFileString(
-      path.join(setup.layout.plugins, "claude-auth.js"),
-      hostFiles.pluginEntry(wrapperUrl.href),
+      path.join(setup.layout.plugin, "package.json"),
+      hostFiles.pluginManifest,
     )
     yield* fs.writeFileString(
-      path.join(setup.layout.config, "opencode", "opencode.json"),
+      path.join(setup.layout.opencodeConfig, "opencode.json"),
       hostFiles.hostConfig({
         customModel: setup.config.customModel,
         mockBaseUrl,
         model: setup.config.model,
+        plugin: setup.layout.plugin,
       }),
     )
     yield* fs.writeFileString(setup.layout.smoke, setup.marker)
   }),
   /*
-   * The environment the host runs with, as changes to the inherited one.
-   * The plugin reads the four cleared variables to override what it sends.
-   * Inherited from the developer's shell (Claude Code itself sets
-   * CLAUDE_CODE_ENTRYPOINT), they would change the wire values the mock
-   * checks against. The plugin decodes them with `Config`, which reads an
-   * empty variable as unset.
+   * The environment the host runs with, as changes to the inherited one:
+   * the sandbox's Claude config directory, `security` stand-in, and
+   * OpenCode directories. The plugin's settings are options in the host
+   * config, so the developer's shell cannot change what it sends.
    */
   hostEnvironment = (
     layout: Layout,
     config: Settings,
     source: Source,
   ): Readonly<Record<HostVariable, string>> => ({
-    ANTHROPIC_BETA_FLAGS: "",
-    ANTHROPIC_CLI_VERSION: "",
-    ANTHROPIC_USER_AGENT: "",
-    CLAUDE_AUTH_DEBUG: layout.log,
-    CLAUDE_CODE_ENTRYPOINT: "",
     CLAUDE_CONFIG_DIR: source.configDir,
     OC_AUTH_SECURITY_BIN: layout.security,
     PATH: `${layout.bin}:${config.path}`,

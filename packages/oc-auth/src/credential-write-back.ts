@@ -1,12 +1,11 @@
 import { Effect, Match, Option } from "effect"
 import ClaudeCodeStores from "./claude-code-stores.ts"
 import type ClaudeCredentials from "./claude-credentials.ts"
-import DebugLog from "./debug-log.ts"
-import type Metadata from "./claude-credential-metadata.ts"
 import RefreshResult from "./credential-refresh-result.ts"
 import adoption from "./credential-adoption.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
 import keys from "./credential-refresh-keys.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
@@ -25,24 +24,15 @@ interface Renewal {
   readonly tokens: Tokens
 }
 
-/* The store `metadata` names, for a message to the user. */
-const describeSource = (metadata: typeof Metadata.Type): string => {
-    if (metadata.source === sources.FILE_SOURCE) {
-      return "the Claude Code credentials file"
-    }
-
-    return `the macOS Keychain item "${metadata.source}"`
-  },
-  /* The refreshed credential, matching a store that holds the token fingerprinted `hash`. */
-  finish = Effect.fn("CredentialRefresh.finish")(function* finish(
+/* The refreshed credential, matching a store that holds the token fingerprinted `hash`. */
+const finish = Effect.fn("CredentialRefresh.finish")(function* finish(
     renewal: Renewal,
     written: WriteResult,
     hash: string,
   ) {
-    const debugLog = yield* DebugLog,
-      { metadata } = renewal.subject.credential
+    const { metadata } = renewal.subject.credential
 
-    yield* debugLog.log("refresh_success", {
+    yield* pluginLog.debug("refresh_success", {
       source: metadata.source,
       writeResult: written,
     })
@@ -83,21 +73,20 @@ const describeSource = (metadata: typeof Metadata.Type): string => {
     return yield* keepPrior(renewal, "conflict")
   }),
   /*
-   * The tokens reached OpenCode but not Claude Code. OpenCode keeps
-   * working; the CLI is signed out once its own token expires.
+   * The tokens reached OpenCode but not Claude Code, which is worth a
+   * warning: OpenCode keeps working, but the CLI is signed out once its own
+   * token expires.
    */
   onFailedWrite = Effect.fn("CredentialRefresh.onFailedWrite")(
     function* onFailedWrite(
       renewal: Renewal,
       written: "failed" | "unavailable",
     ) {
-      const debugLog = yield* DebugLog,
-        { metadata } = renewal.subject.credential
+      const { metadata } = renewal.subject.credential
 
-      yield* debugLog.warn("refresh_writeback_failed", {
+      yield* pluginLog.warning("refresh_writeback_failed", {
         reason: written,
         source: metadata.source,
-        warning: `refreshed Claude Code credentials could not be saved to ${describeSource(metadata)}. OpenCode keeps working, but the \`claude\` CLI will need to sign in again once its current token expires.`,
       })
 
       return yield* keepPrior(renewal, written)

@@ -19,7 +19,6 @@ type Layout = Effect.Success<ReturnType<typeof sandbox.acquire>>
 
 /** The variables the host runs with, over the inherited environment. */
 type HostVariable =
-  | "OBROWSE_DEBUG"
   | "XDG_CACHE_HOME"
   | "XDG_CONFIG_HOME"
   | "XDG_DATA_HOME"
@@ -48,11 +47,10 @@ const furnishHost = Effect.fn("Headless.writeHostFiles")(function* furnishHost(
       hostFiles.hostConfig,
     )
   }),
-  /* The host's directories all live in the sandbox, and the plugin logs there. */
+  /* The host's directories all live in the sandbox. */
   hostEnvironment = (
     layout: Layout,
   ): Readonly<Record<HostVariable, string>> => ({
-    OBROWSE_DEBUG: layout.log,
     XDG_CACHE_HOME: layout.cache,
     XDG_CONFIG_HOME: layout.config,
     XDG_DATA_HOME: layout.data,

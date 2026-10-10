@@ -1,24 +1,34 @@
-import { ConfigProvider, Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 import AutoReview from "./auto-review.ts"
 import ChatGptAuth from "./chatgpt-auth.ts"
 import CodexResponses from "./codex-client.ts"
-import type { Config } from "effect"
 import DenialBreaker from "./denial-breaker.ts"
 import { FetchHttpClient } from "effect/unstable/http"
 import Host from "./host.ts"
-import { Plugin } from "@opencode/plugin/effect"
+import type { Plugin } from "@opencode/plugin/effect"
 import Reviewer from "./reviewer.ts"
+import type { Scope } from "effect"
 import Settings from "./settings.ts"
 
-/* The plugin's services over the host's plugin context and options. */
-const composeServices = (
-    context: Plugin.Context,
-  ): Layer.Layer<AutoReview, Config.ConfigError> => {
+type PluginContext = Plugin.Context
+
+type HostContext = Parameters<typeof Host.fromPlugin>[typeof FIRST]
+
+type InvalidOptions = Layer.Error<ReturnType<typeof Settings.fromOptions>>
+
+/** The parts of the host's plugin context this plugin uses. */
+interface PluginHost extends HostContext {
+  readonly options: PluginContext["options"]
+  readonly permission: Pick<PluginContext["permission"], "hook">
+}
+
+const FIRST = 0,
+  /* The plugin's services over the host's plugin context and options. */
+  composeServices = (
+    context: PluginHost,
+  ): Layer.Layer<AutoReview, InvalidOptions> => {
     const host = Host.fromPlugin(context),
-      options = ConfigProvider.layer(
-        ConfigProvider.fromUnknown(context.options),
-      ),
-      settings = Settings.layer.pipe(Layer.provide(options)),
+      settings = Settings.fromOptions(context.options),
       signIn = ChatGptAuth.layer.pipe(Layer.provide(host)),
       /* The denial breaker. */
       strikes = DenialBreaker.layer.pipe(Layer.provide(settings)),
@@ -33,24 +43,26 @@ const composeServices = (
       Layer.provide([strikes, host, vetting, settings]),
     )
   },
+  /* Routes the host's permission prompts through the reviewer. */
+  install = Effect.fn("AutoReviewPlugin.install")(function* install(
+    context: PluginHost,
+  ) {
+    const autoReview = Context.get(
+      yield* Layer.build(composeServices(context)),
+      AutoReview,
+    )
+
+    yield* context.permission.hook("evaluate", autoReview.evaluate)
+  }),
   /*
-   * Routes the host's permission prompts through the reviewer. A failure to
-   * start leaves the prompts as they are.
+   * Sends permission prompts to a reviewer model. Invalid options are a
+   * defect the host reports as a failed plugin, which leaves permission
+   * prompts unchanged.
    */
-  plugin = Effect.fn("AutoReviewPlugin")(
-    function* autoReviewPlugin(context: Plugin.Context) {
-      const autoReview = Context.get(
-        yield* Layer.build(composeServices(context)),
-        AutoReview,
-      )
+  plugin = {
+    effect: (context: PluginHost): Effect.Effect<void, never, Scope.Scope> =>
+      install(context).pipe(Effect.orDie),
+    id: "martinthommesen.oc-auto",
+  } satisfies Plugin.Plugin
 
-      yield* context.permission.hook("evaluate", autoReview.evaluate)
-    },
-    (effect) =>
-      Effect.ignore(effect, {
-        log: "Error",
-        message: "oc-auto did not start, so permission prompts are unchanged.",
-      }),
-  )
-
-export default Plugin.define({ effect: plugin, id: "martinthommesen.oc-auto" })
+export default plugin

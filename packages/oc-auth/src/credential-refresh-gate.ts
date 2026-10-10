@@ -1,10 +1,10 @@
 import { Effect, Option } from "effect"
 import ClaudeAuthTerminalError from "./claude-auth-terminal-error.ts"
-import DebugLog from "./debug-log.ts"
 import RefreshBackoff from "./refresh-backoff.ts"
 import RefreshResult from "./credential-refresh-result.ts"
 import adoption from "./credential-adoption.ts"
 import type keys from "./credential-refresh-keys.ts"
+import pluginLog from "./plugin-log.ts"
 
 type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
 
@@ -51,7 +51,6 @@ const NO_WAIT = 0,
     },
   ) {
     const backoff = yield* RefreshBackoff,
-      debugLog = yield* DebugLog,
       winner = yield* adoption.adoptExternal(subject)
 
     if (RefreshResult.$is("Adopted")(winner)) {
@@ -59,7 +58,7 @@ const NO_WAIT = 0,
     }
 
     yield* backoff.noteTerminal(subject.credentialKey)
-    yield* debugLog.log("refresh_terminal", {
+    yield* pluginLog.debug("refresh_terminal", {
       oauthError: Option.getOrUndefined(failure.oauthError),
       source: subject.credential.metadata.source,
       status: failure.status,

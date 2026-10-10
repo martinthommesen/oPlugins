@@ -10,9 +10,9 @@ import {
 } from "effect"
 import AuthUnavailable from "./auth-unavailable-error.ts"
 import AutoReview from "./auto-review.ts"
-import type { Config } from "effect"
 import ConversationItem from "./conversation-item.ts"
 import DenialBreaker from "./denial-breaker.ts"
+import type InvalidOptions from "./invalid-options-error.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
 import Reviewer from "./reviewer.ts"
 import support from "./testing.test-support.ts"
@@ -26,6 +26,7 @@ type Script = () => ReturnType<Review>
 type Sessions = Parameters<typeof support.fakeHost>[typeof SECOND]
 
 const CHILD = support.sessionId("ses_child"),
+  DENIAL_LIMIT = 2,
   FIRST = 0,
   ROOT = support.sessionId("ses_root"),
   SECOND = 1,
@@ -61,7 +62,7 @@ const CHILD = support.sessionId("ses_child"),
     script: Script,
     requests: Ref.Ref<readonly ReviewRequest[]>,
     snapshots: Sessions,
-  ): Layer.Layer<AutoReview, Config.ConfigError> => {
+  ): Layer.Layer<AutoReview, InvalidOptions> => {
     const host = support.fakeHost(Option.none(), snapshots),
       recording = Reviewer.of({
         review: (request) =>
@@ -69,7 +70,7 @@ const CHILD = support.sessionId("ses_child"),
             Effect.flatMap(script),
           ),
       }),
-      settings = support.settingsFrom({ maxConsecutiveDenials: "2" }),
+      settings = support.settingsFrom({ maxConsecutiveDenials: DENIAL_LIMIT }),
       strikes = DenialBreaker.layer.pipe(Layer.provide(settings))
 
     return AutoReview.layer.pipe(

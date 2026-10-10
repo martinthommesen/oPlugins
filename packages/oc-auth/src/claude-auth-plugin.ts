@@ -1,11 +1,11 @@
 import { Effect, Fiber, Predicate, Schema } from "effect"
 import ClaudeCodeStores from "./claude-code-stores.ts"
-import DebugLog from "./debug-log.ts"
 import HOST_VERSION from "./host-version.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import credentialSwitches from "./credential-switches.ts"
 import methodRegistration from "./claude-code-method-registration.ts"
 import modelPricing from "./model-pricing.ts"
+import pluginLog from "./plugin-log.ts"
 import sessionHooks from "./session-hooks.ts"
 
 type Context = Plugin.Context
@@ -25,6 +25,7 @@ interface Host {
     readonly reload: Switches["reload"]
     readonly transform: Parameters<typeof modelPricing.register>[typeof FIRST]
   }
+  /** The plugin's options, decoded before the plugin is set up. */
   readonly options: Context["options"]
   readonly session: Pick<Context["session"], "hook">
 }
@@ -117,16 +118,15 @@ const AnyFunction = Schema.declare(Predicate.isFunction),
    */
   discoverWhileHooking = Effect.fn("ClaudeAuth.discover")(
     function* discoverWhileHooking(hook: Host["session"]["hook"]) {
-      const debugLog = yield* DebugLog,
-        found = yield* (yield* ClaudeCodeStores).readAccounts.pipe(
-          Effect.tapError((failure: { readonly message: string }) =>
-            debugLog.log("account_discovery_failed", {
-              error: failure.message,
-            }),
-          ),
-          Effect.exit,
-          Effect.forkScoped,
-        )
+      const found = yield* (yield* ClaudeCodeStores).readAccounts.pipe(
+        Effect.tapError((failure: { readonly message: string }) =>
+          pluginLog.debug("account_discovery_failed", {
+            error: failure.message,
+          }),
+        ),
+        Effect.exit,
+        Effect.forkScoped,
+      )
 
       yield* sessionHooks.register(hook)
 
@@ -145,7 +145,7 @@ const AnyFunction = Schema.declare(Predicate.isFunction),
       reload: host.model.reload,
       subscribe: host.event.subscribe,
     })
-    yield* modelPricing.register(host.model.transform, host.options)
+    yield* modelPricing.register(host.model.transform)
   })
 
 /** Setting the plugin up on a host, given the services it runs on. */

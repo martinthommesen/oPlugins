@@ -1,10 +1,10 @@
 import { Clock, Effect, Option, Schedule } from "effect"
 import ClaudeCodeStores from "./claude-code-stores.ts"
 import type ClaudeCredentials from "./claude-credentials.ts"
-import DebugLog from "./debug-log.ts"
 import RefreshResult from "./credential-refresh-result.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
 import keys from "./credential-refresh-keys.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
@@ -22,11 +22,10 @@ const LOCK_ADOPT_POLL_MS = 250,
   /* Adopt `tokens`, fingerprinted `hash`, in place of the credential of `subject`. */
   acceptTokens = Effect.fn("CredentialRefresh.acceptTokens")(
     function* acceptTokens(subject: Subject, tokens: Tokens, hash: string) {
-      const debugLog = yield* DebugLog,
-        { metadata } = subject.credential
+      const { metadata } = subject.credential
 
       yield* keys.clearOutcome(subject)
-      yield* debugLog.log("credential_adopted", { source: metadata.source })
+      yield* pluginLog.debug("credential_adopted", { source: metadata.source })
 
       return RefreshResult.Adopted({
         credential: claudeCodeCredential.fromSource(
@@ -51,8 +50,7 @@ const LOCK_ADOPT_POLL_MS = 250,
    */
   actualSource = Effect.fn("CredentialRefresh.readSource")(
     function* actualSource(subject: Subject) {
-      const debugLog = yield* DebugLog,
-        { metadata } = subject.credential,
+      const { metadata } = subject.credential,
         stores = yield* ClaudeCodeStores
 
       return yield* stores
@@ -61,8 +59,8 @@ const LOCK_ADOPT_POLL_MS = 250,
           Effect.catchTag(
             "ClaudeCodeStoreError",
             (failure: { readonly message: string }) =>
-              debugLog
-                .log("source_read_failed", {
+              pluginLog
+                .debug("source_read_failed", {
                   error: failure.message,
                   source: metadata.source,
                 })

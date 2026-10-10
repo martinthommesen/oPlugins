@@ -5,8 +5,7 @@ import {
   NodePath,
 } from "@effect/platform-node-shared"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedStderr from "./captured-stderr.test-support.ts"
-import DebugLog from "./debug-log.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
 import accountLabels from "./claude-code-account-labels.ts"
@@ -77,16 +76,10 @@ const FINGERPRINT = /^[a-f0-9]{32}$/u,
       subscriptionType: "pro",
     },
   }),
-  /** A quiet debug log, an environment, and Node's platform services. */
-  layer = Layer.mergeAll(DebugLog.layer, NodeCrypto.layer).pipe(
+  /** A captured log, an environment, and Node's platform services. */
+  layer = Layer.mergeAll(CapturedLogs.layer, NodeCrypto.layer).pipe(
     Layer.provideMerge(testEnvironment({ HOME: "/nonexistent" })()),
-    Layer.provideMerge(
-      Layer.mergeAll(
-        NodeFileSystem.layer,
-        NodePath.layer,
-        CapturedStderr.layer,
-      ),
-    ),
+    Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
   )
 
 describe("credential blob parsing", () => {

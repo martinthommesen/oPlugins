@@ -1,7 +1,7 @@
 import { Array as Arr, Option } from "effect"
 
 /*
- * Betas subscription auth cannot work without. `ANTHROPIC_BETA_FLAGS` replaces
+ * Betas subscription auth cannot work without. The `betaFlags` option replaces
  * the rest of the base set, but dropping these turns every request into an
  * unexplained billing rejection, so they are re-added after any override.
  */
@@ -72,8 +72,8 @@ const AUTH_BETAS = ["claude-code-20250219", "oauth-2025-04-20"],
     )
   },
   /*
-   * Beta flags for a model: the base set (or `override`, the
-   * `ANTHROPIC_BETA_FLAGS` value) merged with any flags the caller already
+   * Beta flags for a model: the base set (or `override`, the `betaFlags`
+   * option) merged with any flags the caller already
    * sent (`incoming`, the raw `anthropic-beta` header) and the betas
    * subscription auth requires, minus the effort beta for models that do not
    * support it. The exclusion runs after the merge so an inbound header

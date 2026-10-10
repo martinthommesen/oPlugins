@@ -17,10 +17,20 @@ use them in code, docs, and messages.
 
 # Platform
 
-`src/node-platform.ts` provides the Node implementations of the Effect
-platform services; add a service's Node layer there when the plugin first
-needs it. Environment variables and process facts come from the
-`Environment` service (`src/environment.ts`).
+The plugin uses no Effect platform service yet. When it first needs one,
+add `src/node-platform.ts` with the service's Node layer, and build the
+plugin's services into the plugin's scope in `src/index.ts` with
+`Layer.build`, as oc-auth does: providing them would release them when
+set-up returns.
+
+Every user setting is a plugin option, decoded in
+`src/oc-browser-plugin.ts`; an invalid or unknown option fails set-up.
+Environment variables are only for test overrides.
+
+Log with `Effect.logInfo` and its siblings: the message is a `snake_case`
+event name and the details go in `Effect.annotateLogs`. The host writes the
+records to its log. Records at info level and above carry metadata only;
+debug records may carry content once `src/log-redaction.ts` has redacted it.
 
 Long-lived state (connections, pending requests, the active tab) lives in
 `Ref`s owned by a service's layer.

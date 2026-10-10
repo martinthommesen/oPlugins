@@ -1,14 +1,15 @@
-import { ConfigProvider, Effect, Layer, Path } from "effect"
+import { Effect, Layer } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
+import InvalidOptions from "./invalid-options-error.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
+import capturedLog from "./captured-log.test-support.ts"
 import plugin from "./index.ts"
-import support from "./debug-log.test-support.ts"
 
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<typeof support.layer> | Scope.Scope
+    Layer.Success<typeof capturedLog.layer> | Scope.Scope
   >
 }
 
@@ -17,7 +18,7 @@ interface PureTests {
   readonly effect: Vitest.Test<Scope.Scope>
 }
 
-const EPOCH = "1970-01-01T00:00:00.000Z"
+const PROJECT = "prj_test"
 
 describe("the plugin definition", () => {
   test.layer(Layer.empty)((it: PureTests) => {
@@ -32,29 +33,49 @@ describe("the plugin definition", () => {
 })
 
 describe("the plugin set-up", () => {
-  test.layer(support.layer)((it: Tests) => {
-    it.effect("builds its services and records the host's project", () =>
+  test.layer(capturedLog.layer)((it: Tests) => {
+    it.effect("records the host's project in the host's log", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
 
-        const home = yield* support.sandbox,
-          log = (yield* Path.Path).join(home, "start.log"),
-          variables = ConfigProvider.fromEnvRecord({
-            HOME: home,
-            OBROWSE_DEBUG: log,
-            XDG_DATA_HOME: home,
-          })
-
         yield* plugin
-          .effect({ location: { directory: home } })
+          .effect({ location: { project: { id: PROJECT } }, options: {} })
+          .pipe(Effect.scoped)
+
+        expect(yield* capturedLog.records).toStrictEqual([
+          {
+            annotations: { project: PROJECT },
+            level: "INFO",
+            message: "plugin_started",
+          },
+        ])
+      }),
+    )
+  })
+})
+
+describe("the plugin options", () => {
+  test.layer(capturedLog.layer)((it: Tests) => {
+    it.effect("fails set-up on an unknown option, naming it", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const failure = yield* plugin
+          .effect({
+            location: { project: { id: PROJECT } },
+            options: { debug: 1 },
+          })
           .pipe(
             Effect.scoped,
-            Effect.provideService(ConfigProvider.ConfigProvider, variables),
+            Effect.catchDefect((defect) => Effect.succeed(defect)),
           )
 
-        expect(yield* support.readRecords(log)).toStrictEqual([
-          { directory: home, event: "plugin_started", ts: EPOCH },
-        ])
+        expect(failure).toBeInstanceOf(InvalidOptions)
+        expect(failure).toHaveProperty(
+          "message",
+          expect.stringContaining("debug: Unknown option."),
+        )
+        expect(yield* capturedLog.records).toStrictEqual([])
       }),
     )
   })

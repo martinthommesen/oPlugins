@@ -1,9 +1,9 @@
 import { Effect, Option } from "effect"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import type ClaudeCredentials from "./claude-credentials.ts"
-import DebugLog from "./debug-log.ts"
 import credentialBlob from "./claude-credentials-blob.ts"
 import keychainItems from "./keychain-items.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 import storeSelect from "./claude-code-store-select.ts"
 
@@ -58,15 +58,16 @@ const UNAVAILABLE = "unavailable",
       stored: Option.Option<Credentials>,
       fields: LogEntries,
     ) {
-      const debug = yield* DebugLog
-
       if (Option.isNone(stored)) {
-        yield* debug.log("writeback_skipped_unparseable", fieldsOf(fields, []))
+        yield* pluginLog.debug(
+          "writeback_skipped_unparseable",
+          fieldsOf(fields, []),
+        )
 
         return "failed" satisfies WriteBackResult
       }
 
-      yield* debug.log(
+      yield* pluginLog.debug(
         "writeback_skipped_stale",
         fieldsOf(fields, [
           ["stored", yield* sources.tokenFingerprint(stored.value.accessToken)],
@@ -119,8 +120,7 @@ const UNAVAILABLE = "unavailable",
     store: CredentialStore,
     written: string,
   ) {
-    const debug = yield* DebugLog,
-      readBack = yield* store.read
+    const readBack = yield* store.read
 
     if (!Option.contains(readBack, written)) {
       return yield* ClaudeCodeStoreError.make({
@@ -128,7 +128,10 @@ const UNAVAILABLE = "unavailable",
       })
     }
 
-    return yield* debug.log("writeback_success", fieldsOf(store.fields, []))
+    return yield* pluginLog.debug(
+      "writeback_success",
+      fieldsOf(store.fields, []),
+    )
   }),
   /* Write the refreshed tokens over `staged.blob`, unless the guard refuses. */
   writeStaged = Effect.fn("ClaudeCodeWriteBack.writeStaged")(
@@ -179,28 +182,26 @@ const UNAVAILABLE = "unavailable",
         write: prepared,
       })
     },
-    (effect, store) =>
-      Effect.gen(function* reported() {
-        const debug = yield* DebugLog,
-          report = (
-            event: string,
-            message: string,
-            result: WriteBackResult,
-          ): Effect.Effect<WriteBackResult> =>
-            debug
-              .log(event, fieldsOf(store.fields, [["error", message]]))
-              .pipe(Effect.as(result))
+    (effect, store) => {
+      const report = (
+        event: string,
+        message: string,
+        result: WriteBackResult,
+      ): Effect.Effect<WriteBackResult> =>
+        pluginLog
+          .debug(event, fieldsOf(store.fields, [["error", message]]))
+          .pipe(Effect.as(result))
 
-        return yield* effect.pipe(
-          Effect.catchTags({
-            ClaudeCodeStoreError: (failure: { readonly message: string }) =>
-              report("writeback_failed", failure.message, UNAVAILABLE),
-            ClaudeCodeWriteRefusedError: (failure: {
-              readonly message: string
-            }) => report("writeback_refused", failure.message, "failed"),
-          }),
-        )
-      }),
+      return effect.pipe(
+        Effect.catchTags({
+          ClaudeCodeStoreError: (failure: { readonly message: string }) =>
+            report("writeback_failed", failure.message, UNAVAILABLE),
+          ClaudeCodeWriteRefusedError: (failure: {
+            readonly message: string
+          }) => report("writeback_refused", failure.message, "failed"),
+        }),
+      )
+    },
   ),
   /* One guarded write, and a second one when the store was unreachable. */
   writeThroughTwice = (

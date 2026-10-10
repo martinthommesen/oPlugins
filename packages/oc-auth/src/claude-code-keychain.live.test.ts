@@ -20,7 +20,6 @@ import {
 } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeCodeStores from "./claude-code-stores.ts"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
@@ -97,7 +96,6 @@ const ACCOUNT = String.raw`live "test" \ account`,
   }),
   /** The stores on this machine, with the real `security` tool. */
   layer = ClaudeCodeStores.layer.pipe(
-    Layer.provideMerge(DebugLog.layer),
     Layer.provideMerge(Environment.layer),
     Layer.provideMerge(nodePlatform),
   ),

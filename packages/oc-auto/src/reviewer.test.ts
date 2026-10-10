@@ -1,5 +1,4 @@
 import { Array as Arr, Context, Effect, Fiber, Layer, Ref } from "effect"
-import type { Config, Scope } from "effect"
 import { describe, expect, it } from "@effect/vitest"
 import CodexResponses from "./codex-client.ts"
 import MalformedAssessment from "./malformed-assessment-error.ts"
@@ -7,6 +6,7 @@ import ModelUnavailable from "./model-unavailable-error.ts"
 import RequestFailed from "./request-failed-error.ts"
 import ReviewTimedOut from "./review-timed-out-error.ts"
 import Reviewer from "./reviewer.ts"
+import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import support from "./testing.test-support.ts"
 
@@ -53,7 +53,7 @@ const ALLOW = '{"outcome":"allow"}',
     models: Ref.Ref<readonly string[]>,
   ): Effect.Effect<
     ReturnType<Reviewer["Service"]["review"]>,
-    Config.ConfigError,
+    Layer.Error<ReturnType<typeof support.settingsFrom>>,
     Scope.Scope
   > => {
     const codex = CodexResponses.of({

@@ -5,11 +5,9 @@ import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
 import ReviewTimedOut from "./review-timed-out-error.ts"
 import Reviewer from "./reviewer.ts"
 import Settings from "./settings.ts"
-import Verdict from "./verdict.ts"
 import reviewDecision from "./review-decision.ts"
 import reviewFailure from "./review-failure.ts"
-
-type Settled = Parameters<typeof Verdict.$match>[typeof FIRST]
+import verdictOutcome from "./verdict-outcome.ts"
 
 interface Interface {
   /**
@@ -18,28 +16,6 @@ interface Interface {
    */
   readonly evaluate: (evaluation: PermissionEvaluation) => Effect.Effect<void>
 }
-
-const FIRST = 0,
-  /* Rewrites the request's effect and message with the verdict. */
-  apply = (
-    evaluation: PermissionEvaluation,
-    verdict: Settled,
-  ): Effect.Effect<void> =>
-    Effect.sync(() => {
-      Verdict.$match(verdict, {
-        Allow: () => {
-          evaluation.effect = "allow"
-        },
-        Ask: ({ message }) => {
-          evaluation.effect = "ask"
-          evaluation.message = message
-        },
-        Deny: ({ message }) => {
-          evaluation.effect = "deny"
-          evaluation.message = message
-        },
-      })
-    })
 
 /** Reviews permission prompts before they reach the user. */
 class AutoReview extends Context.Service<AutoReview, Interface>()(
@@ -72,28 +48,13 @@ class AutoReview extends Context.Service<AutoReview, Interface>()(
                 ),
             }),
             Effect.matchEffect({
-              onFailure: (
-                failure: Parameters<
-                  typeof reviewFailure.undecided
-                >[typeof FIRST],
-              ) => {
-                const fallback = reviewFailure.undecided(failure)
-
-                return Effect.logWarning(
-                  "Auto-review failed; asking the user.",
-                  fallback,
-                ).pipe(Effect.as(fallback))
-              },
+              onFailure: reviewFailure.userDecides,
               onSuccess: Effect.succeed,
             }),
           )
 
-          yield* Effect.logInfo("Auto-review verdict", {
-            action: evaluation.action,
-            verdict,
-          })
-
-          yield* apply(evaluation, verdict)
+          yield* verdictOutcome.record(evaluation, verdict)
+          yield* verdictOutcome.apply(evaluation, verdict)
         }),
       })
     }),

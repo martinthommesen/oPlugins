@@ -1,14 +1,13 @@
-import type { Config, Crypto, Path, Stdio } from "effect"
+import type { Config, Crypto, Path } from "effect"
 import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
 import {
   NodeCrypto,
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedStderr from "./captured-stderr.test-support.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import type { ChildProcessSpawner } from "effect/unstable/process"
 import ClaudeCodeStores from "./claude-code-stores.ts"
-import DebugLog from "./debug-log.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"
 import testEnvironment from "./test-environment.test-support.ts"
 
@@ -46,12 +45,12 @@ const FIRST = 0,
         subscriptionType: "pro",
       },
     }),
-  /** Platform services, captured stderr, and the fake Keychain. */
+  /** Platform services, the captured log, and the fake Keychain. */
   layer = Layer.mergeAll(
     NodeFileSystem.layer,
     NodePath.layer,
     NodeCrypto.layer,
-    CapturedStderr.layer,
+    CapturedLogs.layer,
     FakeKeychain.layer,
   ),
   /* Refreshed tokens, written back over a store that held `expected`. */
@@ -85,7 +84,6 @@ const FIRST = 0,
     | Crypto.Crypto
     | FileSystem.FileSystem
     | Path.Path
-    | Stdio.Stdio
   > => {
     const environment = testEnvironment(
         Object.fromEntries([
@@ -93,10 +91,7 @@ const FIRST = 0,
           ...Object.entries(machine.variables),
         ]),
       )(machine.platform),
-      stores = ClaudeCodeStores.layer.pipe(
-        Layer.provide(DebugLog.layer),
-        Layer.provide(environment),
-      )
+      stores = ClaudeCodeStores.layer.pipe(Layer.provide(environment))
 
     return Layer.build(stores).pipe(
       Effect.flatMap((context) => body(Context.get(context, ClaudeCodeStores))),

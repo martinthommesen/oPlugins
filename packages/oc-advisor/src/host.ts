@@ -81,7 +81,8 @@ const CLEANUP_RETRIES = 1,
       Effect.mapError(self, (cause) => HostError.make({ cause, operation })),
   /*
    * Deletes a consultation session with bounded cleanup and one retry,
-   * keeping it tracked if deletion fails.
+   * keeping it tracked if deletion fails. The warning names the session
+   * only: the host's error may quote the conversation.
    */
   cleanupSession =
     <Failure>(
@@ -94,10 +95,12 @@ const CLEANUP_RETRIES = 1,
         Effect.interruptible,
         Effect.timeout(`${CLEANUP_TIMEOUT_SECONDS} seconds`),
         Effect.andThen(tracker.remove(id)),
-        Effect.ignore({
-          log: "Warn",
-          message: `Could not remove advisor session ${id}`,
-        }),
+        Effect.tapError(() =>
+          Effect.logWarning("advisor_session_cleanup_failed").pipe(
+            Effect.annotateLogs({ sessionID: id }),
+          ),
+        ),
+        Effect.ignore,
       ),
   /*
    * Builds `consult` on the host's session API. `tracker` records the

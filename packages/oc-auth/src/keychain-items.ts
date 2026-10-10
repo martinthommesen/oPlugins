@@ -1,8 +1,8 @@
 import { Effect, Encoding, Option, Result, Schema } from "effect"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
-import DebugLog from "./debug-log.ts"
 import type { Duration } from "effect"
 import keychainSecurity from "./keychain-security.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
@@ -122,22 +122,21 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
     service: string,
     timeout: Duration.Input,
   ) {
-    const debug = yield* DebugLog,
-      read = yield* Effect.result(
-        keychainSecurity.security({
-          args: ["find-generic-password", "-s", service, "-w"],
-          input: Option.none(),
-          timeout,
-        }),
-      )
+    const read = yield* Effect.result(
+      keychainSecurity.security({
+        args: ["find-generic-password", "-s", service, "-w"],
+        input: Option.none(),
+        timeout,
+      }),
+    )
 
     if (Result.isSuccess(read)) {
-      yield* debug.log("keychain_read", { service, success: true })
+      yield* pluginLog.debug("keychain_read", { service, success: true })
 
       return Option.some(decodePasswordOutput(read.success.trim()))
     }
 
-    yield* debug.log("keychain_read_error", {
+    yield* pluginLog.debug("keychain_read_error", {
       errorType: read.failure.errorType,
       service,
     })
@@ -153,37 +152,39 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
   /*
    * The Claude Code items in the Keychain, the primary one first. When they
    * cannot be listed, only the primary item is offered: nearly everyone has
-   * it, so it is still worth trying. The user is told, because accounts
-   * missing from /connect look like a bug.
+   * it, so it is still worth trying. That is logged as a warning, because
+   * accounts missing from /connect look like a bug.
    */
-  visibleServices = Effect.gen(function* visibleServices() {
-    const debug = yield* DebugLog
-
-    return yield* keychainSecurity
-      .security({
-        args: ["dump-keychain"],
-        input: Option.none(),
-        timeout: DISCOVERY_TIMEOUT,
-      })
-      .pipe(
-        // Any-length hex suffix so legacy entries stay discoverable. The
-        // Suffix-to-config-dir mapping still only applies to the 8-char
-        // Hashes the Claude CLI generates.
-        Effect.map((dump) => orderedServices(dump)),
-        Effect.tap((services) =>
-          debug.log("keychain_list", { servicesFound: services }),
-        ),
-        Effect.catchTag(
-          "KeychainSecurityError",
-          (failure: { readonly message: string }) =>
-            debug
-              .warn("keychain_list_failed", {
-                warning: `could not list Keychain items, so only the primary Claude Code account is offered: ${failure.message}`,
-              })
-              .pipe(Effect.as([sources.PRIMARY_SERVICE])),
-        ),
-      )
-  }),
+  visibleServices = keychainSecurity
+    .security({
+      args: ["dump-keychain"],
+      input: Option.none(),
+      timeout: DISCOVERY_TIMEOUT,
+    })
+    .pipe(
+      // Any-length hex suffix so legacy entries stay discoverable. The
+      // Suffix-to-config-dir mapping still only applies to the 8-char
+      // Hashes the Claude CLI generates.
+      Effect.map((dump) => orderedServices(dump)),
+      Effect.tap((services) =>
+        pluginLog.debug("keychain_list", { servicesFound: services }),
+      ),
+      Effect.catchTag(
+        "KeychainSecurityError",
+        (failure: { readonly errorType: string; readonly message: string }) =>
+          pluginLog
+            .warning("keychain_list_failed", { errorType: failure.errorType })
+            .pipe(
+              Effect.andThen(
+                pluginLog.debug("keychain_list_failed", {
+                  error: failure.message,
+                  errorType: failure.errorType,
+                }),
+              ),
+              Effect.as([sources.PRIMARY_SERVICE]),
+            ),
+      ),
+    ),
   /*
    * The account name of a Keychain item, or none when there is no such item
    * or it has no account. A failure to reach the Keychain fails rather than
@@ -193,8 +194,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
   whoseItem = Effect.fn("KeychainItems.accountName")(function* whoseItem(
     service: string,
   ) {
-    const debug = yield* DebugLog,
-      output = yield* keychainSecurity
+    const output = yield* keychainSecurity
         .security({
           args: ["find-generic-password", "-s", service],
           input: Option.none(),
@@ -218,7 +218,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
         ),
       parsed = output.pipe(Option.flatMap((text) => parseKeychainAccount(text)))
 
-    yield* debug.log("keychain_account_name", {
+    yield* pluginLog.debug("keychain_account_name", {
       account: Option.getOrElse(parsed, () => ""),
       service,
     })
@@ -239,8 +239,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
    */
   writePassword = Effect.fn("KeychainItems.addGenericPassword")(
     function* writePassword(service: string, account: string, blob: string) {
-      const debug = yield* DebugLog,
-        hex = Encoding.encodeHex(blob),
+      const hex = Encoding.encodeHex(blob),
         line = `add-generic-password -s ${interactiveArg(service)} -a ${interactiveArg(account)} -U -X ${hex}\n`,
         size = codec.encode(line).length
 
@@ -252,7 +251,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
         })
       }
 
-      yield* debug.log("keychain_write_argv", { bytes: size, service })
+      yield* pluginLog.debug("keychain_write_argv", { bytes: size, service })
 
       return yield* keychainSecurity.security({
         args: [

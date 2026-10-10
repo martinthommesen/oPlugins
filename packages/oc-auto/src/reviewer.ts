@@ -73,8 +73,11 @@ const assessWith = (
       ) {
         yield* Ref.set(primaryUnavailable, true)
 
-        yield* Effect.logWarning(
-          `Reviewer model ${settings.model} is unavailable; using ${settings.fallbackModel}.`,
+        yield* Effect.logWarning("reviewer_model_unavailable").pipe(
+          Effect.annotateLogs({
+            fallbackModel: settings.fallbackModel,
+            model: settings.model,
+          }),
         )
 
         return yield* assess(settings.fallbackModel, request)

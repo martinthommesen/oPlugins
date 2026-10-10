@@ -6,8 +6,9 @@ import SessionAliases from "./session-aliases.ts"
 import refreshServices from "./refresh-services.ts"
 
 /**
- * Every service the plugin runs on, over Node. Built into the plugin's
- * scope, so their state and background work end when the host unloads it.
+ * Every service the plugin runs on, over Node, given the plugin's options.
+ * Built into the plugin's scope, so their state and background work end
+ * when the host unloads it.
  */
 const services = Layer.mergeAll(
   ActiveCredential.layer,

@@ -1,10 +1,10 @@
 import { Effect, Option } from "effect"
 import type ClaudeAccount from "./claude-account.ts"
-import DebugLog from "./debug-log.ts"
 import accountLabels from "./claude-code-account-labels.ts"
 import configDirs from "./claude-config-dirs.ts"
 import credentialBlob from "./claude-credentials-blob.ts"
 import fileStores from "./claude-code-file-store.ts"
+import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 type Account = typeof ClaudeAccount.Type
@@ -37,7 +37,7 @@ const FIRST = 0,
   /* The credentials a stored blob holds; an empty blob holds none. */
   credentialsIn = (
     raw: Option.Option<string>,
-  ): Effect.Effect<Option.Option<Credentials>, never, DebugLog> =>
+  ): Effect.Effect<Option.Option<Credentials>> =>
     Option.match(raw.pipe(Option.filter((blob) => blob !== "")), {
       onNone: () => Effect.succeed(Option.none<Credentials>()),
       onSome: (blob) => credentialBlob.parseCredentials(blob),
@@ -70,12 +70,11 @@ const FIRST = 0,
    */
   fromFile = Effect.fn("ClaudeCodeFileAccounts.readCredentialsFile")(
     function* fromFile(configDir: Option.Option<string>) {
-      const debug = yield* DebugLog,
-        dir = yield* sources.resolveConfigDir(configDir),
+      const dir = yield* sources.resolveConfigDir(configDir),
         fileAt = yield* fileStores.fileStore(configDir),
         stored = yield* fileAt.read.pipe(
           Effect.tapError((failure: { readonly message: string }) =>
-            debug.log("credentials_file_read", {
+            pluginLog.debug("credentials_file_read", {
               configDir: dir,
               error: failure.message,
               success: false,
@@ -84,7 +83,7 @@ const FIRST = 0,
         ),
         usable = yield* credentialsIn(stored)
 
-      yield* debug.log(
+      yield* pluginLog.debug(
         "credentials_file_read",
         Option.match(stored, {
           onNone: () => ({

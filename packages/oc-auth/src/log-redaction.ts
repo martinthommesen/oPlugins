@@ -1,6 +1,6 @@
 import { Array as Arr, Predicate } from "effect"
 
-/** A value a debug-log field may hold. */
+/** A value a log record field may hold. */
 type LogValue =
   | string
   | number
@@ -9,16 +9,14 @@ type LogValue =
   | readonly LogValue[]
   | LogFields
 
-/** The structured fields of one debug-log record. */
+/** The structured fields of one log record. */
 interface LogFields {
   readonly [key: string]: LogValue
 }
 
 type Scalar = Exclude<LogValue, object>
 
-const ANTHROPIC_TOKEN_PATTERN = /^sk-ant-[A-Za-z0-9]+-/u,
-  JWT_PATTERN = /^eyJ[\w-]{10,}/u,
-  MAX_DEPTH = 4,
+const MAX_DEPTH = 4,
   NESTED = "[nested]",
   NEXT_LEVEL = 1,
   REDACTED = "REDACTED",
@@ -31,22 +29,30 @@ const ANTHROPIC_TOKEN_PATTERN = /^sk-ant-[A-Za-z0-9]+-/u,
     "x-api-key",
   ]),
   ROOT_DEPTH = 0,
+  /*
+   * An Anthropic token (`sk-ant-...`) or a JWT, wherever it appears in a
+   * string: an error message can quote one.
+   */
+  TOKEN_PATTERN = /(?<![\w-])(?:sk-ant-[A-Za-z0-9]+-|eyJ[\w-]{10,})[\w.-]*/gu,
   TOKEN_PREFIX_LENGTH = 8,
   guardList = (
     value: readonly LogValue[] | LogFields,
   ): value is readonly LogValue[] => Arr.isArray(value),
   guardNested = (value: LogValue): value is readonly LogValue[] | LogFields =>
     Predicate.isObjectOrArray(value),
-  /* A token-shaped string keeps a short prefix, enough to tell tokens apart. */
+  /*
+   * Each token in a string keeps a short prefix, enough to tell tokens
+   * apart, and loses the rest.
+   */
   hideScalar = (value: Scalar): Scalar => {
-    if (
-      Predicate.isString(value) &&
-      (JWT_PATTERN.test(value) || ANTHROPIC_TOKEN_PATTERN.test(value))
-    ) {
-      return `${value.slice(ROOT_DEPTH, TOKEN_PREFIX_LENGTH)}...REDACTED`
+    if (!Predicate.isString(value)) {
+      return value
     }
 
-    return value
+    return value.replaceAll(
+      TOKEN_PATTERN,
+      (token) => `${token.slice(ROOT_DEPTH, TOKEN_PREFIX_LENGTH)}...REDACTED`,
+    )
   },
   /*
    * `value` with secrets removed. A field named like a secret is replaced

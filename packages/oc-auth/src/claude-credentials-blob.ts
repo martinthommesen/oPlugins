@@ -1,12 +1,12 @@
 import { Effect, Option, Predicate, Schema } from "effect"
 import ClaudeCredentials from "./claude-credentials.ts"
-import DebugLog from "./debug-log.ts"
+import pluginLog from "./plugin-log.ts"
 
 type Credentials = typeof ClaudeCredentials.Type
 
 type JsonObject = typeof JsonRecord.Type
 
-/** What a blob holds, as the debug log records it. */
+/** What a blob holds, as its debug record describes it. */
 type BlobSummary = Readonly<
   Record<
     "hasAccessToken" | "hasExpiry" | "hasRefreshToken" | "isMcpOnly",
@@ -106,14 +106,16 @@ const ASTRAL_START = 65_536,
     raw: string,
   ) {
     const blob = decodeObject(raw),
-      data = blob.pipe(Option.flatMap((root) => credentialObject(root))),
-      debug = yield* DebugLog
+      data = blob.pipe(Option.flatMap((root) => credentialObject(root)))
 
     if (Option.isNone(blob) || Option.isNone(data)) {
       return Option.none<Credentials>()
     }
 
-    yield* debug.log("credentials_parsed", describe(blob.value, data.value))
+    yield* pluginLog.debug(
+      "credentials_parsed",
+      describe(blob.value, data.value),
+    )
 
     return pairOf(data.value)
   }),

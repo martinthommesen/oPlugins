@@ -1,6 +1,4 @@
-import { Console, Effect, Exit, FileSystem, Path, pipe } from "effect"
-import type { Stdio } from "effect"
-import commands from "./headless-command.ts"
+import { Console, Effect, FileSystem, Path, pipe } from "effect"
 
 /** Where everything lives inside one sandbox. */
 interface Layout {
@@ -9,7 +7,6 @@ interface Layout {
   readonly config: string
   readonly data: string
   readonly install: string
-  readonly log: string
   readonly marker: string
   readonly packed: string
   readonly plugins: string
@@ -31,7 +28,6 @@ const SANDBOX_PREFIX = "oc-browser-",
       config: path.join(root, "config"),
       data: path.join(root, "data"),
       install: path.join(root, "install"),
-      log: path.join(root, "plugin.log"),
       marker: path.join(root, "started.txt"),
       packed: path.join(root, "package"),
       plugins: path.join(root, "config", "opencode", "plugins"),
@@ -40,34 +36,12 @@ const SANDBOX_PREFIX = "oc-browser-",
       work: path.join(root, "work"),
     }
   }),
-  /*
-   * The plugin's own account of a failure, printed because the sandbox is
-   * about to be removed. No log may have been written.
-   */
-  dumpLog = (
-    root: string,
-  ): Effect.Effect<
-    void,
-    never,
-    FileSystem.FileSystem | Path.Path | Stdio.Stdio
-  > =>
-    Effect.gen(function* readLog() {
-      const fs = yield* FileSystem.FileSystem,
-        layout = yield* atRoot(root),
-        text = yield* fs.readFileString(layout.log)
-
-      yield* commands.printError(`--- plugin.log ---\n${text}`)
-    }).pipe(Effect.ignore),
   /* Remove the sandbox, unless `HEADLESS_KEEP` asks to keep it. */
   finish = Effect.fn("Headless.releaseSandbox")(function* finish(
     root: string,
     keep: boolean,
-    exit: Exit.Exit<unknown, unknown>,
   ) {
-    const failed = Exit.isFailure(exit),
-      fs = yield* FileSystem.FileSystem
-
-    yield* dumpLog(root).pipe(Effect.when(Effect.succeed(failed)))
+    const fs = yield* FileSystem.FileSystem
 
     if (keep) {
       yield* Console.log(`HEADLESS_KEEP set; sandbox preserved at ${root}`)
@@ -82,7 +56,7 @@ const SANDBOX_PREFIX = "oc-browser-",
     const fs = yield* FileSystem.FileSystem,
       root = yield* Effect.acquireRelease(
         fs.makeTempDirectory({ prefix: SANDBOX_PREFIX }),
-        (made, exit) => finish(made, keep, exit),
+        (made) => finish(made, keep),
       )
 
     return yield* atRoot(root)

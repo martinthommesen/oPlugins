@@ -1,8 +1,9 @@
 import { Match, Option } from "effect"
 import type Environment from "./environment.ts"
+import type PluginOptions from "./plugin-options.ts"
 import modelConfig from "./model-config.ts"
 
-type Variables = Environment["Service"]["variables"]
+type Options = PluginOptions["Service"]
 
 type ProcessFacts = Environment["Service"]["process"]
 
@@ -23,11 +24,11 @@ interface HeaderRequest {
 const ANTHROPIC_VERSION = "2023-06-01",
   DEFAULT_ENTRYPOINT = "sdk-cli",
   /* The Claude Code version this plugin presents as. */
-  cliVersion = (variables: Variables): string =>
-    Option.getOrElse(variables.cliVersion, () => modelConfig.ccVersion),
+  cliVersion = (options: Options): string =>
+    Option.getOrElse(options.cliVersion, () => modelConfig.ccVersion),
   /* The Claude Code entrypoint this plugin presents as. */
-  entrypoint = (variables: Variables): string =>
-    Option.getOrElse(variables.entrypoint, () => DEFAULT_ENTRYPOINT),
+  entrypoint = (options: Options): string =>
+    Option.getOrElse(options.entrypoint, () => DEFAULT_ENTRYPOINT),
   /* The SDK's platform headers, which a request keeps when it already has them. */
   stainlessHeaders = (
     facts: ProcessFacts,
@@ -47,17 +48,17 @@ const ANTHROPIC_VERSION = "2023-06-01",
     ["x-stainless-runtime-version", facts.nodeVersion],
     ["x-stainless-timeout", "600"],
   ],
-  /* The user agent: `ANTHROPIC_USER_AGENT` verbatim, or the CLI's own. */
-  userAgent = (variables: Variables): string =>
+  /* The user agent: the `userAgent` option verbatim, or the CLI's own. */
+  userAgent = (options: Options): string =>
     Option.getOrElse(
-      variables.userAgent,
+      options.userAgent,
       () =>
-        `claude-cli/${cliVersion(variables)} (external, ${entrypoint(variables)})`,
+        `claude-cli/${cliVersion(options)} (external, ${entrypoint(options)})`,
     ),
   /* The headers every request carries, replacing any it already has. */
   viaOAuth = (
     request: HeaderRequest,
-    variables: Variables,
+    options: Options,
     incomingBetas: string,
   ): readonly (readonly [string, string])[] => [
     ["authorization", `Bearer ${request.accessToken}`],
@@ -65,12 +66,12 @@ const ANTHROPIC_VERSION = "2023-06-01",
     [
       "anthropic-beta",
       modelConfig
-        .modelBetas(request.modelID, variables.betaFlags, incomingBetas)
+        .modelBetas(request.modelID, options.betaFlags, incomingBetas)
         .join(","),
     ],
     ["anthropic-dangerous-direct-browser-access", "true"],
     ["x-app", "cli"],
-    ["user-agent", userAgent(variables)],
+    ["user-agent", userAgent(options)],
     ["x-client-request-id", request.requestID],
     ["x-claude-code-session-id", request.sessionID],
   ],
@@ -80,14 +81,14 @@ const ANTHROPIC_VERSION = "2023-06-01",
    */
   wireHeaders = (
     request: HeaderRequest,
-    variables: Variables,
+    options: Options,
     facts: ProcessFacts,
   ): Headers => {
     const headers = new Headers(request.original)
 
     for (const [name, value] of viaOAuth(
       request,
-      variables,
+      options,
       headers.get("anthropic-beta") ?? "",
     )) {
       headers.set(name, value)

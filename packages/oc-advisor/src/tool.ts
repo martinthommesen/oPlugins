@@ -1,10 +1,21 @@
-import { Effect, Option, Schema } from "effect"
+import { Effect, Match, Option, Schema } from "effect"
 import type Advisor from "./advisor.ts"
+import type AdvisorUnavailable from "./advisor-unavailable-error.ts"
+import type ConsultationTimedOut from "./consultation-timed-out-error.ts"
+import type HostError from "./host-error.ts"
+import type InvalidModel from "./invalid-model-error.ts"
 import TOOL_NAME from "./tool-name.ts"
 import type { Tool } from "@opencode/schema/tool"
 import prompt from "./prompt.ts"
 
 type Advice = Effect.Success<ReturnType<Advisor["Service"]["consult"]>>
+
+/** Why a consultation gave no advice, as far as the log is told. */
+type ConsultationFailure =
+  | Readonly<Pick<AdvisorUnavailable, "_tag">>
+  | Readonly<Pick<ConsultationTimedOut, "_tag" | "model" | "seconds">>
+  | Readonly<Pick<HostError, "_tag" | "operation">>
+  | Readonly<Pick<InvalidModel, "_tag" | "model">>
 
 const ToolInput = Schema.Struct({
     question: Schema.optionalKey(
@@ -18,6 +29,25 @@ const ToolInput = Schema.Struct({
   adviceFailed = (reason: string): Tool.Result => ({
     content: `${reason} Continue without the advisor's input.`,
   }),
+  /*
+   * Logs why a consultation gave no advice, as metadata only: a host error
+   * may quote the conversation.
+   */
+  adviceFailureLog = (failure: ConsultationFailure): Effect.Effect<void> =>
+    Effect.logWarning("advisor_consultation_failed").pipe(
+      Effect.annotateLogs(
+        Match.valueTags(failure, {
+          AdvisorUnavailable: () => ({ error: "AdvisorUnavailable" }),
+          ConsultationTimedOut: ({ model, seconds }) => ({
+            error: "ConsultationTimedOut",
+            model,
+            seconds,
+          }),
+          HostError: ({ operation }) => ({ error: "HostError", operation }),
+          InvalidModel: ({ model }) => ({ error: "InvalidModel", model }),
+        }),
+      ),
+    ),
   adviceResult = (advice: Advice): Tool.Result => ({
     content: advice.text,
     metadata: { model: advice.model },
@@ -31,8 +61,8 @@ const ToolInput = Schema.Struct({
       advisor
         .consult(context.sessionID, Option.fromUndefinedOr(input.question))
         .pipe(
-          Effect.tapError((failure: { readonly message: string }) =>
-            Effect.logWarning("Advisor consultation failed", failure),
+          Effect.tapError((failure: ConsultationFailure) =>
+            adviceFailureLog(failure),
           ),
           Effect.map((advice) => adviceResult(advice)),
           Effect.catchTags({

@@ -27,13 +27,14 @@ import {
   Result,
   Scope,
 } from "effect"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import type { PlatformError } from "effect"
+import PluginOptions from "./plugin-options.ts"
 import type RefreshLockClaim from "./refresh-lock-claim.ts"
 import commit from "./refresh-lock-held.ts"
 import opencodeDataDir from "./opencode-data-dir.ts"
+import pluginLog from "./plugin-log.ts"
 import ticketFiles from "./refresh-lock-ticket-files.ts"
 import tickets from "./refresh-lock-tickets.ts"
 
@@ -54,7 +55,7 @@ type Ticket = typeof commit extends (ticket: infer Held) => object
   ? Held
   : never
 
-type Requirements = DebugLog | Environment | FileSystem.FileSystem | Path.Path
+type Requirements = Environment | FileSystem.FileSystem | Path.Path
 
 /*
  * The lock granted when the lock directory cannot be used. `extend` reports
@@ -124,16 +125,18 @@ const DEGRADED_LOCK = {
       ),
     )
   }),
-  /* Grant the uncoordinated lock, and tell the user. */
+  /*
+   * Grant the uncoordinated lock, and warn: two processes refreshing at once
+   * can sign Claude Code out, so the lock directory needs fixing.
+   */
   degrade = Effect.fn("RefreshLock.degrade")(function* degrade(
     source: string,
     failure: { readonly message: string },
   ) {
-    const debugLog = yield* DebugLog
-
-    yield* debugLog.warn("refresh_lock_degraded", {
+    yield* pluginLog.warning("refresh_lock_degraded", { source })
+    yield* pluginLog.debug("refresh_lock_degraded", {
+      error: failure.message,
       source,
-      warning: `token refreshes are not coordinated between OpenCode processes (${failure.message}); two refreshing at once can sign Claude Code out. Check that the lock directory is writable.`,
     })
 
     return LockAttempt.held({ lock: DEGRADED_LOCK })
@@ -238,10 +241,9 @@ const DEGRADED_LOCK = {
 
 /**
  * The cross-process refresh lock. `acquire` takes the lock for one
- * credential source, in `OC_AUTH_REFRESH_LOCK_DIR` or
- * OpenCode's data directory, leased for
- * `OC_AUTH_REFRESH_LOCK_TTL_MS` up to `maxTtlMs`. A held lock is
- * released when the caller's scope closes, if not before.
+ * credential source, in `OC_AUTH_REFRESH_LOCK_DIR` or OpenCode's data
+ * directory, leased for the `refreshLockTtlMs` option up to `maxTtlMs`. A
+ * held lock is released when the caller's scope closes, if not before.
  */
 class RefreshLock extends Context.Service<
   RefreshLock,
@@ -255,14 +257,14 @@ class RefreshLock extends Context.Service<
   public static readonly layer: Layer.Layer<
     RefreshLock,
     never,
-    Crypto.Crypto | Requirements
+    Crypto.Crypto | PluginOptions | Requirements
   > = Layer.effect(
     RefreshLock,
     Effect.gen(function* makeRefreshLock() {
       const context = yield* Effect.context<Crypto.Crypto | Requirements>(),
         dir = yield* lockDir,
-        environment = yield* Environment,
-        ttlMs = Math.min(MAX_LOCK_TTL_MS, environment.variables.lockTtlMs)
+        options = yield* PluginOptions,
+        ttlMs = Math.min(MAX_LOCK_TTL_MS, options.refreshLockTtlMs)
 
       return RefreshLock.of({
         acquire: (source) =>

@@ -1,9 +1,9 @@
 import { Clock, Effect, Exit, Option, Ref, Schema, Scope } from "effect"
 import type { FileSystem, Path } from "effect"
-import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import type RefreshLockClaim from "./refresh-lock-claim.ts"
+import pluginLog from "./plugin-log.ts"
 import ticketFiles from "./refresh-lock-ticket-files.ts"
 import tickets from "./refresh-lock-tickets.ts"
 
@@ -23,7 +23,7 @@ interface Ticket {
 
 type Claims = readonly (typeof RefreshLockClaim.Type)[]
 
-type Requirements = DebugLog | Environment | FileSystem.FileSystem | Path.Path
+type Requirements = Environment | FileSystem.FileSystem | Path.Path
 
 /*
  * Fixed payload width. A lease is rewritten in place, so a constant length
@@ -107,21 +107,16 @@ const LEASE_BYTES = 256,
       Effect.flatMap((now) => inscribe(held, now + ms, cooldown)),
     ),
   /* Log that `held` no longer belongs to this process. */
-  lost = Effect.fn("RefreshLock.lost")(function* lost(held: Ticket) {
-    const debugLog = yield* DebugLog
-
-    yield* debugLog.log("refresh_lock_lost", {
+  lost = (held: Ticket): Effect.Effect<void> =>
+    pluginLog.debug("refresh_lock_lost", {
       source: held.source,
       ticket: held.ticket.toString(),
-    })
-  }),
+    }),
   postpone = Effect.fn("RefreshLock.defer")(function* postpone(
     held: Ticket,
     deferred: Ref.Ref<boolean>,
     ms: number,
   ) {
-    const debugLog = yield* DebugLog
-
     /*
      * Same ownership check extend() makes: reviving a lease this process no
      * longer holds would republish a claim a successor has moved past.
@@ -134,14 +129,12 @@ const LEASE_BYTES = 256,
 
     yield* Ref.set(deferred, true)
     yield* lease(held, ms, true)
-    yield* debugLog.log("refresh_lock_deferred", { ms, source: held.source })
+    yield* pluginLog.debug("refresh_lock_deferred", { ms, source: held.source })
   }),
   prolong = Effect.fn("RefreshLock.extend")(function* prolong(
     held: Ticket,
     ms: number,
   ) {
-    const debugLog = yield* DebugLog
-
     if (!(yield* confirmOwnership(held))) {
       return yield* lost(held).pipe(Effect.as(false))
     }
@@ -157,14 +150,12 @@ const LEASE_BYTES = 256,
       return yield* lost(held).pipe(Effect.as(false))
     }
 
-    yield* debugLog.log("refresh_lock_extended", { ms, source: held.source })
+    yield* pluginLog.debug("refresh_lock_extended", { ms, source: held.source })
 
     return true
   }),
   /* Publish the first lease on `held`, then scan again; none when the scan fails. */
   publish = Effect.fn("RefreshLock.publish")(function* publish(held: Ticket) {
-    const debugLog = yield* DebugLog
-
     yield* lease(held, held.ttlMs, false)
 
     return yield* ticketFiles.scan(held.dir, held.prefix, held.ttlMs).pipe(
@@ -172,8 +163,8 @@ const LEASE_BYTES = 256,
       Effect.catchTag(
         "PlatformError",
         (failure: { readonly message: string }) =>
-          debugLog
-            .log("refresh_lock_error", {
+          pluginLog
+            .debug("refresh_lock_error", {
               error: failure.message,
               source: held.source,
             })
@@ -256,8 +247,7 @@ const LEASE_BYTES = 256,
  * falling back to stale information.
  */
 export default Effect.fn("RefreshLock.commit")(function* commit(held: Ticket) {
-  const debugLog = yield* DebugLog,
-    fresh = yield* publish(held),
+  const fresh = yield* publish(held),
     now = yield* Clock.currentTimeMillis
 
   if (
@@ -273,7 +263,7 @@ export default Effect.fn("RefreshLock.commit")(function* commit(held: Ticket) {
     Option.getOrElse(fresh, () => []),
     now,
   )
-  yield* debugLog.log("refresh_lock_acquired", {
+  yield* pluginLog.debug("refresh_lock_acquired", {
     source: held.source,
     ticket: held.ticket.toString(),
   })

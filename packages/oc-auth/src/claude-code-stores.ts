@@ -3,7 +3,6 @@ import type { Crypto, FileSystem, Option, Path } from "effect"
 import type { ChildProcessSpawner } from "effect/unstable/process"
 import type ClaudeAccount from "./claude-account.ts"
 import type ClaudeCodeStoreError from "./claude-code-store-error.ts"
-import type DebugLog from "./debug-log.ts"
 import type Environment from "./environment.ts"
 import discovery from "./claude-code-discovery.ts"
 import writeBacks from "./claude-code-write-back.ts"
@@ -22,7 +21,6 @@ type WriteBackResult = Effect.Success<ReturnType<WriteBack>>
 type StoreServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
-  | DebugLog
   | Environment
   | FileSystem.FileSystem
   | Path.Path

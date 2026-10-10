@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect"
 import FakeHost from "./fake-host.test-support.ts"
 import HostError from "./host-error.ts"
+import type InvalidOptions from "./invalid-options-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
 import type { Schema } from "effect"
 import { Session } from "@opencode/schema/session"
@@ -46,7 +47,7 @@ const FIRST = 0,
     script: HostOverrides,
     options: PluginOptions,
     stored: Entries = [],
-  ): Layer.Layer<FakeHost | Services> => {
+  ): Layer.Layer<FakeHost | Services, InvalidOptions> => {
     const host = FakeHost.layer(script)
 
     return Layer.merge(

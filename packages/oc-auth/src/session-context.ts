@@ -3,7 +3,7 @@ import type {
   SessionContext,
   SessionTitle,
 } from "@opencode/plugin/effect/session"
-import Environment from "./environment.ts"
+import PluginOptions from "./plugin-options.ts"
 import claudeHeaders from "./claude-headers.ts"
 import signing from "./signing.ts"
 import toolAliases from "./tool-aliases.ts"
@@ -149,14 +149,14 @@ const CONTEXT_METADATA_KEY = "martinthommesen.oc-auth",
     event: SessionContext | SessionTitle,
   ) {
     const aliases = toolAliases.build(registeredTools(event)),
-      environment = yield* Environment,
       moved = movedText(event),
       opening = Arr.findFirstIndex(event.messages, Schema.is(UserMessage)),
+      options = yield* PluginOptions,
       relocation = relocatedText(moved, aliases),
       signature = yield* signing.billingHeader(
         firstUserText(event, opening),
-        claudeHeaders.cliVersion(environment.variables),
-        claudeHeaders.entrypoint(environment.variables),
+        claudeHeaders.cliVersion(options),
+        claudeHeaders.entrypoint(options),
       )
 
     insertRelocated(event, opening, relocation)

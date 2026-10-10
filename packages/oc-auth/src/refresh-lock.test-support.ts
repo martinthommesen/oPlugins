@@ -8,15 +8,15 @@ import {
   Ref,
   Schema,
 } from "effect"
-import type { Config, Crypto, PlatformError, Scope, Stdio } from "effect"
+import type { Config, Crypto, PlatformError, Scope } from "effect"
 import {
   NodeCrypto,
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedStderr from "./captured-stderr.test-support.ts"
-import DebugLog from "./debug-log.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
+import PluginOptions from "./plugin-options.ts"
 import RefreshLock from "./refresh-lock.ts"
 import { TestClock } from "effect/testing"
 import testEnvironment from "./test-environment.test-support.ts"
@@ -29,7 +29,7 @@ type HeldLock = (typeof LockAttempt.held extends (args: infer Args) => object
 
 type Files = FileSystem.FileSystem | Path.Path
 
-type Platform = Crypto.Crypto | FileSystem.FileSystem | Path.Path | Stdio.Stdio
+type Platform = Crypto.Crypto | FileSystem.FileSystem | Path.Path
 
 // Test time starts here, so a released lease (expiring at 0) is long expired.
 const BASE_TIME = 1_000_000,
@@ -120,14 +120,15 @@ const BASE_TIME = 1_000_000,
     ttlMs: number,
   ): Layer.Layer<RefreshLock, Config.ConfigError, Platform> => {
     const environment = testEnvironment({
-      HOME: dir,
-      OC_AUTH_REFRESH_LOCK_DIR: dir,
-      OC_AUTH_REFRESH_LOCK_TTL_MS: String(ttlMs),
-    })()
+        HOME: dir,
+        OC_AUTH_REFRESH_LOCK_DIR: dir,
+      })(),
+      options = PluginOptions.layer({ refreshLockTtlMs: ttlMs }).pipe(
+        Layer.orDie,
+      )
 
     return RefreshLock.layer.pipe(
-      Layer.provide(DebugLog.layer),
-      Layer.provide(environment),
+      Layer.provide(Layer.merge(environment, options)),
     )
   },
   /*
@@ -277,7 +278,7 @@ export default Object.freeze({
     NodeFileSystem.layer,
     NodePath.layer,
     NodeCrypto.layer,
-    CapturedStderr.layer,
+    CapturedLogs.layer,
   ),
   leaseExpiry,
   locks,

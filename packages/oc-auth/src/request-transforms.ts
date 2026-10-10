@@ -5,8 +5,8 @@ import type {
   SessionTitle,
 } from "@opencode/plugin/effect/session"
 import type { Credential } from "@opencode/plugin/effect"
-import type DebugLog from "./debug-log.ts"
 import type Environment from "./environment.ts"
+import type PluginOptions from "./plugin-options.ts"
 import type RequestBodyError from "./request-body-error.ts"
 import outboundRequest from "./outbound-request.ts"
 import responseRestoration from "./response-restoration.ts"
@@ -60,12 +60,12 @@ class RequestTransforms extends Context.Service<
   public static readonly layer: Layer.Layer<
     RequestTransforms,
     never,
-    Crypto.Crypto | DebugLog | Environment
+    Crypto.Crypto | Environment | PluginOptions
   > = Layer.effect(
     RequestTransforms,
     Effect.gen(function* makeRequestTransforms() {
       const context = yield* Effect.context<
-          Crypto.Crypto | DebugLog | Environment
+          Crypto.Crypto | Environment | PluginOptions
         >(),
         crypto = yield* Crypto.Crypto,
         // UUIDs cannot fail on a working platform.

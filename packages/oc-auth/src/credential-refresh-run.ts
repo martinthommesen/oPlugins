@@ -1,11 +1,11 @@
 import { Clock, Effect } from "effect"
-import DebugLog from "./debug-log.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import RefreshLock from "./refresh-lock.ts"
 import RefreshResult from "./credential-refresh-result.ts"
 import adoption from "./credential-adoption.ts"
 import gate from "./credential-refresh-gate.ts"
 import type keys from "./credential-refresh-keys.ts"
+import pluginLog from "./plugin-log.ts"
 import tokenSpend from "./credential-token-spend.ts"
 
 type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
@@ -14,11 +14,10 @@ const NO_WAIT = 0,
   /* Another process failed and is backing off, so no credential is coming. */
   cooldownElsewhere = Effect.fn("CredentialRefresh.cooldownElsewhere")(
     function* cooldownElsewhere(subject: Subject, until: number) {
-      const debugLog = yield* DebugLog,
-        now = yield* Clock.currentTimeMillis,
+      const now = yield* Clock.currentTimeMillis,
         retryAfterMs = Math.max(NO_WAIT, until - now)
 
-      yield* debugLog.log("refresh_cooldown_elsewhere", {
+      yield* pluginLog.debug("refresh_cooldown_elsewhere", {
         retryAfterMs,
         source: subject.credential.metadata.source,
       })

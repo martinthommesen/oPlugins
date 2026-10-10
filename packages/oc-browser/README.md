@@ -3,7 +3,7 @@
 oc-browser is an OpenCode v2 plugin and Chrome extension that will let
 OpenCode drive your browser.
 
-This is a scaffold. The plugin starts and writes to its debug log, the TUI
+This is a scaffold. The plugin starts and logs that it started, the TUI
 plugin adds one palette command, and the extension's service worker only
 logs that it started. No browser control exists yet. The agreed design is
 in [`docs/design.md`](docs/design.md).
@@ -40,34 +40,21 @@ After pulling changes, run the build again. OpenCode picks the new
 build up on its next start. For the extension, click the reload button on
 its card in `chrome://extensions`.
 
+## Options
+
+oc-browser has no options yet. Any option set in the object form of its
+`plugins` entry is unknown, and an unknown option stops the plugin from
+loading: OpenCode's log then shows an error that names the option.
+
 ## Environment variables
 
-| Variable        | Purpose                                                                                            | Default          |
-| --------------- | -------------------------------------------------------------------------------------------------- | ---------------- |
-| `OBROWSE_DEBUG` | `1` for the default debug log, or an absolute log file path. `0`, `false`, `no`, `off` all disable | Disabled         |
-| `XDG_DATA_HOME` | Selects the data directory that holds the debug log                                                | `~/.local/share` |
+oc-browser reads no environment variables.
 
-The long-running OpenCode service reads every variable above. Setting or
-unsetting one takes effect only after `opencode service restart`.
+## Logs
 
-## Debug log
-
-```sh
-export OBROWSE_DEBUG=1
-opencode service restart
-```
-
-The default file is `~/.local/share/opencode/obrowse-debug.log`, created
-readable by its owner only. Values under keys such as `authorization`,
-`cookie`, `password`, and `token` are redacted, and so is any string shaped
-like a JWT. Structure nested more than four levels deep is replaced with a
-placeholder. URLs and page details are not redacted, so review a log before
-you share it.
-
-Any value other than `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off` is
-treated as an absolute log file path, and that file is truncated on every
-service start. A relative path is refused, and so is any existing file that
-is not already one of these logs.
+oc-browser writes its log records to OpenCode's log, not to a file of its
+own. Records at info level and above carry only metadata, such as event
+names and the project directory.
 
 ## Development
 

@@ -1,16 +1,13 @@
 import { Brand, Effect, Layer, Option, Queue, Stream } from "effect"
 import type { Cause, Config } from "effect"
-import {
-  NodeCrypto,
-  NodeFileSystem,
-  NodePath,
-} from "@effect/platform-node-shared"
 import type {
   SessionContext,
   SessionHttpRequest,
 } from "@opencode/plugin/effect/session"
-import CapturedStderr from "./captured-stderr.test-support.ts"
-import DebugLog from "./debug-log.ts"
+import { NodeCrypto } from "@effect/platform-node-shared"
+import type { Plugin } from "@opencode/plugin/effect"
+import PluginOptions from "./plugin-options.ts"
+import type PluginOptionsError from "./plugin-options-error.ts"
 import RequestTransforms from "./request-transforms.ts"
 import testEnvironment from "./test-environment.test-support.ts"
 
@@ -121,26 +118,20 @@ const EVENT_STREAM = { "content-type": "text/event-stream" },
       Effect.map((body) => new Response(body, { headers })),
     ),
   /*
-   * The live transforms over an environment of `variables`, with a home
-   * that does not exist and the debug log off.
+   * The live transforms with the plugin's `options`, on a machine whose
+   * home does not exist.
    */
   transformsLayer = (
-    variables: Readonly<Record<string, string>> = {},
-  ): Layer.Layer<RequestTransforms, Config.ConfigError> => {
-    const environment = testEnvironment(
-        Object.fromEntries([["HOME", HOME], ...Object.entries(variables)]),
-      )(),
-      logger = DebugLog.layer.pipe(Layer.provide(environment))
+    options: Plugin.Context["options"] = {},
+  ): Layer.Layer<
+    RequestTransforms,
+    Config.ConfigError | PluginOptionsError
+  > => {
+    const environment = testEnvironment({ HOME })(),
+      settings = PluginOptions.layer(options)
 
     return RequestTransforms.layer.pipe(
-      Layer.provide(Layer.mergeAll(environment, NodeCrypto.layer, logger)),
-      Layer.provide(
-        Layer.mergeAll(
-          NodeFileSystem.layer,
-          NodePath.layer,
-          CapturedStderr.layer,
-        ),
-      ),
+      Layer.provide(Layer.mergeAll(NodeCrypto.layer, environment, settings)),
     )
   }
 

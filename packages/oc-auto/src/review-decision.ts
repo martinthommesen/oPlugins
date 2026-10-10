@@ -108,10 +108,14 @@ const FIRST = 0,
             Deny: () =>
               Verdict.Deny({
                 message: verdictMessages.denialMessage(assessment),
+                model: review.model,
+                rationale: assessment.rationale,
               }),
             Escalate: ({ total }) =>
-              Verdict.Ask({
+              Verdict.Escalate({
                 message: verdictMessages.escalationMessage(assessment, total),
+                model: review.model,
+                rationale: assessment.rationale,
               }),
           }),
         ),

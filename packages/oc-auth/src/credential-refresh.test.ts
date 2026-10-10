@@ -1,7 +1,7 @@
 import { Effect, Option, Ref } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedStderr from "./captured-stderr.test-support.ts"
+import CapturedLogs from "./captured-logs.test-support.ts"
 import type { Vitest } from "@effect/vitest"
 import claudeCodeCredential from "./claude-code-credential.ts"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
@@ -152,10 +152,19 @@ describe("write-back warnings", () => {
           yield* support.begin
           yield* support.refresh(yield* original)
 
-          const text = yield* (yield* CapturedStderr).text
-
-          expect(text.trim().split("\n")).toHaveLength(SINGLE_WRITE)
-          expect(text).toMatch(/could not be saved/u)
+          // Metadata only: why the write failed, and which store it was.
+          expect(
+            yield* (yield* CapturedLogs).named("refresh_writeback_failed"),
+          ).toStrictEqual([
+            {
+              annotations: {
+                reason: "failed",
+                source: support.account().source,
+              },
+              level: "Warn",
+              message: "refresh_writeback_failed",
+            },
+          ])
         }),
     )
   })
@@ -167,7 +176,11 @@ describe("write-back warnings", () => {
         yield* support.begin
         yield* support.refresh(yield* original)
 
-        expect(yield* (yield* CapturedStderr).text).toBe("")
+        expect(
+          (yield* (yield* CapturedLogs).records).filter(
+            (record) => record.level === "Warn",
+          ),
+        ).toStrictEqual([])
       }),
     )
   })

@@ -6,9 +6,9 @@ import {
   HttpClientRequest,
 } from "effect/unstable/http"
 import type ClaudeCredentials from "./claude-credentials.ts"
-import DebugLog from "./debug-log.ts"
 import type { HttpClientError } from "effect/unstable/http"
 import oauthResponse from "./oauth-token-response.ts"
+import pluginLog from "./plugin-log.ts"
 import policy from "./refresh-backoff-policy.ts"
 
 /*
@@ -107,9 +107,7 @@ const NETWORK_FAILURE = 0,
       readonly message: string
       readonly name: string
     }) {
-      const log = yield* DebugLog
-
-      yield* log.log("refresh_request_failed", {
+      yield* pluginLog.debug("refresh_request_failed", {
         error: failure.message,
         errorName: failure.name,
       })
@@ -182,11 +180,11 @@ class TokenExchange extends Context.Service<
   public static readonly layerWithClient: Layer.Layer<
     TokenExchange,
     never,
-    DebugLog | HttpClient.HttpClient
+    HttpClient.HttpClient
   > = Layer.effect(
     TokenExchange,
     Effect.gen(function* makeTokenExchange() {
-      const context = yield* Effect.context<DebugLog | HttpClient.HttpClient>()
+      const context = yield* Effect.context<HttpClient.HttpClient>()
 
       return TokenExchange.of({
         exchange: (refreshToken) =>
@@ -196,7 +194,7 @@ class TokenExchange extends Context.Service<
   )
 
   /** The live exchange, over `fetch`. */
-  public static readonly layer: Layer.Layer<TokenExchange, never, DebugLog> =
+  public static readonly layer: Layer.Layer<TokenExchange> =
     TokenExchange.layerWithClient.pipe(Layer.provide(FetchHttpClient.layer))
 }
 

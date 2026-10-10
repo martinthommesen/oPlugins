@@ -18,7 +18,6 @@ import { describe, expect, it } from "@effect/vitest"
 import AuthUnavailable from "./auth-unavailable-error.ts"
 import ChatGptAuth from "./chatgpt-auth.ts"
 import CodexResponses from "./codex-client.ts"
-import type { Config } from "effect"
 import type { HttpClientRequest } from "effect/unstable/http"
 import ModelUnavailable from "./model-unavailable-error.ts"
 import RequestFailed from "./request-failed-error.ts"
@@ -62,7 +61,10 @@ const COMPLETION = {
   /* The Codex client over a backend that runs `execute`, signed in, with the default settings. */
   codexWith = (
     execute: Execute,
-  ): Layer.Layer<CodexResponses, Config.ConfigError> => {
+  ): Layer.Layer<
+    CodexResponses,
+    Layer.Error<ReturnType<typeof support.settingsFrom>>
+  > => {
     const backend = Layer.succeed(
       HttpClient.HttpClient,
       HttpClient.make(execute),

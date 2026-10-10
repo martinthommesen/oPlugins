@@ -9,11 +9,15 @@ interface Layout {
   readonly cli: string
   readonly config: string
   readonly data: string
+  /** The log the host writes, which holds the plugin's records too. */
+  readonly hostLog: string
   readonly install: string
-  readonly log: string
   readonly models: string
+  /** Where the host's `opencode.json` goes. */
+  readonly opencodeConfig: string
   readonly packed: string
-  readonly plugins: string
+  /** The plugin wrapper's package directory, which the host config names. */
+  readonly plugin: string
   readonly root: string
   readonly security: string
   readonly smoke: string
@@ -36,11 +40,12 @@ const EXECUTABLE = 0o755,
       cli: path.join(root, "cli"),
       config: path.join(root, "config"),
       data: path.join(root, "data"),
+      hostLog: path.join(root, "data", "opencode", "log", "opencode.log"),
       install: path.join(root, "install"),
-      log: path.join(root, "plugin.log"),
       models: path.join(root, "models.json"),
+      opencodeConfig: path.join(root, "config", "opencode"),
       packed: path.join(root, "package"),
-      plugins: path.join(root, "config", "opencode", "plugins"),
+      plugin: path.join(root, "install", "claude-auth-wrapper"),
       root,
       security: path.join(root, "bin", "security"),
       smoke: path.join(work, "smoke.txt"),
@@ -49,9 +54,9 @@ const EXECUTABLE = 0o755,
     }
   }),
   /*
-   * The plugin's own account of a failure, printed because the sandbox is
-   * about to be removed (it can hold a copied token). No log may have been
-   * written.
+   * The host's account of a failure, which includes the plugin's warnings,
+   * printed because the sandbox is about to be removed (it can hold a copied
+   * token). No log may have been written.
    */
   dumpLog = (
     root: string,
@@ -63,9 +68,9 @@ const EXECUTABLE = 0o755,
     Effect.gen(function* readLog() {
       const fs = yield* FileSystem.FileSystem,
         layout = yield* atRoot(root),
-        text = yield* fs.readFileString(layout.log)
+        text = yield* fs.readFileString(layout.hostLog)
 
-      yield* commands.printError(`--- plugin.log ---\n${text}`)
+      yield* commands.printError(`--- opencode.log ---\n${text}`)
     }).pipe(Effect.ignore),
   /* Remove the sandbox, unless `HEADLESS_KEEP` asks to keep it. */
   finish = Effect.fn("Headless.releaseSandbox")(function* finish(
@@ -105,7 +110,8 @@ const EXECUTABLE = 0o755,
         layout.cli,
         layout.packed,
         layout.install,
-        layout.plugins,
+        layout.plugin,
+        layout.opencodeConfig,
         layout.data,
         layout.cache,
         layout.work,

@@ -3,10 +3,10 @@ import ActiveCredential from "./active-credential.ts"
 import AnthropicFetch from "./anthropic-fetch.ts"
 import type AnthropicFetchError from "./anthropic-fetch-error.ts"
 import CredentialRefresh from "./credential-refresh.ts"
-import DebugLog from "./debug-log.ts"
 import type RequestStates from "./request-states.ts"
 import RequestTransforms from "./request-transforms.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
+import pluginLog from "./plugin-log.ts"
 import pluginResponses from "./plugin-responses.ts"
 
 type RequestState = Option.Option.Value<
@@ -35,7 +35,6 @@ type Recovery =
   | ActiveCredential
   | AnthropicFetch
   | CredentialRefresh
-  | DebugLog
   | RequestTransforms
 
 /** One recovery attempt: the request it replays, and the responses it opened. */
@@ -58,29 +57,18 @@ const UNAUTHORIZED = 401,
    */
   asAuthenticationError = (failure: {
     readonly message: string
-  }): Effect.Effect<Response, never, DebugLog> =>
-    DebugLog.pipe(
-      Effect.flatMap((debugLog) =>
-        debugLog.log("unauthorized_recovery_failed", {
-          error: failure.message,
-        }),
-      ),
-      Effect.as(pluginResponses.authenticationError(failure.message)),
-    ),
+  }): Effect.Effect<Response> =>
+    pluginLog
+      .debug("unauthorized_recovery_failed", { error: failure.message })
+      .pipe(Effect.as(pluginResponses.authenticationError(failure.message))),
   /*
    * Any other failure surfaces as the original 401, which the SDK already
    * knows how to report.
    */
-  asOriginal = (
-    original: Response,
-    message: string,
-  ): Effect.Effect<Response, never, DebugLog> =>
-    DebugLog.pipe(
-      Effect.flatMap((debugLog) =>
-        debugLog.log("unauthorized_recovery_failed", { error: message }),
-      ),
-      Effect.as(original),
-    ),
+  asOriginal = (original: Response, message: string): Effect.Effect<Response> =>
+    pluginLog
+      .debug("unauthorized_recovery_failed", { error: message })
+      .pipe(Effect.as(original)),
   /* Release a response this plugin drops, so its connection is reclaimed now. */
   discard = (response: Response): Effect.Effect<void> =>
     Option.fromNullishOr(response.body).pipe(
@@ -97,12 +85,8 @@ const UNAUTHORIZED = 401,
       }),
     ),
   /* A refresh that kept the access token: replaying it would earn another 401. */
-  logUnchanged = (kind: string): Effect.Effect<void, never, DebugLog> =>
-    DebugLog.pipe(
-      Effect.flatMap((debugLog) =>
-        debugLog.log("unauthorized_recovery_unchanged", { kind }),
-      ),
-    ),
+  logUnchanged = (kind: string): Effect.Effect<void> =>
+    pluginLog.debug("unauthorized_recovery_unchanged", { kind }),
   /* Send the request again with `credential`, recording the response. */
   replay = Effect.fn("UnauthorizedRecovery.replay")(function* replay(
     attempt: Attempt,

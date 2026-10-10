@@ -1,9 +1,9 @@
 import { Context, Effect, Fiber, Layer, Ref } from "effect"
 import { describe, expect, it } from "@effect/vitest"
 import AutoReview from "./auto-review.ts"
-import type { Config } from "effect"
 import DenialBreaker from "./denial-breaker.ts"
 import Host from "./host.ts"
+import type InvalidOptions from "./invalid-options-error.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
 import Reviewer from "./reviewer.ts"
 import { TestClock } from "effect/testing"
@@ -12,7 +12,7 @@ import support from "./testing.test-support.ts"
 /* A one-second deadline over a host that never answers and records being interrupted. */
 const deadlineServices = (
   interrupted: Ref.Ref<boolean>,
-): Layer.Layer<AutoReview, Config.ConfigError> => {
+): Layer.Layer<AutoReview, InvalidOptions> => {
   const hangingHost = Host.of({
       openAiCredential: Effect.succeedNone,
       session: () =>

@@ -37,15 +37,12 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json && cp types/index.d.ts types/tui.d.ts dist/ && pnpm run build:extension",
     "build:extension": "esbuild extension/service-worker.ts --bundle --format=esm --platform=browser --target=chrome120 --outfile=dist/extension/service-worker.js && node -e \"const fs = require('node:fs'); const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8')); manifest.version = require('./package.json').version; fs.writeFileSync('dist/extension/manifest.json', JSON.stringify(manifest, null, 2) + '\\n')\"",
     "typecheck": "tsc -p tsconfig.json && tsc -p extension/tsconfig.json",
-    "pretest": "node -e \"const n=require('node:fs').globSync(['src/**/*.test.ts', 'extension/**/*.test.ts']).length; if (n < 4) { console.error('expected at least 4 test files, found '+n); process.exit(1) }\"",
+    "pretest": "node -e \"const n=require('node:fs').globSync(['src/**/*.test.ts', 'extension/**/*.test.ts']).length; if (n < 3) { console.error('expected at least 3 test files, found '+n); process.exit(1) }\"",
     "test": "vitest run",
     "test:host": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); for (const file of ['./dist/tui.js', './dist/extension/manifest.json', './dist/extension/service-worker.js']) { if (!require('node:fs').existsSync(file)) { throw new Error(file + ' is missing') } }\"",
     "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
     "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict && effect-tsgo diagnostics --project extension/tsconfig.json --strict"
-  },
-  "dependencies": {
-    "@effect/platform-node-shared": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",

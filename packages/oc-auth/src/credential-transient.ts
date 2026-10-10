@@ -1,10 +1,10 @@
 import { Effect, Option } from "effect"
 import ClaudeAuthRefreshExhaustedError from "./claude-auth-refresh-exhausted-error.ts"
-import DebugLog from "./debug-log.ts"
 import type LockAttempt from "./refresh-lock-attempt.ts"
 import RefreshBackoff from "./refresh-backoff.ts"
 import RefreshResult from "./credential-refresh-result.ts"
 import type keys from "./credential-refresh-keys.ts"
+import pluginLog from "./plugin-log.ts"
 import policy from "./refresh-backoff-policy.ts"
 
 type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
@@ -50,11 +50,10 @@ const NETWORK_FAILURE = 0,
           holder.subject.sourceKey,
           retryAfterMs,
         ),
-        debugLog = yield* DebugLog,
         failures = yield* backoff.transientCount(holder.subject.sourceKey)
 
       yield* holder.lock.defer(cooldownMs)
-      yield* debugLog.log("refresh_transient", {
+      yield* pluginLog.debug("refresh_transient", {
         cause,
         cooldownMs,
         failures,

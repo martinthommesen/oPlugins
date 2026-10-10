@@ -1,6 +1,6 @@
 # oClaude
 
-[![CI](https://github.com/martinthommesen/opencode-claude-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/martinthommesen/opencode-claude-auth/actions/workflows/ci.yml)
+[![CI](https://github.com/martinthommesen/oPlugins/actions/workflows/ci.yml/badge.svg)](https://github.com/martinthommesen/oPlugins/actions/workflows/ci.yml)
 
 oClaude is an OpenCode v2 plugin that imports Claude Code subscription credentials into
 OpenCode's native Anthropic integration. It does not install a custom model
@@ -319,7 +319,7 @@ activation, credential import, catalog pricing, billing headers, and a
 streamed read-tool round trip against a local mock API with a fake credential.
 It does not read your credentials or send requests to Anthropic. Package
 installation and OpenCode startup may require network access. CI runs this test
-against both OpenCode 2.0.7 and the targeted release on Linux and macOS.
+against both OpenCode 2.0.25 and the targeted release on Linux and macOS.
 
 To check another V2 host version:
 

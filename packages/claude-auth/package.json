@@ -13,7 +13,8 @@
   "author": "Martin Lammetun Thommesen <267603464+martinthommesen@users.noreply.github.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/martinthommesen/opencode-claude-auth.git"
+    "url": "git+https://github.com/martinthommesen/oPlugins.git",
+    "directory": "packages/claude-auth"
   },
   "files": [
     "dist"

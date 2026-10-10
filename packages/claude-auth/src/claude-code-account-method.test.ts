@@ -1,10 +1,24 @@
-import { Effect, Exit, Option, Ref } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import { Effect, Exit, Layer, Option, Ref, Schema } from "effect"
+import { expect, it as test } from "@effect/vitest"
+import type { Scope } from "effect"
+import type { Vitest } from "@effect/vitest"
 import accountMethod from "./claude-code-account-method.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
 import sources from "./claude-code-sources.ts"
 import support from "./credential-refresh.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+  >
+}
+
+/** The `it` of a `test.layer` block that provides no services. */
+interface PureTests {
+  readonly effect: Vitest.Test<Scope.Scope>
+}
 
 type Account = ReturnType<typeof support.account>
 
@@ -15,6 +29,8 @@ type Account = ReturnType<typeof support.account>
 const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   ACCOUNT_B = "Claude Code-credentials-bbbbbbbb",
   ACCOUNT_C = "Claude Code-credentials-cccccccc",
+  /** Any JSON value, as text. */
+  Json = Schema.fromJsonString(Schema.Unknown),
   accountA = support.account(ACCOUNT_A),
   accountB = support.account(ACCOUNT_B),
   accountC = support.account(ACCOUNT_C),
@@ -53,7 +69,7 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
     support.account(ACCOUNT_B, "rotated-access"),
   ])
 
-describe("claude Code account form", () => {
+test.layer(Layer.empty)("claude Code account form", (it: PureTests) => {
   it.effect("builds a static account form only for multiple accounts", () =>
     Effect.sync(() => {
       expect.hasAssertions()
@@ -79,7 +95,7 @@ describe("claude Code account form", () => {
   )
 })
 
-describe("claude Code account import", () => {
+test.layer(storeWithRotatedB)("claude Code account import", (it: Tests) => {
   it.effect(
     "imports the selected account's current credentials with its startup label",
     () =>
@@ -115,14 +131,14 @@ describe("claude Code account import", () => {
             sourceTokenHash: fingerprint,
           }),
         )
-        expect(JSON.stringify(credential.metadata)).not.toContain(
-          "rotated-access",
-        )
-      }).pipe(Effect.provide(storeWithRotatedB)),
+        expect(
+          yield* Schema.encodeEffect(Json)(credential.metadata),
+        ).not.toContain("rotated-access")
+      }),
   )
 })
 
-describe("claude Code account that disappeared", () => {
+test.layer(storeWithA)("claude Code account that disappeared", (it: Tests) => {
   it.effect("fails closed when the selected account disappeared", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
@@ -133,11 +149,11 @@ describe("claude Code account that disappeared", () => {
 
       expect(Exit.isFailure(exit)).toBe(true)
       expect(String(exit)).toMatch(/no longer available/u)
-    }).pipe(Effect.provide(storeWithA)),
+    }),
   )
 })
 
-describe("claude Code account selection", () => {
+test.layer(storeWithBoth)("claude Code account selection", (it: Tests) => {
   it.effect(
     "requires an explicit valid answer for a multiple-account form",
     () =>
@@ -154,25 +170,28 @@ describe("claude Code account selection", () => {
         expect(String(missing)).toMatch(/Select a registered/u)
         expect(String(wrongType)).toMatch(/Select a registered/u)
         expect(yield* readsSoFar).toStrictEqual([])
-      }).pipe(Effect.provide(storeWithBoth)),
+      }),
   )
 })
 
-describe("claude Code accounts added after registration", () => {
-  it.effect("does not expose accounts added after registration", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
+test.layer(storeWithCAndA)(
+  "claude Code accounts added after registration",
+  (it: Tests) => {
+    it.effect("does not expose accounts added after registration", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
 
-      const imported = yield* accountMethod.authorize([accountA], {})
+        const imported = yield* accountMethod.authorize([accountA], {})
 
-      expect(
-        claudeCodeCredential
-          .readMetadata(imported)
-          .pipe(Option.map((metadata) => metadata.source)),
-      ).toStrictEqual(Option.some(ACCOUNT_A))
-      expect(yield* readsSoFar).toStrictEqual([
-        [ACCOUNT_A, Option.some(`/claude/${ACCOUNT_A}`)],
-      ])
-    }).pipe(Effect.provide(storeWithCAndA)),
-  )
-})
+        expect(
+          claudeCodeCredential
+            .readMetadata(imported)
+            .pipe(Option.map((metadata) => metadata.source)),
+        ).toStrictEqual(Option.some(ACCOUNT_A))
+        expect(yield* readsSoFar).toStrictEqual([
+          [ACCOUNT_A, Option.some(`/claude/${ACCOUNT_A}`)],
+        ])
+      }),
+    )
+  },
+)

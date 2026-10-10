@@ -63,7 +63,7 @@ class RefreshRig extends Context.Service<
     /** Write-backs asked for, in order. */
     readonly writes: Ref.Ref<readonly WriteRequest[]>
   }
->()("oclaude/test/RefreshRig") {
+>()("oclaude/refresh-rig.test-support/RefreshRig") {
   /* The fake services over `rig`, answering per `script`. */
   public static readonly fakes = (
     rig: RefreshRig["Service"],

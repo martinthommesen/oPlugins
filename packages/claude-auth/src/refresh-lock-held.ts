@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, Option, Ref, Scope } from "effect"
+import { Clock, Effect, Exit, Option, Ref, Schema, Scope } from "effect"
 import type { FileSystem, Path } from "effect"
 import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
@@ -31,6 +31,15 @@ type Requirements = DebugLog | Environment | FileSystem.FileSystem | Path.Path
  * claim and falling back to the mtime heuristic. JSON parsing ignores the pad.
  */
 const LEASE_BYTES = 256,
+  /** The lease a ticket carries, as JSON in this field order. */
+  LeaseRecord = Schema.fromJsonString(
+    Schema.Struct({
+      cooldown: Schema.Boolean,
+      expiresAt: Schema.Number,
+      owner: Schema.String,
+      pid: Schema.Number,
+    }),
+  ),
   RELEASED = 0,
   START = 0,
   /* This process's lease is still the one on disk and has not expired. */
@@ -74,12 +83,13 @@ const LEASE_BYTES = 256,
     cooldown: boolean,
   ) {
     const environment = yield* Environment,
-      payload = JSON.stringify({
+      // The fields are plain values, so encoding them cannot fail.
+      payload = yield* Schema.encodeEffect(LeaseRecord)({
         cooldown,
         expiresAt,
         owner: held.owner,
         pid: environment.process.pid,
-      })
+      }).pipe(Effect.orDie)
 
     yield* held.file.seek(START, "start")
     // A concurrent scan treats the fresh claim mtime as a live lease.

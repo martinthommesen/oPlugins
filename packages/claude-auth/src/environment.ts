@@ -76,7 +76,7 @@ class Environment extends Context.Service<
     readonly process: typeof ProcessFacts.Type
     readonly variables: Config.Success<typeof variables>
   }
->()("oclaude/Environment") {
+>()("oclaude/environment") {
   /* The variables from the current `ConfigProvider`, with `facts` as the process facts. */
   public static readonly layerWith = (
     facts: typeof ProcessFacts.Type,

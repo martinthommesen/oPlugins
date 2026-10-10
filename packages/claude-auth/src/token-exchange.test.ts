@@ -1,12 +1,30 @@
-import { Effect, Fiber, Layer, Option, Path, Schema } from "effect"
-import { describe, expect, it } from "@effect/vitest"
-import type { Config } from "effect"
+import type { Config, Scope } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Path, Schema } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import DebugLog from "./debug-log.ts"
 import { TestClock } from "effect/testing"
 import TokenEndpoint from "./token-endpoint.test-support.ts"
 import TokenExchange from "./token-exchange.ts"
+import type { Vitest } from "@effect/vitest"
 import logSupport from "./debug-log.test-support.ts"
 import testEnvironment from "./test-environment.test-support.ts"
+
+/** The `it` of a `test.layer` block giving the debug log's platform. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<typeof logSupport.layer> | Scope.Scope
+  >
+}
+
+/** The `it` of a `test.layer` block giving an exchange and its endpoint. */
+interface ExchangeTests {
+  readonly effect: Vitest.Test<Scope.Scope | TokenEndpoint | TokenExchange>
+}
+
+/** The `it` of a `test.layer` block that provides no services. */
+interface PureTests {
+  readonly effect: Vitest.Test<Scope.Scope>
+}
 
 type Outcome = Effect.Success<ReturnType<TokenExchange["Service"]["exchange"]>>
 
@@ -94,15 +112,25 @@ const AT = 1_767_225_600_000,
         status: transient.status,
       }),
     }),
+  /* Exchange `token` once through an exchange `layer` builds, then release it. */
+  throughLayer = <Requirements>(
+    layer: Layer.Layer<TokenExchange, Config.ConfigError, Requirements>,
+    token: string,
+  ): Effect.Effect<Summary, Config.ConfigError, Requirements> =>
+    Layer.build(layer).pipe(
+      Effect.flatMap((context) =>
+        Context.get(context, TokenExchange).exchange(token),
+      ),
+      Effect.map((outcome) => summary(outcome)),
+      Effect.scoped,
+    ),
   /* Exchange "refresh-token" with the endpoint answering `reply`. */
   tryExchange = (
     reply: Effect.Effect<Response, string>,
   ): Effect.Effect<Summary, Config.ConfigError> =>
-    Effect.gen(function* exchangeOnce() {
-      return summary(yield* (yield* TokenExchange).exchange("refresh-token"))
-    }).pipe(
-      Effect.provide(exchangeLayer(reply)),
-      Effect.provide(logSupport.layer),
+    throughLayer(
+      exchangeLayer(reply).pipe(Layer.provide(logSupport.layer)),
+      "refresh-token",
     ),
   /* Exchange with the endpoint rate limiting with the given `retry-after`. */
   whenThrottled = (
@@ -117,7 +145,9 @@ const AT = 1_767_225_600_000,
     Schema.decodeUnknownOption(Json)(sent.body),
   ]
 
-describe("token exchange request", () => {
+test.layer(
+  exchangeLayer(successfulResponse).pipe(Layer.provide(logSupport.layer)),
+)("token exchange request", (it: ExchangeTests) => {
   it.effect("uses the platform JSON contract exactly once", () =>
     Effect.gen(function* run() {
       expect.assertions(TWO_ASSERTIONS)
@@ -142,14 +172,11 @@ describe("token exchange request", () => {
           }),
         ],
       ])
-    }).pipe(
-      Effect.provide(exchangeLayer(successfulResponse)),
-      Effect.provide(logSupport.layer),
-    ),
+    }),
   )
 })
 
-describe("token exchange rejections", () => {
+test.layer(Layer.empty)("token exchange rejections", (it: PureTests) => {
   it.effect("reads retry-after as seconds or as an HTTP date", () =>
     Effect.gen(function* run() {
       expect.assertions(THREE_ASSERTIONS)
@@ -168,93 +195,104 @@ describe("token exchange rejections", () => {
 })
 
 describe("token exchange failure kinds", () => {
-  it.effect("treats a rejected refresh token as terminal", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
+  test.layer(Layer.empty)((it: PureTests) => {
+    it.effect("treats a rejected refresh token as terminal", () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
 
-      expect(
-        yield* tryExchange(failing(BAD_REQUEST, '{"error":"invalid_grant"}')),
-      ).toStrictEqual({
-        kind: "terminal",
-        oauthError: Option.some("invalid_grant"),
-        retryAfterMs: Option.none(),
-        status: BAD_REQUEST,
-      })
-    }),
-  )
+        expect(
+          yield* tryExchange(failing(BAD_REQUEST, '{"error":"invalid_grant"}')),
+        ).toStrictEqual({
+          kind: "terminal",
+          oauthError: Option.some("invalid_grant"),
+          retryAfterMs: Option.none(),
+          status: BAD_REQUEST,
+        })
+      }),
+    )
+  })
 
-  it.effect("reads an OAuth error nested under its type", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
+  test.layer(Layer.empty)((it: PureTests) => {
+    it.effect("reads an OAuth error nested under its type", () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
 
-      expect(
-        yield* tryExchange(
-          failing(SERVER_ERROR, '{"error":{"type":"overloaded_error"}}'),
-        ),
-      ).toStrictEqual({
-        kind: "transient",
-        oauthError: Option.some("overloaded_error"),
-        retryAfterMs: Option.none(),
-        status: SERVER_ERROR,
-      })
-    }),
-  )
+        expect(
+          yield* tryExchange(
+            failing(SERVER_ERROR, '{"error":{"type":"overloaded_error"}}'),
+          ),
+        ).toStrictEqual({
+          kind: "transient",
+          oauthError: Option.some("overloaded_error"),
+          retryAfterMs: Option.none(),
+          status: SERVER_ERROR,
+        })
+      }),
+    )
+  })
 })
 
-describe("token exchange success without credentials", () => {
-  it.effect("treats an unusable success body as transient", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
+test.layer(Layer.empty)(
+  "token exchange success without credentials",
+  (it: PureTests) => {
+    it.effect("treats an unusable success body as transient", () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
 
-      expect(
-        yield* tryExchange(failing(OK, '{"access_token":"a"}')),
-      ).toStrictEqual({
-        kind: "transient",
-        oauthError: Option.none(),
-        retryAfterMs: Option.none(),
-        status: OK,
-      })
-    }),
-  )
-})
+        expect(
+          yield* tryExchange(failing(OK, '{"access_token":"a"}')),
+        ).toStrictEqual({
+          kind: "transient",
+          oauthError: Option.none(),
+          retryAfterMs: Option.none(),
+          status: OK,
+        })
+      }),
+    )
+  },
+)
 
 describe("token exchange network failures", () => {
-  it.effect("turns a failed request into a logged transient failure", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
+  test.layer(logSupport.layer)((it: Tests) => {
+    it.effect("turns a failed request into a logged transient failure", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
 
-      const home = yield* logSupport.sandbox,
-        path = (yield* Path.Path).join(home, "exchange.log"),
-        recordedLayer = exchangeLayer(Effect.fail("fetch failed"), {
-          CLAUDE_AUTH_DEBUG: path,
-          HOME: home,
+        const home = yield* logSupport.sandbox,
+          path = (yield* Path.Path).join(home, "exchange.log"),
+          recordedLayer = exchangeLayer(Effect.fail("fetch failed"), {
+            CLAUDE_AUTH_DEBUG: path,
+            HOME: home,
+          }),
+          result = yield* throughLayer(recordedLayer, "token"),
+          written = yield* logSupport.readRecords(path)
+
+        expect(result).toStrictEqual({
+          kind: "transient",
+          oauthError: Option.none(),
+          retryAfterMs: Option.none(),
+          status: NETWORK_FAILURE,
+        })
+        expect(written.map((record) => record.event)).toStrictEqual([
+          "refresh_request_failed",
+        ])
+      }),
+    )
+  })
+
+  test.layer(Layer.empty)((it: PureTests) => {
+    it.effect(
+      "gives up on an endpoint that does not answer in 30 seconds",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(ONE_ASSERTION)
+
+          const pending = yield* Effect.forkChild(tryExchange(Effect.never))
+
+          yield* TestClock.adjust(TIMEOUT_MS)
+
+          expect((yield* Fiber.join(pending)).status).toBe(NETWORK_FAILURE)
         }),
-        result = yield* Effect.gen(function* exchangeOnce() {
-          return summary(yield* (yield* TokenExchange).exchange("token"))
-        }).pipe(Effect.provide(recordedLayer)),
-        written = yield* logSupport.readRecords(path)
-
-      expect(result).toStrictEqual({
-        kind: "transient",
-        oauthError: Option.none(),
-        retryAfterMs: Option.none(),
-        status: NETWORK_FAILURE,
-      })
-      expect(written.map((record) => record.event)).toStrictEqual([
-        "refresh_request_failed",
-      ])
-    }).pipe(Effect.provide(logSupport.layer)),
-  )
-
-  it.effect("gives up on an endpoint that does not answer in 30 seconds", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
-
-      const pending = yield* Effect.forkChild(tryExchange(Effect.never))
-
-      yield* TestClock.adjust(TIMEOUT_MS)
-
-      expect((yield* Fiber.join(pending)).status).toBe(NETWORK_FAILURE)
-    }),
-  )
+    )
+  })
 })

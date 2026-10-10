@@ -1,11 +1,29 @@
-import { Effect, FileSystem, Option, Path } from "effect"
+import { DateTime, Effect, FileSystem, Option, Path, Schema } from "effect"
 import type ClaudeCodeStores from "./claude-code-stores.ts"
 import { TestClock } from "effect/testing"
 import support from "./claude-code-stores.test-support.ts"
 
 type Stores = ClaudeCodeStores["Service"]
 
-const FILE = "file",
+// The token pair a credentials file holds.
+const ClaudeAiOauth = Schema.Struct({
+    accessToken: Schema.String,
+    expiresAt: Schema.Number,
+    refreshToken: Schema.String,
+    subscriptionType: Schema.optionalKey(Schema.String),
+  }),
+  /** The MCP data a credentials file can carry beside the tokens. */
+  ClaudeMcpOauth = Schema.Struct({
+    server: Schema.Struct({ name: Schema.String }),
+  }),
+  /** A credentials file, as Claude Code writes it. */
+  CredentialsFile = Schema.fromJsonString(
+    Schema.Struct({
+      claudeAiOauth: ClaudeAiOauth,
+      mcpOAuth: Schema.optionalKey(ClaudeMcpOauth),
+    }),
+  ),
+  FILE = "file",
   FRESH_TEMP_AGE_MS = 1_800_000,
   /** The time the sweep test's clock reads: three hours after the epoch. */
   NOW_MS = 10_800_000,
@@ -17,7 +35,7 @@ const FILE = "file",
     ageMs: number,
   ) {
     const fs = yield* FileSystem.FileSystem,
-      stamp = new Date(NOW_MS - ageMs)
+      stamp = DateTime.toDateUtc(DateTime.makeUnsafe(NOW_MS - ageMs))
 
     yield* fs.writeFileString(path, "")
     yield* fs.utimes(path, stamp, stamp)
@@ -55,7 +73,7 @@ const FILE = "file",
 
     yield* fs.writeFileString(
       path,
-      JSON.stringify({
+      yield* Schema.encodeEffect(CredentialsFile)({
         claudeAiOauth: {
           accessToken,
           expiresAt: 1000,
@@ -83,7 +101,7 @@ const FILE = "file",
 
     yield* fs.writeFileString(
       path.join(dir, ".credentials.json"),
-      JSON.stringify({
+      yield* Schema.encodeEffect(CredentialsFile)({
         claudeAiOauth: {
           accessToken: "file-access",
           expiresAt: 2000,

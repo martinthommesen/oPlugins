@@ -30,7 +30,7 @@ class FakeEvents extends Context.Service<
     /** Emit a switch of the Anthropic credential to `credentialID`. */
     readonly switchTo: (credentialID: string) => Effect.Effect<void>
   }
->()("oclaude/test/FakeEvents") {
+>()("oclaude/fake-events.test-support/FakeEvents") {
   /** Events for one test. */
   public static readonly layer: Layer.Layer<FakeEvents> = Layer.effect(
     FakeEvents,

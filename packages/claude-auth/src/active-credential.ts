@@ -144,7 +144,7 @@ class ActiveCredential extends Context.Service<
       next: ClaudeCodeCredential,
     ) => Effect.Effect<void>
   }
->()("oclaude/ActiveCredential") {
+>()("oclaude/active-credential/ActiveCredential") {
   /** The active credential, starting with none. */
   public static readonly layer: Layer.Layer<
     ActiveCredential,

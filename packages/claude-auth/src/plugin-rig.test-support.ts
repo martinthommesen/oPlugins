@@ -85,7 +85,7 @@ class PluginRig extends Context.Service<
     /** The requests replayed, in order. */
     readonly sent: Effect.Effect<readonly Request[]>
   }
->()("oclaude/test/PluginRig") {
+>()("oclaude/plugin-rig.test-support/PluginRig") {
   /* A credential this plugin imported from the primary store, holding `access`. */
   public static readonly credential = (
     access: string,

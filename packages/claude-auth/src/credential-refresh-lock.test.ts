@@ -1,7 +1,16 @@
 import { Effect, Fiber, Option, Ref } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
+import type { Vitest } from "@effect/vitest"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
 import support from "./credential-refresh.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+  >
+}
 
 type Script = typeof support.script
 
@@ -85,7 +94,7 @@ const COOLDOWN_MS = 20_000,
   otherCoolingOld = refreshLayer(otherCooling, fixtureTokens),
   otherCoolingRotated = refreshLayer(otherCooling, newerTokens)
 
-describe("refresh after losing the lease", () => {
+test.layer(lostLease)("refresh after losing the lease", (it: Tests) => {
   it.effect(
     "waits for the lock holder's credential when the lease is lost",
     () =>
@@ -100,80 +109,90 @@ describe("refresh after losing the lease", () => {
         )
         // It must not spend a refresh token it cannot hold.
         expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
-      }).pipe(Effect.provide(lostLease)),
+      }),
   )
 })
 
-describe("refresh while another process holds the lock", () => {
-  it.effect(
-    "reports transient when no external credential arrives before the deadline",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-        yield* support.begin
+test.layer(otherBusy)(
+  "refresh while another process holds the lock",
+  (it: Tests) => {
+    it.effect(
+      "reports transient when no external credential arrives before the deadline",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
 
-        const refreshed = yield* support.polled(
-          support.refresh(yield* original),
-        )
+          const refreshed = yield* support.polled(
+            support.refresh(yield* original),
+          )
 
-        expect(support.summary(refreshed).kind).toBe("transient")
-        expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
-      }).pipe(Effect.provide(otherBusy)),
-  )
-})
+          expect(support.summary(refreshed).kind).toBe("transient")
+          expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
+        }),
+    )
+  },
+)
 
 describe("refresh while another process cools down", () => {
-  it.effect(
-    "returns at once with the cooldown another process is waiting out",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-        yield* support.begin
+  test.layer(otherCoolingOld)((it: Tests) => {
+    it.effect(
+      "returns at once with the cooldown another process is waiting out",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
 
-        // Nobody is refreshing, so polling for their result only adds
-        // Latency: this finishes with no clock advance.
-        const refreshed = yield* support.refresh(yield* original)
+          // Nobody is refreshing, so polling for their result only adds
+          // Latency: this finishes with no clock advance.
+          const refreshed = yield* support.refresh(yield* original)
 
-        expect(support.summary(refreshed)).toStrictEqual({
-          access: Option.none(),
-          kind: "transient",
-          retryAfterMs: Option.some(COOLDOWN_MS),
-        })
-      }).pipe(Effect.provide(otherCoolingOld)),
-  )
+          expect(support.summary(refreshed)).toStrictEqual({
+            access: Option.none(),
+            kind: "transient",
+            retryAfterMs: Option.some(COOLDOWN_MS),
+          })
+        }),
+    )
+  })
 
   // 401 recovery calls refresh first and relies on it to adopt a source
   // Rotated outside OpenCode before any cooldown can turn it away.
-  it.effect(
-    "adopts a rotated source even while another process is cooling down",
-    () =>
+  test.layer(otherCoolingRotated)((it: Tests) => {
+    it.effect(
+      "adopts a rotated source even while another process is cooling down",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const refreshed = yield* support.refresh(yield* original)
+
+          expect(support.summary(refreshed).access).toStrictEqual(
+            Option.some("rotated-access"),
+          )
+          expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
+        }),
+    )
+  })
+})
+
+test.layer(gatedStore)(
+  "concurrent refreshes of one credential",
+  (it: Tests) => {
+    it.effect("shares one exchange between concurrent refreshes", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
 
-        const refreshed = yield* support.refresh(yield* original)
+        const results = yield* concurrently(yield* original)
 
-        expect(support.summary(refreshed).access).toStrictEqual(
-          Option.some("rotated-access"),
-        )
-        expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
-      }).pipe(Effect.provide(otherCoolingRotated)),
-  )
-})
-
-describe("concurrent refreshes of one credential", () => {
-  it.effect("shares one exchange between concurrent refreshes", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-
-      const results = yield* concurrently(yield* original)
-
-      expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
-      expect(accessOf(results)).toStrictEqual([
-        Option.some("new-access"),
-        Option.some("new-access"),
-      ])
-    }).pipe(Effect.provide(gatedStore)),
-  )
-})
+        expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
+        expect(accessOf(results)).toStrictEqual([
+          Option.some("new-access"),
+          Option.some("new-access"),
+        ])
+      }),
+    )
+  },
+)

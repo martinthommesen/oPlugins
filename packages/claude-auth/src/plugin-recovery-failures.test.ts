@@ -1,11 +1,20 @@
 import { Effect, Match } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import AnthropicFetchError from "./anthropic-fetch-error.ts"
 import CredentialRefresh from "./credential-refresh.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
+import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
 import transformsSupport from "./request-transforms.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof scenario.onHost>> | Scope.Scope
+  >
+}
 
 type Script = typeof PluginRig.quiet
 
@@ -111,65 +120,75 @@ const FIRST_CALL = 1,
   )
 
 describe("401 recovery while refresh is unavailable", () => {
-  it.effect("turns a transient refresh into an explicitly retryable 429", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
+  test.layer(transientHost)((it: Tests) => {
+    it.effect(
+      "turns a transient refresh into an explicitly retryable 429",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
 
-      const answered = yield* roundTrip
+          const answered = yield* roundTrip
 
-      expect(answered.status).toBe(TOO_MANY_REQUESTS)
-      expect(answered.headers.get("x-should-retry")).toBe("true")
-      // Whole seconds, rounded up so a client never retries early.
-      expect(answered.headers.get("retry-after")).toBe("13")
-      expect(yield* (yield* PluginRig).sent).toStrictEqual([])
-    }).pipe(Effect.provide(transientHost)),
-  )
+          expect(answered.status).toBe(TOO_MANY_REQUESTS)
+          expect(answered.headers.get("x-should-retry")).toBe("true")
+          // Whole seconds, rounded up so a client never retries early.
+          expect(answered.headers.get("retry-after")).toBe("13")
+          expect(yield* (yield* PluginRig).sent).toStrictEqual([])
+        }),
+    )
+  })
 
-  it.effect("returns the original 401 when recovery fails unexpectedly", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-
-      /*
-       * An error must not escape the hook: the 401 is a well-formed provider
-       * error the SDK already knows how to report.
-       */
-      const answered = yield* roundTrip
-
-      expect([
-        answered.status,
-        yield* transformsSupport.bodyText(answered),
-      ]).toStrictEqual([UNAUTHORIZED, "unauthorized"])
-    }).pipe(Effect.provide(brokenHost)),
-  )
-})
-
-describe("401 recovery whose replay fails", () => {
-  it.effect("returns the original 401 when the replay itself throws", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-
-      // The hook must absorb the network error, not reject the whole turn.
-      const answered = yield* roundTrip
-
-      expect(yield* (yield* PluginRig).sent).toHaveLength(ONE)
-      expect(answered.status).toBe(UNAUTHORIZED)
-    }).pipe(Effect.provide(failingReplayHost)),
-  )
-
-  it.effect(
-    "releases a replay it opened but did not return when a later replay throws",
-    () =>
+  test.layer(brokenHost)((it: Tests) => {
+    it.effect("returns the original 401 when recovery fails unexpectedly", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
 
+        /*
+         * An error must not escape the hook: the 401 is a well-formed provider
+         * error the SDK already knows how to report.
+         */
         const answered = yield* roundTrip
 
-        yield* Effect.yieldNow.pipe(Effect.repeat({ times: SETTLE_YIELDS }))
+        expect([
+          answered.status,
+          yield* transformsSupport.bodyText(answered),
+        ]).toStrictEqual([UNAUTHORIZED, "unauthorized"])
+      }),
+    )
+  })
+})
 
-        // The caller still gets the untouched original, not the dropped replay.
+describe("401 recovery whose replay fails", () => {
+  test.layer(failingReplayHost)((it: Tests) => {
+    it.effect("returns the original 401 when the replay itself throws", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        // The hook must absorb the network error, not reject the whole turn.
+        const answered = yield* roundTrip
+
+        expect(yield* (yield* PluginRig).sent).toHaveLength(ONE)
         expect(answered.status).toBe(UNAUTHORIZED)
-        // Without the release, undici holds the abandoned connection open.
-        expect(retainedReplay.released()).toBe(ONE)
-      }).pipe(Effect.provide(secondReplayFailsHost)),
-  )
+      }),
+    )
+  })
+
+  test.layer(secondReplayFailsHost)((it: Tests) => {
+    it.effect(
+      "releases a replay it opened but did not return when a later replay throws",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+
+          const answered = yield* roundTrip
+
+          yield* Effect.yieldNow.pipe(Effect.repeat({ times: SETTLE_YIELDS }))
+
+          // The caller still gets the untouched original, not the dropped replay.
+          expect(answered.status).toBe(UNAUTHORIZED)
+          // Without the release, undici holds the abandoned connection open.
+          expect(retainedReplay.released()).toBe(ONE)
+        }),
+    )
+  })
 })

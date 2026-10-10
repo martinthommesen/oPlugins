@@ -1,5 +1,6 @@
 import {
   Brand,
+  Cause,
   Context,
   Deferred,
   Effect,
@@ -76,7 +77,7 @@ const FIRST = 0,
       ),
     ),
   /* Wait while a test holds resolution, then fail once if a test asked. */
-  obstacles = (state: State): Effect.Effect<void, Error> =>
+  obstacles = (state: State): Effect.Effect<void, Cause.UnknownError> =>
     Ref.getAndSet(state.held, Option.none()).pipe(
       Effect.flatMap(
         Option.match({
@@ -86,9 +87,12 @@ const FIRST = 0,
       ),
       Effect.andThen(Ref.getAndSet(state.failing, false)),
       Effect.flatMap((fails) =>
-        Effect.fail(new Error("resolve failed")).pipe(
-          Effect.when(Effect.succeed(fails)),
-        ),
+        Effect.fail(
+          new Cause.UnknownError(
+            "credential store unavailable",
+            "resolve failed",
+          ),
+        ).pipe(Effect.when(Effect.succeed(fails))),
       ),
       Effect.asVoid,
     ),
@@ -119,7 +123,7 @@ class FakeConnection extends Context.Service<
     /** Make `active` the active connection, or none. */
     readonly setActive: (active: Option.Option<Active>) => Effect.Effect<void>
   }
->()("oclaude/test/FakeConnection") {
+>()("oclaude/fake-connection.test-support/FakeConnection") {
   /* An API key, or with `env` the environment's key. */
   public static readonly apiKey = (key: string): Option.Option<Active> => {
     if (key === "env") {

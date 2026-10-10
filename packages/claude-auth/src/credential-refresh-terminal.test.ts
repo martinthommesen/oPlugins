@@ -1,8 +1,17 @@
 import { Effect, Match, Option, Ref } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeAuthTerminalError from "./claude-auth-terminal-error.ts"
+import type { Vitest } from "@effect/vitest"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
 import support from "./credential-refresh.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+  >
+}
 
 type Script = typeof support.script
 
@@ -69,90 +78,104 @@ const ONE_EXCHANGE = 1,
   )
 
 describe("refresh with a dead refresh token", () => {
-  it.effect("reports a terminal refresh with reauthentication guidance", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
+  test.layer(deadToken)((it: Tests) => {
+    it.effect("reports a terminal refresh with reauthentication guidance", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
 
-      const failure = yield* Effect.flip(support.refresh(yield* original))
+        const failure = yield* Effect.flip(support.refresh(yield* original))
 
-      expect(failure).toBeInstanceOf(ClaudeAuthTerminalError)
-      expect(failure.message).toMatch(/Run `claude`/u)
-    }).pipe(Effect.provide(deadToken)),
-  )
+        expect(failure).toBeInstanceOf(ClaudeAuthTerminalError)
+        expect(failure.message).toMatch(/Run `claude`/u)
+      }),
+    )
+  })
 
-  it.effect("adopts a rotated source instead of failing on invalid_grant", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
+  test.layer(rotatesThenRejects)((it: Tests) => {
+    it.effect(
+      "adopts a rotated source instead of failing on invalid_grant",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
 
-      const result = yield* support.refresh(yield* original)
+          const result = yield* support.refresh(yield* original)
 
-      expect(support.summary(result)).toStrictEqual({
-        access: Option.some("rotated-access"),
-        kind: "adopted",
-        retryAfterMs: Option.none(),
-      })
-    }).pipe(Effect.provide(rotatesThenRejects)),
-  )
+          expect(support.summary(result)).toStrictEqual({
+            access: Option.some("rotated-access"),
+            kind: "adopted",
+            retryAfterMs: Option.none(),
+          })
+        }),
+    )
+  })
 })
 
 describe("terminal state across credential generations", () => {
-  it.effect(
-    "does not apply a stale generation's terminal state to a newer one",
-    () =>
+  test.layer(deadThenRenewedEmpty)((it: Tests) => {
+    it.effect(
+      "does not apply a stale generation's terminal state to a newer one",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const failure = yield* Effect.flip(support.refresh(yield* original)),
+            refreshed = yield* support.refresh(yield* currentGeneration)
+
+          expect(failure).toBeInstanceOf(ClaudeAuthTerminalError)
+          expect(support.summary(refreshed)).toStrictEqual({
+            access: Option.some("new-access"),
+            kind: "refreshed",
+            retryAfterMs: Option.none(),
+          })
+        }),
+    )
+  })
+
+  test.layer(deadThenRenewedStored)((it: Tests) => {
+    it.effect("clears terminal state when the account is imported again", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
 
         const failure = yield* Effect.flip(support.refresh(yield* original)),
-          refreshed = yield* support.refresh(yield* currentGeneration)
+          importedAgain = yield* original,
+          refreshedAgain = yield* support.refresh(importedAgain)
 
         expect(failure).toBeInstanceOf(ClaudeAuthTerminalError)
-        expect(support.summary(refreshed)).toStrictEqual({
-          access: Option.some("new-access"),
-          kind: "refreshed",
-          retryAfterMs: Option.none(),
-        })
-      }).pipe(Effect.provide(deadThenRenewedEmpty)),
-  )
-
-  it.effect("clears terminal state when the account is imported again", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-
-      const failure = yield* Effect.flip(support.refresh(yield* original)),
-        importedAgain = yield* original,
-        refreshedAgain = yield* support.refresh(importedAgain)
-
-      expect(failure).toBeInstanceOf(ClaudeAuthTerminalError)
-      expect(support.summary(refreshedAgain).kind).toBe("refreshed")
-    }).pipe(Effect.provide(deadThenRenewedStored)),
-  )
+        expect(support.summary(refreshedAgain).kind).toBe("refreshed")
+      }),
+    )
+  })
 })
 
 describe("the refresh lock on every path", () => {
-  it.effect("defers the lock after a transient, then releases it", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-      yield* support.refresh(yield* original)
+  test.layer(limitedWithHint)((it: Tests) => {
+    it.effect("defers the lock after a transient, then releases it", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
+        yield* support.refresh(yield* original)
 
-      expect(yield* lockEventsSoFar).toStrictEqual([
-        `defer:${RETRY_AFTER_MS}`,
-        "release",
-      ])
-    }).pipe(Effect.provide(limitedWithHint)),
-  )
+        expect(yield* lockEventsSoFar).toStrictEqual([
+          `defer:${RETRY_AFTER_MS}`,
+          "release",
+        ])
+      }),
+    )
+  })
 
-  it.effect("releases the lock after a terminal failure", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-      yield* Effect.flip(support.refresh(yield* original))
+  test.layer(deadToken)((it: Tests) => {
+    it.effect("releases the lock after a terminal failure", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
+        yield* Effect.flip(support.refresh(yield* original))
 
-      expect(yield* lockEventsSoFar).toStrictEqual(["release"])
-    }).pipe(Effect.provide(deadToken)),
-  )
+        expect(yield* lockEventsSoFar).toStrictEqual(["release"])
+      }),
+    )
+  })
 })

@@ -55,7 +55,7 @@ class RequestTransforms extends Context.Service<
       originalByAlias: OriginalByAlias,
     ) => Effect.Effect<Response>
   }
->()("oclaude/RequestTransforms") {
+>()("oclaude/request-transforms/RequestTransforms") {
   /** The live transforms, with one Claude Code session id for their lifetime. */
   public static readonly layer: Layer.Layer<
     RequestTransforms,

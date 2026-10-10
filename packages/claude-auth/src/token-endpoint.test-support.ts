@@ -66,7 +66,7 @@ const BytesBody = Schema.Struct({ body: Schema.Uint8Array }),
 class TokenEndpoint extends Context.Service<
   TokenEndpoint,
   { readonly requests: Effect.Effect<readonly SentRequest[]> }
->()("oclaude/test/TokenEndpoint") {
+>()("oclaude/token-endpoint.test-support/TokenEndpoint") {
   /* Provides `HttpClient` answering with `reply`, and this service to inspect it. */
   public static readonly layer = (
     reply: Effect.Effect<Response, string>,

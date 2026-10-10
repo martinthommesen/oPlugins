@@ -1,4 +1,4 @@
-import { Array as Arr, Context, Effect, Layer, Option } from "effect"
+import { Array as Arr, Context, Effect, Layer, Option, Schema } from "effect"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import type claudeAuth from "./claude-auth-plugin.ts"
 
@@ -21,6 +21,8 @@ interface Slot<Name extends keyof SessionHooks> {
 type Slots = { readonly [Name in keyof SessionHooks]: Slot<Name> }
 
 const FIRST = 0,
+  /** Any JSON value, as text. */
+  Json = Schema.fromJsonString(Schema.Unknown),
   /** What registering a hook hands back; disposal is the scope's job. */
   REGISTRATION = Object.freeze({ dispose: Effect.void }),
   /* An empty slot for one hook. */
@@ -66,7 +68,7 @@ class FakeHooks extends Context.Service<
     /** The options each registration passed, as JSON, in order. */
     readonly options: Effect.Effect<readonly string[]>
   }
->()("oclaude/test/FakeHooks") {
+>()("oclaude/fake-hooks.test-support/FakeHooks") {
   /** Hooks recorded for one test. */
   public static readonly layer: Layer.Layer<FakeHooks> = Layer.sync(
     FakeHooks,
@@ -82,13 +84,19 @@ class FakeHooks extends Context.Service<
             onSome: (handler) => handler(event),
           }),
         hook: (name, handler, options) =>
-          Effect.sync(() => {
-            slots[name].set(handler)
-            order.push(name)
-            passed.push(JSON.stringify(options))
+          Schema.encodeEffect(Json)(options).pipe(
+            // Every registration passes its options, as plain data.
+            Effect.orDie,
+            Effect.flatMap((json) =>
+              Effect.sync(() => {
+                slots[name].set(handler)
+                order.push(name)
+                passed.push(json)
 
-            return REGISTRATION
-          }),
+                return REGISTRATION
+              }),
+            ),
+          ),
         names: Effect.sync(() => [...order]),
         options: Effect.sync(() => [...passed]),
       })

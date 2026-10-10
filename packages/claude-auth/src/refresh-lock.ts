@@ -250,7 +250,7 @@ class RefreshLock extends Context.Service<
       source: string,
     ) => Effect.Effect<Attempt, never, Scope.Scope>
   }
->()("oclaude/RefreshLock") {
+>()("oclaude/refresh-lock/RefreshLock") {
   /** The live lock. */
   public static readonly layer: Layer.Layer<
     RefreshLock,

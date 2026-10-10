@@ -28,7 +28,7 @@ class AnthropicFetch extends Context.Service<
       request: Request,
     ) => Effect.Effect<Response, AnthropicFetchError>
   }
->()("oclaude/AnthropicFetch") {
+>()("oclaude/anthropic-fetch/AnthropicFetch") {
   /** Replays through the runtime's `fetch`. */
   public static readonly layer: Layer.Layer<AnthropicFetch> = Layer.succeed(
     AnthropicFetch,

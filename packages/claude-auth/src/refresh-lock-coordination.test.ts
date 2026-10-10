@@ -1,81 +1,90 @@
 import { Effect, FileSystem } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import CapturedStderr from "./captured-stderr.test-support.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
+import type { Vitest } from "@effect/vitest"
 import support from "./refresh-lock.test-support.ts"
 
-const ALWAYS = Effect.succeed(true),
-  COOLDOWN_MS = 30_000,
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<typeof support.layer> | Scope.Scope
+  >
+}
+
+const COOLDOWN_MS = 30_000,
   COOLDOWN_OVER = 31_000,
-  EARLIER_TICKET = 5,
   FIVE_ASSERTIONS = 5,
   IN_COOLDOWN = 5000,
-  LATER_TICKET = 2,
   LIVE_FOR_MS = 60_000,
   NOW = 0,
   ONE_ASSERTION = 1,
   ONE_LINE = 1,
   ONE_TICKET = 1,
-  OWN_TICKET = 1,
-  RACED_TICKET = 6,
-  RELEASED = 0,
   SHORT_TTL_MS = 1000,
   THREE_ASSERTIONS = 3,
   TTL_MS = 20_000,
   TWO_ASSERTIONS = 2,
-  TWO_TICKETS = 2
+  TWO_TICKETS = 2,
+  /*
+   * Take the lock in `dir`, defer it into a cooldown and release it, then
+   * ask for it again with `ttlMs` while the cooldown runs.
+   */
+  retakenInCooldown = Effect.fn("test.retakenInCooldown")(
+    function* retakenInCooldown(dir: string, ttlMs: number) {
+      const lock = yield* support.held(
+        yield* support.takeLock(dir, SHORT_TTL_MS, NOW),
+      )
+
+      return yield* lock
+        .defer(COOLDOWN_MS)
+        .pipe(
+          Effect.andThen(lock.release),
+          Effect.andThen(support.takeLock(dir, ttlMs, IN_COOLDOWN)),
+        )
+    },
+  )
 
 describe("refresh lock cooldowns", () => {
-  it.effect("preserves a deferred cooldown claim after release", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const dir = yield* support.sandbox,
-        lock = yield* support.held(
-          yield* support.takeLock(dir, SHORT_TTL_MS, NOW),
-        ),
-        pending = yield* lock
-          .defer(COOLDOWN_MS)
-          .pipe(
-            Effect.andThen(lock.release),
-            Effect.andThen(support.takeLock(dir, SHORT_TTL_MS, IN_COOLDOWN)),
-          ),
-        resumed = yield* support.takeLock(dir, SHORT_TTL_MS, COOLDOWN_OVER)
-
-      expect(support.isHeld(pending)).toBe(false)
-      expect(support.isHeld(resumed)).toBe(true)
-    }).pipe(Effect.provide(support.layer)),
-  )
-
-  it.effect(
-    "reports a deferred claim as a cooldown that ends with its lease",
-    () =>
+  test.layer(support.layer)((it: Tests) => {
+    it.effect("preserves a deferred cooldown claim after release", () =>
       Effect.gen(function* run() {
-        expect.assertions(ONE_ASSERTION)
+        expect.assertions(TWO_ASSERTIONS)
 
         const dir = yield* support.sandbox,
-          lock = yield* support.held(
-            yield* support.takeLock(dir, SHORT_TTL_MS, NOW),
-          ),
-          pending = yield* lock
-            .defer(COOLDOWN_MS)
-            .pipe(
-              Effect.andThen(lock.release),
-              Effect.andThen(support.takeLock(dir, TTL_MS, IN_COOLDOWN)),
-            )
+          pending = yield* retakenInCooldown(dir, SHORT_TTL_MS),
+          resumed = yield* support.takeLock(dir, SHORT_TTL_MS, COOLDOWN_OVER)
 
-        /*
-         * Nobody is refreshing, so a caller should not wait for a result that
-         * will not come: it is told how long the cooldown has left instead.
-         */
-        expect(pending).toStrictEqual(
-          LockAttempt.cooldown({ until: support.base + COOLDOWN_MS }),
-        )
-      }).pipe(Effect.provide(support.layer)),
-  )
+        expect(support.isHeld(pending)).toBe(false)
+        expect(support.isHeld(resumed)).toBe(true)
+      }),
+    )
+  })
+
+  test.layer(support.layer)((it: Tests) => {
+    it.effect(
+      "reports a deferred claim as a cooldown that ends with its lease",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(ONE_ASSERTION)
+
+          const dir = yield* support.sandbox,
+            pending = yield* retakenInCooldown(dir, TTL_MS)
+
+          /*
+           * Nobody is refreshing, so a caller should not wait for a result that
+           * will not come: it is told how long the cooldown has left instead.
+           */
+          expect(pending).toStrictEqual(
+            LockAttempt.cooldown({ until: support.base + COOLDOWN_MS }),
+          )
+        }),
+    )
+  })
 })
 
-describe("refresh lock sources", () => {
+test.layer(support.layer)("refresh lock sources", (it: Tests) => {
   it.effect("keeps locks for different sources independent", () =>
     Effect.gen(function* run() {
       expect.assertions(FIVE_ASSERTIONS)
@@ -94,11 +103,11 @@ describe("refresh lock sources", () => {
       expect(tickets.filter((file) => file.endsWith(".lock"))).toHaveLength(
         TWO_TICKETS,
       )
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })
 
-describe("refresh lock tombstones", () => {
+test.layer(support.layer)("refresh lock tombstones", (it: Tests) => {
   it.effect("keeps an expired ticket until a successor commits", () =>
     Effect.gen(function* run() {
       expect.assertions(FIVE_ASSERTIONS)
@@ -121,11 +130,11 @@ describe("refresh lock tombstones", () => {
       expect(successor.degraded).toBe(false)
       expect(tickets).toHaveLength(ONE_TICKET)
       expect(tickets).not.toStrictEqual(released)
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })
 
-describe("refresh lock stray files", () => {
+test.layer(support.layer)("refresh lock stray files", (it: Tests) => {
   it.effect("ignores lock files whose ticket is not a number", () =>
     Effect.gen(function* run() {
       expect.assertions(THREE_ASSERTIONS)
@@ -152,11 +161,11 @@ describe("refresh lock stray files", () => {
       expect(tickets.toSorted()).toStrictEqual(
         [...strays, `${support.prefix}1.lock`].toSorted(),
       )
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })
 
-describe("refresh lock degradation", () => {
+test.layer(support.layer)("refresh lock degradation", (it: Tests) => {
   it.effect(
     "degrades to a marked no-op lock when the lock dir is unusable",
     () =>
@@ -190,106 +199,6 @@ describe("refresh lock degradation", () => {
         expect(
           yield* fs.exists(lockDir).pipe(Effect.orElseSucceed(() => false)),
         ).toBe(false)
-      }).pipe(Effect.provide(support.layer)),
-  )
-})
-
-describe("refresh lock races for the next ticket", () => {
-  it.effect(
-    "backs off when a live claim appears while racing for the next ticket",
-    () =>
-      Effect.gen(function* run() {
-        expect.assertions(TWO_ASSERTIONS)
-
-        /*
-         * The first clock read follows the initial scan and precedes the
-         * exclusive create of ticket 6, so this is the race window.
-         */
-        const dir = yield* support.sandbox,
-          fs = yield* FileSystem.FileSystem,
-          inject = support.writeTicket(
-            dir,
-            RACED_TICKET,
-            support.base + LIVE_FOR_MS,
-          ),
-          race = yield* support
-            .writeTicket(dir, EARLIER_TICKET, RELEASED)
-            .pipe(Effect.andThen(support.withInjection(dir, ALWAYS, inject))),
-          tickets = yield* fs.readDirectory(dir)
-
-        /*
-         * Without the EEXIST rescan this either throws into a degraded lock or
-         * takes ticket 7 over a live holder, and two processes refresh at once.
-         */
-        expect(support.isHeld(race.attempt)).toBe(false)
-        expect(tickets.toSorted()).toStrictEqual([
-          `${support.prefix}5.lock`,
-          `${support.prefix}6.lock`,
-        ])
-      }).pipe(Effect.provide(support.layer)),
-  )
-})
-
-describe("refresh lock races past expired tickets", () => {
-  it.effect("skips past a ticket that was taken but is already expired", () =>
-    Effect.gen(function* run() {
-      expect.assertions(THREE_ASSERTIONS)
-
-      const dir = yield* support.sandbox,
-        fs = yield* FileSystem.FileSystem,
-        inject = support.writeTicket(dir, RACED_TICKET, RELEASED),
-        race = yield* support
-          .writeTicket(dir, EARLIER_TICKET, RELEASED)
-          .pipe(Effect.andThen(support.withInjection(dir, ALWAYS, inject))),
-        tickets = yield* fs.readDirectory(dir)
-
-      // An expired claim does not block the retry.
-      expect(support.isHeld(race.attempt)).toBe(true)
-      expect((yield* support.held(race.attempt)).degraded).toBe(false)
-      /*
-       * Ticket 6 was lost to the race, so the claim lands on 7, and the
-       * commit sweep then removes the expired tombstones below it.
-       */
-      expect(tickets).toStrictEqual([`${support.prefix}7.lock`])
-    }).pipe(Effect.provide(support.layer)),
-  )
-})
-
-describe("refresh lock races after creating a ticket", () => {
-  it.effect(
-    "withdraws a claim when a later ticket is committed meanwhile",
-    () =>
-      Effect.gen(function* run() {
-        expect.assertions(FIVE_ASSERTIONS)
-
-        /*
-         * The first clock read after this caller's ticket exists is the lease
-         * write, which precedes the post-commit supersession scan.
-         */
-        const dir = yield* support.sandbox,
-          fs = yield* FileSystem.FileSystem,
-          own = yield* support.ticketPath(dir, OWN_TICKET),
-          race = yield* support.withInjection(
-            dir,
-            fs.exists(own),
-            support.writeTicket(dir, LATER_TICKET, support.base + LIVE_FOR_MS),
-          ),
-          released = yield* support.leaseExpiry(own),
-          // Once the winner is done, the loser's leftover must not hold anyone up.
-          successor = yield* support
-            .writeTicket(dir, LATER_TICKET, RELEASED)
-            .pipe(Effect.andThen(support.takeLock(dir, TTL_MS, NOW))),
-          tickets = yield* fs.readDirectory(dir)
-
-        // A higher committed ticket wins.
-        expect(support.isHeld(race.attempt)).toBe(false)
-        // The later ticket really appeared after our create.
-        expect(race.injected).toBe(true)
-        // The withdrawn claim is expired so it blocks nobody.
-        expect(released).toBe(RELEASED)
-        // A withdrawn ticket leaves no live claim behind.
-        expect((yield* support.held(successor)).degraded).toBe(false)
-        expect(tickets).toStrictEqual([`${support.prefix}3.lock`])
-      }).pipe(Effect.provide(support.layer)),
+      }),
   )
 })

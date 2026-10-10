@@ -1,11 +1,20 @@
 import { Effect, Match } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import CredentialRefresh from "./credential-refresh.ts"
 import FakeConnection from "./fake-connection.test-support.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
 import { TestClock } from "effect/testing"
+import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof scenario.onHost>> | Scope.Scope
+  >
+}
 
 type Script = typeof PluginRig.quiet
 
@@ -55,40 +64,44 @@ const CACHE_WINDOW_MS = 30_000,
   rotatingHost = scenario.onHost(scenario.ours("first"), rotatesOnSecond)
 
 describe("the request path's source re-check", () => {
-  it.effect(
-    "re-checks the source once per cache window on the request path",
-    () =>
+  test.layer(rotatingHost)((it: Tests) => {
+    it.effect(
+      "re-checks the source once per cache window on the request path",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* TestClock.setTime(CACHE_WINDOW_MS)
+          yield* fakeHost.setUp
+
+          const first = yield* authorization,
+            firstChecks = yield* rechecks,
+            second = yield* nextWindow,
+            secondChecks = yield* rechecks,
+            third = yield* authorization
+
+          expect([first, firstChecks]).toStrictEqual(["Bearer first", ONE])
+          /*
+           * The re-check runs beside the request rather than in front of it, so
+           * a rotation is picked up by the request after. The token it replaces
+           * is still valid, and a 401 recovers through adoption anyway.
+           */
+          expect([second, secondChecks]).toStrictEqual(["Bearer first", TWO])
+          expect([third, yield* rechecks]).toStrictEqual(["Bearer second", TWO])
+        }),
+    )
+  })
+
+  test.layer(expiredHost)((it: Tests) => {
+    it.effect("waits for the re-check when the cached token has expired", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* TestClock.setTime(CACHE_WINDOW_MS)
         yield* fakeHost.setUp
 
-        const first = yield* authorization,
-          firstChecks = yield* rechecks,
-          second = yield* nextWindow,
-          secondChecks = yield* rechecks,
-          third = yield* authorization
-
-        expect([first, firstChecks]).toStrictEqual(["Bearer first", ONE])
-        /*
-         * The re-check runs beside the request rather than in front of it, so
-         * a rotation is picked up by the request after. The token it replaces
-         * is still valid, and a 401 recovers through adoption anyway.
-         */
-        expect([second, secondChecks]).toStrictEqual(["Bearer first", TWO])
-        expect([third, yield* rechecks]).toStrictEqual(["Bearer second", TWO])
-      }).pipe(Effect.provide(rotatingHost)),
-  )
-
-  it.effect("waits for the re-check when the cached token has expired", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* TestClock.setTime(CACHE_WINDOW_MS)
-      yield* fakeHost.setUp
-
-      // Past the cached token's expiry: sending it is a certain 401.
-      expect(yield* authorization).toBe("Bearer second")
-      expect(yield* rechecks).toBe(ONE)
-    }).pipe(Effect.provide(expiredHost)),
-  )
+        // Past the cached token's expiry: sending it is a certain 401.
+        expect(yield* authorization).toBe("Bearer second")
+        expect(yield* rechecks).toBe(ONE)
+      }),
+    )
+  })
 })

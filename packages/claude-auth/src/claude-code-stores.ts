@@ -58,7 +58,7 @@ class ClaudeCodeStores extends Context.Service<
       request: WriteBackRequest,
     ) => Effect.Effect<WriteBackResult>
   }
->()("oclaude/ClaudeCodeStores") {
+>()("oclaude/claude-code-stores/ClaudeCodeStores") {
   /** The stores on this machine. */
   public static readonly layer: Layer.Layer<
     ClaudeCodeStores,

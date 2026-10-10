@@ -30,7 +30,7 @@ class RequestStates extends Context.Service<
       state: RequestState,
     ) => Effect.Effect<void>
   }
->()("oclaude/RequestStates") {
+>()("oclaude/request-states/RequestStates") {
   /** Request states for the plugin's lifetime. */
   public static readonly layer: Layer.Layer<RequestStates> = Layer.effect(
     RequestStates,

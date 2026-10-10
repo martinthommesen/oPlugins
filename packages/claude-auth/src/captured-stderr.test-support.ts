@@ -14,7 +14,7 @@ const decoder = new TextDecoder(),
 class CapturedStderr extends Context.Service<
   CapturedStderr,
   { readonly text: Effect.Effect<string> }
->()("oclaude/test/CapturedStderr") {
+>()("oclaude/captured-stderr.test-support/CapturedStderr") {
   /** Provides `Stdio` with captured stderr, and this service to read it. */
   public static readonly layer: Layer.Layer<CapturedStderr | Stdio.Stdio> =
     Layer.effectContext(

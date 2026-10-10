@@ -234,7 +234,7 @@ class CredentialRefresh extends Context.Service<
       credential: OAuthParts,
     ) => Effect.Effect<Refresh, RefreshError>
   }
->()("oclaude/CredentialRefresh") {
+>()("oclaude/credential-refresh/CredentialRefresh") {
   /** Builds and matches the results of `adopt` and `refresh`. */
   public static readonly Result = RefreshResult
 

@@ -29,6 +29,8 @@ interface Host {
 
 type ClaudeCodeCredential = ReturnType<typeof claudeCodeCredential.fromSource>
 
+type Resolved = Effect.Success<ReturnType<Connection["resolve"]>>
+
 /** What following credential switches uses. */
 type Switches = ActiveCredential | DebugLog
 
@@ -46,20 +48,26 @@ const AnthropicSwitch = Schema.Struct({
       Option.map((error: { readonly message: string }) => error.message),
       Option.getOrElse(() => String(cause)),
     ),
-  /* The Claude Code credential behind the host's active Anthropic connection. */
+  /*
+   * The Claude Code credential behind the host's active Anthropic connection.
+   * The host leaves a failed resolve untyped; it is kept as the cause.
+   */
   lookUpActive = Effect.fn("CredentialSwitches.lookUpActive")(
     function* lookUpActive(connection: Host["connection"]) {
       const active = Option.fromUndefinedOr(
         yield* connection.active(claudeCodeCredential.INTEGRATION_ID),
       )
 
-      if (Option.isNone(active)) {
-        return Option.none<ClaudeCodeCredential>()
+      if (Option.isSome(active)) {
+        const resolving: Effect.Effect<Resolved, Cause.UnknownError> =
+          connection
+            .resolve(active.value)
+            .pipe(Effect.mapError((cause) => new Cause.UnknownError(cause)))
+
+        return claudeCodeCredential.decodeHostValue(yield* resolving)
       }
 
-      return claudeCodeCredential.decodeHostValue(
-        yield* connection.resolve(active.value),
-      )
+      return Option.none<ClaudeCodeCredential>()
     },
   ),
   /*
@@ -70,7 +78,7 @@ const AnthropicSwitch = Schema.Struct({
    */
   makeActive = (
     connection: Host["connection"],
-  ): Effect.Effect<void, unknown, ActiveCredential> =>
+  ): Effect.Effect<void, Cause.UnknownError, ActiveCredential> =>
     ActiveCredential.pipe(
       Effect.flatMap((active) =>
         lookUpActive(connection).pipe(
@@ -86,9 +94,9 @@ const AnthropicSwitch = Schema.Struct({
     DebugLog.pipe(
       Effect.flatMap((debugLog) =>
         makeActive(connection).pipe(
-          Effect.tapError((cause) =>
+          Effect.tapError((failure: { readonly cause?: unknown }) =>
             debugLog.warn("credential_reload_failed", {
-              warning: `could not load the newly selected Anthropic credential, so Claude Code credentials are not applied until the next switch: ${describe(cause)}`,
+              warning: `could not load the newly selected Anthropic credential, so Claude Code credentials are not applied until the next switch: ${describe(failure.cause)}`,
             }),
           ),
           Effect.ignore,

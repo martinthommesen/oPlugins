@@ -1,11 +1,20 @@
 import { Array as Arr, Effect, Match, Option, Ref } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeAuthRefreshExhaustedError from "./claude-auth-refresh-exhausted-error.ts"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import { TestClock } from "effect/testing"
+import type { Vitest } from "@effect/vitest"
 import backoffPolicy from "./refresh-backoff-policy.ts"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
 import support from "./credential-refresh.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+  >
+}
 
 type Script = typeof support.script
 
@@ -138,142 +147,153 @@ const AFTER_LONGEST_COOLDOWN_MS = 61_000,
   unreliableEndpoint = refreshLayer(outageScript, fixtureTokens)
 
 describe("refresh during its own cooldown", () => {
-  it.effect("adopts a rotated source even during its own cooldown", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-
-      const credential = yield* original,
-        failed = yield* support.refresh(credential),
-        rotated = yield* support.currentRig.pipe(
-          Effect.flatMap((rig) =>
-            Ref.set(rig.stored, Option.some(support.tokens("rotated-access"))),
-          ),
-          Effect.andThen(support.refresh(credential)),
-        )
-
-      expect(support.summary(failed).kind).toBe("transient")
-      expect(support.summary(rotated).access).toStrictEqual(
-        Option.some("rotated-access"),
-      )
-      expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
-    }).pipe(Effect.provide(limitedWithoutHint)),
-  )
-
-  it.effect(
-    "returns the existing credential and observes cooldown after a transient",
-    () =>
+  test.layer(limitedWithoutHint)((it: Tests) => {
+    it.effect("adopts a rotated source even during its own cooldown", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
 
         const credential = yield* original,
-          first = yield* support.refresh(credential),
-          second = yield* support.refresh(credential),
-          waitLeft = Option.getOrElse(
-            support.summary(second).retryAfterMs,
-            () => NO_EXCHANGES,
-          )
+          failed = yield* support.refresh(credential),
+          rotated = yield* support
+            .holdInStore(Option.some(support.tokens("rotated-access")))
+            .pipe(Effect.andThen(support.refresh(credential)))
 
-        // The endpoint's retry-after becomes the cooldown, and the caller's.
-        expect(support.summary(first).retryAfterMs).toStrictEqual(
-          Option.some(RETRY_AFTER_MS),
+        expect(support.summary(failed).kind).toBe("transient")
+        expect(support.summary(rotated).access).toStrictEqual(
+          Option.some("rotated-access"),
         )
-        expect(support.summary(second).kind).toBe("transient")
-        expect(waitLeft).toBeGreaterThan(NO_EXCHANGES)
-        expect(waitLeft).toBeLessThanOrEqual(RETRY_AFTER_MS)
         expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
-      }).pipe(Effect.provide(limitedWithHint)),
-  )
+      }),
+    )
+  })
+
+  test.layer(limitedWithHint)((it: Tests) => {
+    it.effect(
+      "returns the existing credential and observes cooldown after a transient",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const credential = yield* original,
+            first = yield* support.refresh(credential),
+            second = yield* support.refresh(credential),
+            waitLeft = Option.getOrElse(
+              support.summary(second).retryAfterMs,
+              () => NO_EXCHANGES,
+            )
+
+          // The endpoint's retry-after becomes the cooldown, and the caller's.
+          expect(support.summary(first).retryAfterMs).toStrictEqual(
+            Option.some(RETRY_AFTER_MS),
+          )
+          expect(support.summary(second).kind).toBe("transient")
+          expect(waitLeft).toBeGreaterThan(NO_EXCHANGES)
+          expect(waitLeft).toBeLessThanOrEqual(RETRY_AFTER_MS)
+          expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
+        }),
+    )
+  })
 })
 
-describe("cooldown across credential generations", () => {
-  it.effect("shares transient cooldown across credential generations", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-
-      /*
-       * Both generations are imported before either refreshes, as at
-       * startup: importing an account clears its store's backoff.
-       */
-      const asImported = yield* Effect.all([original, otherGeneration]),
-        first = yield* support.refresh(asImported[FIRST]),
-        second = yield* support.refresh(asImported[SECOND])
-
-      expect([
-        support.summary(first).kind,
-        support.summary(second).kind,
-      ]).toStrictEqual(["transient", "transient"])
-      expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
-    }).pipe(Effect.provide(nothingStoredLimited)),
-  )
-})
-
-describe("refresh through an endpoint outage", () => {
-  it.effect(
-    "reports repeated transient failures without demanding re-authentication",
-    () =>
+test.layer(nothingStoredLimited)(
+  "cooldown across credential generations",
+  (it: Tests) => {
+    it.effect("shares transient cooldown across credential generations", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
 
-        const result = yield* outage(yield* original)
-
-        expect(result.failure).toBeInstanceOf(ClaudeAuthRefreshExhaustedError)
-        expect(result.failure.message).toMatch(
-          /failed 10 times in a row \(HTTP 503\)/u,
-        )
-        expect(result.failure.message).not.toMatch(/Run `claude`/u)
         /*
-         * The refresh token was never rejected, so once the outage ends the
-         * next attempt after the cooldown goes through instead of staying
-         * blocked.
+         * Both generations are imported before either refreshes, as at
+         * startup: importing an account clears its store's backoff.
          */
-        expect({
-          exchangesAtFailure: result.exchangesAtFailure,
-          kinds: result.kinds,
-          recovered: result.recovered,
-        }).toStrictEqual({
-          exchangesAtFailure: backoffPolicy.MAX_CONSECUTIVE_TRANSIENT,
-          kinds: transientRun,
-          recovered: "refreshed",
-        })
-        expect(yield* exchangesSoFar).toHaveLength(
-          backoffPolicy.MAX_CONSECUTIVE_TRANSIENT + ONE_EXCHANGE,
-        )
-      }).pipe(Effect.provide(unreliableEndpoint)),
-  )
-})
+        const asImported = yield* Effect.all([original, otherGeneration]),
+          first = yield* support.refresh(asImported[FIRST]),
+          second = yield* support.refresh(asImported[SECOND])
+
+        expect([
+          support.summary(first).kind,
+          support.summary(second).kind,
+        ]).toStrictEqual(["transient", "transient"])
+        expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
+      }),
+    )
+  },
+)
+
+test.layer(unreliableEndpoint)(
+  "refresh through an endpoint outage",
+  (it: Tests) => {
+    it.effect(
+      "reports repeated transient failures without demanding re-authentication",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const result = yield* outage(yield* original)
+
+          expect(result.failure).toBeInstanceOf(ClaudeAuthRefreshExhaustedError)
+          expect(result.failure.message).toMatch(
+            /failed 10 times in a row \(HTTP 503\)/u,
+          )
+          expect(result.failure.message).not.toMatch(/Run `claude`/u)
+          /*
+           * The refresh token was never rejected, so once the outage ends the
+           * next attempt after the cooldown goes through instead of staying
+           * blocked.
+           */
+          expect({
+            exchangesAtFailure: result.exchangesAtFailure,
+            kinds: result.kinds,
+            recovered: result.recovered,
+          }).toStrictEqual({
+            exchangesAtFailure: backoffPolicy.MAX_CONSECUTIVE_TRANSIENT,
+            kinds: transientRun,
+            recovered: "refreshed",
+          })
+          expect(yield* exchangesSoFar).toHaveLength(
+            backoffPolicy.MAX_CONSECUTIVE_TRANSIENT + ONE_EXCHANGE,
+          )
+        }),
+    )
+  },
+)
 
 describe("refresh while the store cannot be read", () => {
-  it.effect(
-    "does not spend the refresh token while the source cannot be read",
-    () =>
+  test.layer(lockedKeychain)((it: Tests) => {
+    it.effect(
+      "does not spend the refresh token while the source cannot be read",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          /*
+           * Refreshing now would rotate the token Claude Code holds without
+           * any way to write the replacement back.
+           */
+          const result = yield* support.refresh(yield* original)
+
+          expect(support.summary(result).kind).toBe("transient")
+          expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
+        }),
+    )
+  })
+
+  test.layer(lockedKeychain)((it: Tests) => {
+    it.effect("names the unreadable source once retries run out", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
 
-        /*
-         * Refreshing now would rotate the token Claude Code holds without
-         * any way to write the replacement back.
-         */
-        const result = yield* support.refresh(yield* original)
+        const credential = yield* original,
+          failure = yield* exhaust(credential)
 
-        expect(support.summary(result).kind).toBe("transient")
-        expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
-      }).pipe(Effect.provide(lockedKeychain)),
-  )
-
-  it.effect("names the unreadable source once retries run out", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-
-      const credential = yield* original,
-        failure = yield* exhaust(credential)
-
-      expect(failure.message).toMatch(/Keychain is locked/u)
-    }).pipe(Effect.provide(lockedKeychain)),
-  )
+        expect(failure.message).toMatch(/Keychain is locked/u)
+      }),
+    )
+  })
 })

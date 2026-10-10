@@ -151,7 +151,7 @@ class RefreshBackoff extends Context.Service<
     /** Consecutive transient failures recorded for `key`. */
     readonly transientCount: (key: string) => Effect.Effect<number>
   }
->()("oclaude/RefreshBackoff") {
+>()("oclaude/refresh-backoff/RefreshBackoff") {
   /** A fresh tracker whose base cooldown comes from the environment. */
   public static readonly layer: Layer.Layer<
     RefreshBackoff,

@@ -1,10 +1,23 @@
-import { Effect, Option } from "effect"
-import { describe, expect, it } from "@effect/vitest"
-import type { Cause } from "effect"
+import type { Cause, Scope } from "effect"
+import { Effect, Layer, Option } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import RequestTransforms from "./request-transforms.ts"
+import type { Vitest } from "@effect/vitest"
 import requestBodyAliases from "./request-body-aliases.ts"
 import support from "./request-transforms.test-support.ts"
 import toolAliases from "./tool-aliases.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof support.layer>> | Scope.Scope
+  >
+}
+
+/** The `it` of a `test.layer` block that provides no services. */
+interface PureTests {
+  readonly effect: Vitest.Test<Scope.Scope>
+}
 
 /** An aliased body as text, with the aliases applied. */
 interface AliasedText {
@@ -13,9 +26,20 @@ interface AliasedText {
 }
 
 const FIVE_ASSERTIONS = 5,
+  /** A body naming its model, with a tool to alias. */
+  MODEL_BODY = JSON.stringify({
+    model: "claude-opus-4-1",
+    tools: [{ name: "read" }],
+  }),
+  /** A body whose model is not a name. */
+  NUMERIC_MODEL_BODY = JSON.stringify({ model: 4 }),
   ONE_ASSERTION = 1,
   THREE_ASSERTIONS = 3,
   TWO_ASSERTIONS = 2,
+  /** A body offering no tools at all. */
+  UNTOOLED_BODY = JSON.stringify({
+    messages: [{ content: "hi", role: "user" }],
+  }),
   /* A body with offered, chosen and called tools under these names. */
   historyPayload = ([offered, custom, called]: readonly [
     string,
@@ -42,6 +66,9 @@ const FIVE_ASSERTIONS = 5,
         { name: "web_search", type: "web_search_20250305" },
       ],
     }),
+  /* A tool reference block naming `name`, as JSON. */
+  referenceTo = (name: string): string =>
+    JSON.stringify({ tool_name: name, type: "tool_reference" }),
   /* A body that offers `toolName` deferred and references `referenced`. */
   searchPayload = (toolName: string, referenced: string): string =>
     JSON.stringify({
@@ -98,7 +125,7 @@ const FIVE_ASSERTIONS = 5,
       })),
     )
 
-describe("request body tool references", () => {
+test.layer(Layer.empty)("request body tool references", (it: PureTests) => {
   it.effect(
     "aliases deferred tool references while preserving modern model settings",
     () =>
@@ -111,113 +138,114 @@ describe("request body tool references", () => {
         expect(transformed.originalByAlias).toStrictEqual({ mcp_Read: "read" })
         expect(
           toolAliases.restore(
-            JSON.stringify({ tool_name: "mcp_Read", type: "tool_reference" }),
+            referenceTo("mcp_Read"),
             transformed.originalByAlias,
           ),
-        ).toBe(JSON.stringify({ tool_name: "read", type: "tool_reference" }))
+        ).toBe(referenceTo("read"))
       }),
   )
 })
 
 describe("request body tool names", () => {
-  it.effect("aliases client tools, tool choice, and tool_use history", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
-      expect(
-        yield* wiredText(historyPayload(["shell", "read", "grep"])),
-      ).toStrictEqual({
-        originalByAlias: {
-          mcp_Grep: "grep",
-          mcp_Read: "read",
-          mcp_Shell: "shell",
-        },
-        text: historyPayload(["mcp_Shell", "mcp_Read", "mcp_Grep"]),
-      })
-    }),
-  )
+  test.layer(Layer.empty)((it: PureTests) => {
+    it.effect("aliases client tools, tool choice, and tool_use history", () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
+        expect(
+          yield* wiredText(historyPayload(["shell", "read", "grep"])),
+        ).toStrictEqual({
+          originalByAlias: {
+            mcp_Grep: "grep",
+            mcp_Read: "read",
+            mcp_Shell: "shell",
+          },
+          text: historyPayload(["mcp_Shell", "mcp_Read", "mcp_Grep"]),
+        })
+      }),
+    )
+  })
 
-  it.effect("keeps aliases one-to-one when names collide", () =>
-    Effect.gen(function* run() {
-      expect.assertions(THREE_ASSERTIONS)
+  test.layer(Layer.empty)((it: PureTests) => {
+    it.effect("keeps aliases one-to-one when names collide", () =>
+      Effect.gen(function* run() {
+        expect.assertions(THREE_ASSERTIONS)
 
-      const collide = yield* wiredText(toolList(["foo", "Foo"])),
-        taken = yield* wiredText(toolList(["mcp_Foo", "foo"]))
+        const collide = yield* wiredText(toolList(["foo", "Foo"])),
+          taken = yield* wiredText(toolList(["mcp_Foo", "foo"]))
 
-      expect(collide).toStrictEqual({
-        originalByAlias: { mcp_Foo: "foo" },
-        text: toolList(["mcp_Foo", "Foo"]),
-      })
-      expect(taken).toStrictEqual({
-        originalByAlias: {},
-        text: toolList(["mcp_Foo", "foo"]),
-      })
-      expect(
-        toolAliases.restore('{"name":"mcp_Foo"}', taken.originalByAlias),
-      ).toBe('{"name":"mcp_Foo"}')
-    }),
-  )
+        expect(collide).toStrictEqual({
+          originalByAlias: { mcp_Foo: "foo" },
+          text: toolList(["mcp_Foo", "Foo"]),
+        })
+        expect(taken).toStrictEqual({
+          originalByAlias: {},
+          text: toolList(["mcp_Foo", "foo"]),
+        })
+        expect(
+          toolAliases.restore('{"name":"mcp_Foo"}', taken.originalByAlias),
+        ).toBe('{"name":"mcp_Foo"}')
+      }),
+    )
+  })
 })
 
-describe("request body model", () => {
+test.layer(Layer.empty)("request body model", (it: PureTests) => {
   it.effect("reads the model the body names before it rewrites anything", () =>
     Effect.sync(() => {
       expect.assertions(THREE_ASSERTIONS)
-      expect(
-        wireModel(
-          JSON.stringify({
-            model: "claude-opus-4-1",
-            tools: [{ name: "read" }],
-          }),
-        ),
-      ).toStrictEqual(Option.some("claude-opus-4-1"))
-      expect(wireModel(JSON.stringify({ model: 4 }))).toStrictEqual(
-        Option.none(),
+      expect(wireModel(MODEL_BODY)).toStrictEqual(
+        Option.some("claude-opus-4-1"),
       )
+      expect(wireModel(NUMERIC_MODEL_BODY)).toStrictEqual(Option.none())
       expect(wireModel("not json")).toStrictEqual(Option.none())
     }),
   )
 })
 
 describe("request body pass-through", () => {
-  it.effect("passes through bodies with nothing to alias", () =>
-    Effect.gen(function* run() {
-      expect.assertions(FIVE_ASSERTIONS)
+  test.layer(Layer.empty)((it: PureTests) => {
+    it.effect("passes through bodies with nothing to alias", () =>
+      Effect.gen(function* run() {
+        expect.assertions(FIVE_ASSERTIONS)
 
-      const alreadyAliased = yield* wiredText(
-          toolList(["mcp_Playwright_click"]),
-        ),
-        noTools = textEncoder.encode(
-          JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
-        ),
-        plain = textEncoder.encode("complete-body"),
-        result = yield* Effect.fromOption(requestBodyAliases.alias(noTools))
-
-      expect(Option.isNone(requestBodyAliases.alias(plain))).toBe(true)
-      expect(result.body).toBe(noTools)
-      expect(result.originalByAlias).toStrictEqual({})
-      expect(alreadyAliased.originalByAlias).toStrictEqual({})
-      expect(alreadyAliased.text).toBe(toolList(["mcp_Playwright_click"]))
-    }),
-  )
-
-  it.effect("sends a body that is not JSON byte for byte", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const api = yield* RequestTransforms,
-        transformed = yield* api.request(
-          support.httpEvent(
-            new Request("https://api.anthropic.com/v1/messages", {
-              body: "complete-body",
-              method: "POST",
-            }),
-            "claude-sonnet-4-5",
+        const alreadyAliased = yield* wiredText(
+            toolList(["mcp_Playwright_click"]),
           ),
-          { access: "access" },
-        )
+          noTools = textEncoder.encode(UNTOOLED_BODY),
+          plain = textEncoder.encode("complete-body"),
+          result = yield* Effect.fromOption(requestBodyAliases.alias(noTools))
 
-      expect(yield* support.bodyText(transformed.request)).toBe("complete-body")
-      expect(transformed.originalByAlias).toStrictEqual({})
-    }).pipe(Effect.provide(support.layer())),
-  )
+        expect(Option.isNone(requestBodyAliases.alias(plain))).toBe(true)
+        expect(result.body).toBe(noTools)
+        expect(result.originalByAlias).toStrictEqual({})
+        expect(alreadyAliased.originalByAlias).toStrictEqual({})
+        expect(alreadyAliased.text).toBe(toolList(["mcp_Playwright_click"]))
+      }),
+    )
+  })
+
+  test.layer(support.layer())((it: Tests) => {
+    it.effect("sends a body that is not JSON byte for byte", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
+
+        const api = yield* RequestTransforms,
+          transformed = yield* api.request(
+            support.httpEvent(
+              new Request("https://api.anthropic.com/v1/messages", {
+                body: "complete-body",
+                method: "POST",
+              }),
+              "claude-sonnet-4-5",
+            ),
+            { access: "access" },
+          )
+
+        expect(yield* support.bodyText(transformed.request)).toBe(
+          "complete-body",
+        )
+        expect(transformed.originalByAlias).toStrictEqual({})
+      }),
+    )
+  })
 })

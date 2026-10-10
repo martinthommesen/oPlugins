@@ -1,14 +1,27 @@
-import { Effect, Exit, Match, Option } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import { Cause, Effect, Exit, Match, Option } from "effect"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import FakeIntegration from "./fake-integration.test-support.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
+import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof scenario.onHost>> | Scope.Scope
+  >
+}
 
 type Script = typeof PluginRig.quiet
 
 type Credential = ReturnType<typeof scenario.imported>
+
+type Method = Effect.Success<FakeIntegration["Service"]["method"]>
+
+type Authorization = Effect.Success<ReturnType<Method["authorize"]>>
 
 /*
  * Real Keychain service names: credential metadata is validated on the way
@@ -45,28 +58,55 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
       fetch: PluginRig.quiet.fetch,
       refresh,
     }),
+  /*
+   * The authorization the registered method offers for `answer`. The host
+   * leaves the method's failures untyped; each is kept as the cause.
+   */
+  authorizationFor = Effect.fn("test.authorizationFor")(
+    function* authorizationFor(answer: Readonly<Record<string, string>>) {
+      const method = yield* (yield* FakeIntegration).method,
+        offering: Effect.Effect<
+          Authorization,
+          Cause.UnknownError,
+          Scope.Scope
+        > = method
+          .authorize(answer)
+          .pipe(Effect.mapError((cause) => new Cause.UnknownError(cause)))
+
+      return yield* offering
+    },
+  ),
   /* What the host's refresh callback returns for the credential holding `access`. */
-  hostRefreshes = (
+  hostRefreshes = Effect.fn("test.hostRefreshes")(function* hostRefreshes(
     access: string,
-  ): Effect.Effect<Credential, unknown, FakeIntegration> =>
-    FakeIntegration.pipe(
-      Effect.flatMap((integration) => integration.method),
-      Effect.flatMap((method) =>
-        Effect.fromOption(Option.fromUndefinedOr(method.refresh)),
+  ) {
+    const method = yield* (yield* FakeIntegration).method,
+      refresh = yield* Effect.fromOption(
+        Option.fromUndefinedOr(method.refresh),
       ),
-      Effect.flatMap((refresh) => refresh(scenario.imported(access))),
-    ),
+      refreshing: Effect.Effect<Credential, Cause.UnknownError> = refresh(
+        scenario.imported(access),
+      ).pipe(Effect.mapError((cause) => new Cause.UnknownError(cause)))
+
+    return yield* refreshing
+  }),
   /* The credential an authorization hands the host, for an automatic one. */
   importedBy = Effect.fn("test.importedBy")(function* importedBy(
     answer: Readonly<Record<string, string>>,
   ) {
-    const method = yield* (yield* FakeIntegration).method,
-      offer = yield* method.authorize(answer)
+    const offer = yield* authorizationFor(answer),
+      redeemed: Effect.Effect<Credential, Cause.UnknownError> = Match.value(
+        offer,
+      ).pipe(
+        Match.when({ mode: "auto" }, (automatic) =>
+          automatic.callback.pipe(
+            Effect.mapError((cause) => new Cause.UnknownError(cause)),
+          ),
+        ),
+        Match.orElse(() => Effect.die("expected an automatic authorization")),
+      )
 
-    return yield* Match.value(offer).pipe(
-      Match.when({ mode: "auto" }, (automatic) => automatic.callback),
-      Match.orElse(() => Effect.die("expected an automatic authorization")),
-    )
+    return yield* redeemed
   }),
   /* The access token and label of the account the user picked by `answer`. */
   importedWithLabel = Effect.fn("test.importedWithLabel")(
@@ -103,48 +143,54 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   )
 
 describe("the /connect method", () => {
-  it.effect("registers the exact auto authorization method", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* fakeHost.setUp
-
-      const method = yield* (yield* FakeIntegration).method
-
-      expect([method.integrationID, method.method]).toStrictEqual([
-        "anthropic",
-        CONNECT_METHOD,
-      ])
-    }).pipe(Effect.provide(withAccounts)),
-  )
-
-  it.effect("imports the selected account with its persisted label", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* fakeHost.setUp
-
-      expect(yield* importedWithLabel({ account: ACCOUNT_B })).toStrictEqual({
-        access: "two-access",
-        label: Option.some(`Claude Pro: ${ACCOUNT_B}`),
-      })
-    }).pipe(Effect.provide(withAccounts)),
-  )
-
-  it.effect(
-    "reports a startup discovery failure from /connect instead of 'no credentials'",
-    () =>
+  test.layer(withAccounts)((it: Tests) => {
+    it.effect("registers the exact auto authorization method", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* fakeHost.setUp
 
-        const attempt = yield* Effect.exit(importedBy({}))
+        const method = yield* (yield* FakeIntegration).method
 
-        expect(Exit.isFailure(attempt)).toBe(true)
-        expect(String(attempt)).toMatch(/Keychain is locked/u)
-      }).pipe(Effect.provide(lockedKeychain)),
-  )
+        expect([method.integrationID, method.method]).toStrictEqual([
+          "anthropic",
+          CONNECT_METHOD,
+        ])
+      }),
+    )
+  })
+
+  test.layer(withAccounts)((it: Tests) => {
+    it.effect("imports the selected account with its persisted label", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* fakeHost.setUp
+
+        expect(yield* importedWithLabel({ account: ACCOUNT_B })).toStrictEqual({
+          access: "two-access",
+          label: Option.some(`Claude Pro: ${ACCOUNT_B}`),
+        })
+      }),
+    )
+  })
+
+  test.layer(lockedKeychain)((it: Tests) => {
+    it.effect(
+      "reports a startup discovery failure from /connect instead of 'no credentials'",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* fakeHost.setUp
+
+          const attempt = yield* Effect.exit(importedBy({}))
+
+          expect(Exit.isFailure(attempt)).toBe(true)
+          expect(String(attempt)).toMatch(/Keychain is locked/u)
+        }),
+    )
+  })
 })
 
-describe("the host's refresh callback", () => {
+test.layer(refreshingHost)("the host's refresh callback", (it: Tests) => {
   it.effect(
     "keeps the host refresh callback and the request path in step",
     () =>
@@ -158,6 +204,6 @@ describe("the host's refresh callback", () => {
         expect(returned.access).toBe("second")
         // The request path must use the credential the host just refreshed.
         expect(sentAfter.headers.get("authorization")).toBe("Bearer second")
-      }).pipe(Effect.provide(refreshingHost)),
+      }),
   )
 })

@@ -68,10 +68,13 @@ const CREDENTIALS_FILE = ".credentials.json",
   sweepOne = Effect.fn("ClaudeCodeFileStore.sweepOne")(
     function* sweepOne(path: string, now: number) {
       const fs = yield* FileSystem.FileSystem,
-        info = yield* fs.stat(path),
-        modified = Option.getOrElse(info.mtime, () => new Date(now)).getTime()
+        info = yield* fs.stat(path)
 
-      if (now - modified > TEMP_SWEEP_AGE_MS) {
+      // Without a modification time the file counts as just written.
+      if (
+        Option.isSome(info.mtime) &&
+        now - info.mtime.value.getTime() > TEMP_SWEEP_AGE_MS
+      ) {
         yield* fs.remove(path)
       }
     },

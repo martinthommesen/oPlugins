@@ -1,5 +1,5 @@
 import type { Config, Crypto, Path, Stdio } from "effect"
-import { Effect, FileSystem, Layer, Option, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
 import {
   NodeCrypto,
   NodeFileSystem,
@@ -99,9 +99,10 @@ const FIRST = 0,
         Layer.provide(environment),
       )
 
-    return Effect.gen(function* run() {
-      return yield* body(yield* ClaudeCodeStores)
-    }).pipe(Effect.provide(stores))
+    return Layer.build(stores).pipe(
+      Effect.flatMap((context) => body(Context.get(context, ClaudeCodeStores))),
+      Effect.scoped,
+    )
   },
   /*
    * Seed the fake Keychain with `entries`, then run `body` against the stores

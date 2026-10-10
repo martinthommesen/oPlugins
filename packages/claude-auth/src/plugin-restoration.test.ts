@@ -1,10 +1,19 @@
 import { Effect, Struct } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import FakeHooks from "./fake-hooks.test-support.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
+import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
 import transformsSupport from "./request-transforms.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof scenario.onHost>> | Scope.Scope
+  >
+}
 
 const ALIASED_SSE =
     'event: content_block_start\ndata: {"type":"tool_use","name":"mcp_Shell"}\n\n',
@@ -44,38 +53,44 @@ const ALIASED_SSE =
   })
 
 describe("tool names on a successful response", () => {
-  it.effect("returns OpenCode's own tool names on a successful response", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* fakeHost.setUp
+  test.layer(onOurs)((it: Tests) => {
+    it.effect(
+      "returns OpenCode's own tool names on a successful response",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* fakeHost.setUp
 
-      const outbound = yield* scenario.send(scenario.messages(SHELL_BODY)),
-        sent = yield* sentBody(outbound),
-        text = yield* restoredText(outbound)
+          const outbound = yield* scenario.send(scenario.messages(SHELL_BODY)),
+            sent = yield* sentBody(outbound),
+            text = yield* restoredText(outbound)
 
-      expect(sent).toMatch(/"mcp_Shell"/u)
-      expect(text).toMatch(/"name":"shell"/u)
-      expect(text).not.toMatch(/mcp_Shell/u)
-    }).pipe(Effect.provide(onOurs)),
-  )
+          expect(sent).toMatch(/"mcp_Shell"/u)
+          expect(text).toMatch(/"name":"shell"/u)
+          expect(text).not.toMatch(/mcp_Shell/u)
+        }),
+    )
+  })
 
-  it.effect(
-    "keeps restoring when the request hook re-runs on its own output",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-        yield* fakeHost.setUp
+  test.layer(onOurs)((it: Tests) => {
+    it.effect(
+      "keeps restoring when the request hook re-runs on its own output",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* fakeHost.setUp
 
-        const firstPass = yield* scenario.send(scenario.messages(SHELL_BODY)),
-          secondPass = yield* scenario.send(firstPass)
+          const firstPass = yield* scenario.send(scenario.messages(SHELL_BODY)),
+            secondPass = yield* scenario.send(firstPass)
 
-        expect(yield* sentBody(secondPass)).toMatch(/"mcp_Shell"/u)
-        expect(yield* restoredText(secondPass)).toMatch(/"name":"shell"/u)
-      }).pipe(Effect.provide(onOurs)),
-  )
+          expect(yield* sentBody(secondPass)).toMatch(/"mcp_Shell"/u)
+          expect(yield* restoredText(secondPass)).toMatch(/"name":"shell"/u)
+        }),
+    )
+  })
 })
 
-describe("tool names after a 401 recovery", () => {
+test.layer(replaying)("tool names after a 401 recovery", (it: Tests) => {
   it.effect("restores the replayed response after a 401 recovery", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
@@ -88,39 +103,45 @@ describe("tool names after a 401 recovery", () => {
 
       expect(answered.status).toBe(OK)
       expect(yield* bodyOf(answered)).toMatch(/"name":"shell"/u)
-    }).pipe(Effect.provide(replaying)),
+    }),
   )
 })
 
 describe("tool names on an unknown request", () => {
   // No context hook ran, so only the request hook knows these aliases.
-  it.effect(
-    "restores the aliases a request body carried on an unknown request",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-        yield* fakeHost.setUp
+  test.layer(onOurs)((it: Tests) => {
+    it.effect(
+      "restores the aliases a request body carried on an unknown request",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* fakeHost.setUp
 
-        const outbound = yield* scenario.send(scenario.messages(SHELL_BODY))
+          const outbound = yield* scenario.send(scenario.messages(SHELL_BODY))
 
-        expect(yield* restoredText(outbound.clone())).toMatch(/"name":"shell"/u)
-      }).pipe(Effect.provide(onOurs)),
-  )
+          expect(yield* restoredText(outbound.clone())).toMatch(
+            /"name":"shell"/u,
+          )
+        }),
+    )
+  })
 
-  it.effect(
-    "falls back to the session's registered tools for an unknown request",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-        yield* fakeHost.setUp
-        yield* (yield* FakeHooks).fire("context", shellContext)
+  test.layer(onOurs)((it: Tests) => {
+    it.effect(
+      "falls back to the session's registered tools for an unknown request",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* fakeHost.setUp
+          yield* (yield* FakeHooks).fire("context", shellContext)
 
-        const outbound = yield* scenario.send(scenario.messages(SHELL_BODY)),
-          restoredHere = yield* restoredText(outbound.clone()),
-          restoredThere = yield* restoredText(outbound.clone(), "other")
+          const outbound = yield* scenario.send(scenario.messages(SHELL_BODY)),
+            restoredHere = yield* restoredText(outbound.clone()),
+            restoredThere = yield* restoredText(outbound.clone(), "other")
 
-        expect(restoredHere).toMatch(/"name":"shell"/u)
-        expect(restoredThere).toMatch(/mcp_Shell/u)
-      }).pipe(Effect.provide(onOurs)),
-  )
+          expect(restoredHere).toMatch(/"name":"shell"/u)
+          expect(restoredThere).toMatch(/mcp_Shell/u)
+        }),
+    )
+  })
 })

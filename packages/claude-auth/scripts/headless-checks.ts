@@ -51,12 +51,15 @@ const ACCOUNT_LABEL = /Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/mu,
   labelShown = Effect.fn("Headless.accountLabel")(function* labelShown(
     host: Host,
   ) {
-    const auth = yield* hostRun(host, ["auth", "list", "--standalone"])
+    const auth = yield* hostRun(host, ["auth", "list", "--standalone"]),
+      shown = ACCOUNT_LABEL.test(auth)
 
-    if (!ACCOUNT_LABEL.test(auth)) {
-      yield* commands.printError(auth)
-      yield* failWith("Imported Claude account label was not shown")
-    }
+    yield* commands
+      .printError(auth)
+      .pipe(
+        Effect.andThen(failWith("Imported Claude account label was not shown")),
+        Effect.when(Effect.succeed(!shown)),
+      )
   }),
   /*
    * The host's Anthropic models keep their catalog prices. A custom model
@@ -69,13 +72,12 @@ const ACCOUNT_LABEL = /Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/mu,
       models = yield* Schema.decodeUnknownEffect(ModelPrices)(
         yield* fs.readFileString(modelsPath),
       ),
-      subscription = models.filter((model) => model.providerID === "anthropic")
+      subscription = models.filter((model) => model.providerID === "anthropic"),
+      unpriced = subscription.every((model) => model.cost.length === NO_PRICES)
 
-    if (subscription.every((model) => model.cost.length === NO_PRICES)) {
-      yield* failWith(
-        "Anthropic subscription models did not keep native pricing",
-      )
-    }
+    yield* failWith(
+      "Anthropic subscription models did not keep native pricing",
+    ).pipe(Effect.when(Effect.succeed(unpriced)))
   }),
   /*
    * One read-tool round trip: the reply carries the sentinel, and the tool
@@ -86,44 +88,49 @@ const ACCOUNT_LABEL = /Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/mu,
     trip: RoundTrip,
   ) {
     const output = yield* hostRun(host, [
-      "run",
-      "--standalone",
-      "--auto",
-      "--format",
-      "json",
-      "--model",
-      trip.model,
-      `Use the read tool to read ${trip.smoke}, then reply with exactly the file contents.`,
-    ])
+        "run",
+        "--standalone",
+        "--auto",
+        "--format",
+        "json",
+        "--model",
+        trip.model,
+        `Use the read tool to read ${trip.smoke}, then reply with exactly the file contents.`,
+      ]),
+      passed =
+        output.includes(trip.sentinel) &&
+        output.includes('"type":"tool_use"') &&
+        output.includes('"tool":"read"') &&
+        !output.includes('"tool":"mcp_')
 
-    if (
-      !output.includes(trip.sentinel) ||
-      !output.includes('"type":"tool_use"') ||
-      !output.includes('"tool":"read"') ||
-      output.includes('"tool":"mcp_')
-    ) {
-      yield* commands.printError(output)
-      yield* failWith(
-        "Tool round trip did not return the sentinel under OpenCode names",
+    yield* commands
+      .printError(output)
+      .pipe(
+        Effect.andThen(
+          failWith(
+            "Tool round trip did not return the sentinel under OpenCode names",
+          ),
+        ),
+        Effect.when(Effect.succeed(!passed)),
       )
-    }
   }),
   /* The Claude Code method imports the account without a browser login. */
   silentImport = Effect.fn("Headless.autoImport")(function* silentImport(
     host: Host,
   ) {
     const login = yield* hostRun(host, [
-      "auth",
-      "login",
-      "anthropic",
-      "--method",
-      "claude-code",
-      "--standalone",
-    ])
+        "auth",
+        "login",
+        "anthropic",
+        "--method",
+        "claude-code",
+        "--standalone",
+      ]),
+      prompted = URL_PATTERN.test(login)
 
-    if (URL_PATTERN.test(login)) {
-      yield* failWith("Auto import unexpectedly displayed a URL")
-    }
+    yield* failWith("Auto import unexpectedly displayed a URL").pipe(
+      Effect.when(Effect.succeed(prompted)),
+    )
   })
 
 /** The checks the smoke test runs against the installed host. */

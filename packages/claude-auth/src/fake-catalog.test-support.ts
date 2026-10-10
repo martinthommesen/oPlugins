@@ -89,7 +89,7 @@ class FakeCatalog extends Context.Service<
     /** How many times the plugin reloaded the models. */
     readonly reloads: Effect.Effect<number>
   }
->()("oclaude/test/FakeCatalog") {
+>()("oclaude/fake-catalog.test-support/FakeCatalog") {
   /** A catalog for one test. */
   public static readonly layer: Layer.Layer<FakeCatalog> = Layer.sync(
     FakeCatalog,

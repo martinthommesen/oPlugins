@@ -17,7 +17,7 @@ class FakeIntegration extends Context.Service<
     /** The integration transform the plugin is given. */
     readonly transform: Host["integration"]["transform"]
   }
->()("oclaude/test/FakeIntegration") {
+>()("oclaude/fake-integration.test-support/FakeIntegration") {
   /** An integration API for one test. */
   public static readonly layer: Layer.Layer<FakeIntegration> = Layer.sync(
     FakeIntegration,

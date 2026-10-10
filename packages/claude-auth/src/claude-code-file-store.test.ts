@@ -1,7 +1,16 @@
 import { Effect, FileSystem, Option, Schema } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { expect, it as test } from "@effect/vitest"
+import type { Vitest } from "@effect/vitest"
 import files from "./claude-code-file-store.test-support.ts"
 import support from "./claude-code-stores.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<typeof support.layer> | Scope.Scope
+  >
+}
 
 /** The MCP data write-back must keep. */
 const HeldMcp = Schema.Struct({
@@ -23,7 +32,7 @@ const HeldMcp = Schema.Struct({
   THREE_ASSERTIONS = 3,
   TWO_ASSERTIONS = 2
 
-describe("credentials file reads", () => {
+test.layer(support.layer)("credentials file reads", (it: Tests) => {
   it.effect(
     "reads an account's current credentials from the configured file",
     () =>
@@ -45,11 +54,11 @@ describe("credentials file reads", () => {
           ),
         ).toStrictEqual(Option.some("file-access"))
         expect(Option.isNone(reads.missing)).toBe(true)
-      }).pipe(Effect.provide(support.layer)),
+      }),
   )
 })
 
-describe("credentials file discovery", () => {
+test.layer(support.layer)("credentials file discovery", (it: Tests) => {
   it.effect("discovers the configured file source on non-macOS platforms", () =>
     Effect.gen(function* run() {
       expect.assertions(ONE_ASSERTION)
@@ -73,11 +82,11 @@ describe("credentials file discovery", () => {
           source: files.FILE,
         },
       ])
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })
 
-describe("guarded file write-back", () => {
+test.layer(support.layer)("guarded file write-back", (it: Tests) => {
   it.effect("updates the matching source and preserves unrelated data", () =>
     Effect.gen(function* run() {
       expect.assertions(THREE_ASSERTIONS)
@@ -97,11 +106,11 @@ describe("guarded file write-back", () => {
       expect((yield* fs.stat(holder.path)).mode % PERMISSION_MODULUS).toBe(
         PRIVATE_FILE,
       )
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })
 
-describe("guarded file write-back conflicts", () => {
+test.layer(support.layer)("guarded file write-back conflicts", (it: Tests) => {
   it.effect("reports a stale-token conflict without overwriting", () =>
     Effect.gen(function* run() {
       expect.assertions(TWO_ASSERTIONS)
@@ -113,6 +122,6 @@ describe("guarded file write-back conflicts", () => {
       expect(yield* files.fileToken(holder.path)).toStrictEqual(
         Option.some("winner"),
       )
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })

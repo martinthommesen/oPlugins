@@ -155,7 +155,7 @@ class DebugLog extends Context.Service<
     readonly log: (event: string, fields: LogFields) => Effect.Effect<void>
     readonly warn: (event: string, fields: Warning) => Effect.Effect<void>
   }
->()("oclaude/DebugLog") {
+>()("oclaude/debug-log/DebugLog") {
   /** The live logger. */
   public static readonly layer: Layer.Layer<
     DebugLog,

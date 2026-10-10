@@ -1,9 +1,18 @@
 import { Effect, Option } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import type ClaudeCodeStores from "./claude-code-stores.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"
+import type { Vitest } from "@effect/vitest"
 import sources from "./claude-code-sources.ts"
 import support from "./claude-code-stores.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<typeof support.layer> | Scope.Scope
+  >
+}
 
 type Stores = ClaudeCodeStores["Service"]
 
@@ -13,6 +22,11 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
   PRIMARY = sources.PRIMARY_SERVICE,
   THREE_ASSERTIONS = 3,
   TWO_ASSERTIONS = 2,
+  /** The primary item, already holding the tokens of a newer login. */
+  WON_ITEM = [
+    [PRIMARY, support.credentialBlob("winner")],
+    [ACCOUNT, "me@example.com"],
+  ] as const,
   WRITTEN_AS = `${sources.PRIMARY_SERVICE}.written-as`,
   /* The primary item holding `old` under an account, plus `extra` files. */
   primaryWith = (
@@ -40,140 +54,162 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
     })
 
 describe("keychain write-back retry", () => {
-  it.effect("tries once more when a write does not land", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const keychain = yield* FakeKeychain,
-        result = yield* support.onMac(
-          primaryWith([[`${PRIMARY}.drop-once`, ""]]),
-          refreshing(PRIMARY, "old"),
-        ),
-        writes = (yield* keychain.argv).filter(
-          (argv) => JSON.stringify(argv) === INTERACTIVE,
-        )
-
-      expect(result).toBe("written")
-      expect(writes).toHaveLength(TWO_ASSERTIONS)
-    }).pipe(Effect.provide(support.layer)),
-  )
-
-  it.effect("keeps the original guard token when it tries again", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      // The write is lost and the user runs `claude` before the next attempt.
-      // Re-reading the guard token then would compare the item against
-      // Itself and overwrite that login.
-      const result = yield* support.onMac(
-        primaryWith([
-          [`${PRIMARY}.drop-once`, support.credentialBlob("external")],
-        ]),
-        refreshing(PRIMARY, "old"),
-      )
-
-      expect(result).toBe("conflict")
-      expect(yield* storedToken(PRIMARY)).toStrictEqual(Option.some("external"))
-    }).pipe(Effect.provide(support.layer)),
-  )
-})
-
-describe("keychain write-back of a lost write", () => {
-  it.effect("reports a write that did not land as unavailable", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const result = yield* support.onMac(
-        primaryWith([[`${PRIMARY}.drop`, ""]]),
-        refreshing(PRIMARY, "old"),
-      )
-
-      expect(result).toBe("unavailable")
-      expect(yield* storedToken(PRIMARY)).toStrictEqual(Option.some("old"))
-    }).pipe(Effect.provide(support.layer)),
-  )
-})
-
-describe("keychain write-back guard", () => {
-  it.effect(
-    "reports a stale-token conflict and a missing item as failure",
-    () =>
+  test.layer(support.layer)((it: Tests) => {
+    it.effect("tries once more when a write does not land", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
-        const results = yield* support.onMac(
-          [
-            [PRIMARY, support.credentialBlob("winner")],
-            [ACCOUNT, "me@example.com"],
-          ],
-          (stores) =>
-            Effect.all([
-              refreshing(PRIMARY, "old")(stores),
-              refreshing(`${PRIMARY}-deadbeef`, "old")(stores),
-            ]),
-        )
+        const keychain = yield* FakeKeychain,
+          result = yield* support.onMac(
+            primaryWith([[`${PRIMARY}.drop-once`, ""]]),
+            refreshing(PRIMARY, "old"),
+          ),
+          writes = (yield* keychain.argv).filter(
+            (argv) => JSON.stringify(argv) === INTERACTIVE,
+          )
 
-        expect(results).toStrictEqual(["conflict", "failed"])
-        expect(yield* storedToken(PRIMARY)).toStrictEqual(Option.some("winner"))
-      }).pipe(Effect.provide(support.layer)),
-  )
+        expect(result).toBe("written")
+        expect(writes).toHaveLength(TWO_ASSERTIONS)
+      }),
+    )
+  })
 
-  it.effect("declines when the item rotates while the write is prepared", () =>
-    Effect.gen(function* run() {
-      expect.assertions(THREE_ASSERTIONS)
+  test.layer(support.layer)((it: Tests) => {
+    it.effect("keeps the original guard token when it tries again", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
 
-      const keychain = yield* FakeKeychain,
-        result = yield* support.onMac(
+        // The write is lost and the user runs `claude` before the next attempt.
+        // Re-reading the guard token then would compare the item against
+        // Itself and overwrite that login.
+        const result = yield* support.onMac(
           primaryWith([
-            [`${PRIMARY}.flip`, support.credentialBlob("external")],
+            [`${PRIMARY}.drop-once`, support.credentialBlob("external")],
           ]),
           refreshing(PRIMARY, "old"),
         )
 
-      expect(result).toBe("conflict")
-      expect(yield* storedToken(PRIMARY)).toStrictEqual(Option.some("external"))
-      expect(Option.isNone(yield* keychain.read(WRITTEN_AS))).toBe(true)
-    }).pipe(Effect.provide(support.layer)),
-  )
+        expect(result).toBe("conflict")
+        expect(yield* storedToken(PRIMARY)).toStrictEqual(
+          Option.some("external"),
+        )
+      }),
+    )
+  })
 })
 
-describe("keychain write-back over a blob it cannot identify", () => {
-  it.effect("fails rather than writing over a blob that stopped parsing", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
+test.layer(support.layer)(
+  "keychain write-back of a lost write",
+  (it: Tests) => {
+    it.effect("reports a write that did not land as unavailable", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
 
-      const keychain = yield* FakeKeychain,
-        result = yield* support.onMac(
-          primaryWith([[`${PRIMARY}.flip`, "{ truncated"]]),
+        const result = yield* support.onMac(
+          primaryWith([[`${PRIMARY}.drop`, ""]]),
           refreshing(PRIMARY, "old"),
         )
 
-      expect(result).toBe("failed")
-      expect(yield* keychain.read(PRIMARY)).toStrictEqual(
-        Option.some("{ truncated"),
-      )
-    }).pipe(Effect.provide(support.layer)),
-  )
+        expect(result).toBe("unavailable")
+        expect(yield* storedToken(PRIMARY)).toStrictEqual(Option.some("old"))
+      }),
+    )
+  },
+)
 
-  it.effect("refuses a source name that is not a Claude Code item", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
+describe("keychain write-back guard", () => {
+  test.layer(support.layer)((it: Tests) => {
+    it.effect(
+      "reports a stale-token conflict and a missing item as failure",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(TWO_ASSERTIONS)
 
-      const result = yield* support.onMac(
-        [
-          [OTHER_APP, support.credentialBlob("theirs")],
-          [`${OTHER_APP}.account`, "them@example.com"],
-        ],
-        refreshing(OTHER_APP, "theirs"),
-      )
+          const results = yield* support.onMac(WON_ITEM, (stores) =>
+            Effect.all([
+              refreshing(PRIMARY, "old")(stores),
+              refreshing(`${PRIMARY}-deadbeef`, "old")(stores),
+            ]),
+          )
 
-      expect(result).toBe("failed")
-      expect(yield* storedToken(OTHER_APP)).toStrictEqual(Option.some("theirs"))
-    }).pipe(Effect.provide(support.layer)),
-  )
+          expect(results).toStrictEqual(["conflict", "failed"])
+          expect(yield* storedToken(PRIMARY)).toStrictEqual(
+            Option.some("winner"),
+          )
+        }),
+    )
+  })
+
+  test.layer(support.layer)((it: Tests) => {
+    it.effect(
+      "declines when the item rotates while the write is prepared",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(THREE_ASSERTIONS)
+
+          const keychain = yield* FakeKeychain,
+            result = yield* support.onMac(
+              primaryWith([
+                [`${PRIMARY}.flip`, support.credentialBlob("external")],
+              ]),
+              refreshing(PRIMARY, "old"),
+            )
+
+          expect(result).toBe("conflict")
+          expect(yield* storedToken(PRIMARY)).toStrictEqual(
+            Option.some("external"),
+          )
+          expect(Option.isNone(yield* keychain.read(WRITTEN_AS))).toBe(true)
+        }),
+    )
+  })
 })
 
-describe("keychain write-back off macOS", () => {
+describe("keychain write-back over a blob it cannot identify", () => {
+  test.layer(support.layer)((it: Tests) => {
+    it.effect(
+      "fails rather than writing over a blob that stopped parsing",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(TWO_ASSERTIONS)
+
+          const keychain = yield* FakeKeychain,
+            result = yield* support.onMac(
+              primaryWith([[`${PRIMARY}.flip`, "{ truncated"]]),
+              refreshing(PRIMARY, "old"),
+            )
+
+          expect(result).toBe("failed")
+          expect(yield* keychain.read(PRIMARY)).toStrictEqual(
+            Option.some("{ truncated"),
+          )
+        }),
+    )
+  })
+
+  test.layer(support.layer)((it: Tests) => {
+    it.effect("refuses a source name that is not a Claude Code item", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
+
+        const result = yield* support.onMac(
+          [
+            [OTHER_APP, support.credentialBlob("theirs")],
+            [`${OTHER_APP}.account`, "them@example.com"],
+          ],
+          refreshing(OTHER_APP, "theirs"),
+        )
+
+        expect(result).toBe("failed")
+        expect(yield* storedToken(OTHER_APP)).toStrictEqual(
+          Option.some("theirs"),
+        )
+      }),
+    )
+  })
+})
+
+test.layer(support.layer)("keychain write-back off macOS", (it: Tests) => {
   it.effect("has no Keychain to write to off macOS", () =>
     Effect.gen(function* run() {
       expect.assertions(TWO_ASSERTIONS)
@@ -187,6 +223,6 @@ describe("keychain write-back off macOS", () => {
 
       expect(result).toBe("failed")
       expect(yield* keychain.argv).toStrictEqual([])
-    }).pipe(Effect.provide(support.layer)),
+    }),
   )
 })

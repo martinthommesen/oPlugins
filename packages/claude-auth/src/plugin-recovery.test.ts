@@ -1,10 +1,19 @@
 import { Effect, Match } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import FakeConnection from "./fake-connection.test-support.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
+import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
 import transformsSupport from "./request-transforms.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof scenario.onHost>> | Scope.Scope
+  >
+}
 
 type Script = typeof PluginRig.quiet
 
@@ -114,7 +123,7 @@ const FIRST_CALL = 1,
   unauthorized = (): Response =>
     new Response("unauthorized", { status: UNAUTHORIZED })
 
-describe("401 recovery by adoption and refresh", () => {
+test.layer(twoStepHost)("401 recovery by adoption and refresh", (it: Tests) => {
   it.effect(
     "replays two independently buffered bodies after adoption and refresh",
     () =>
@@ -135,11 +144,11 @@ describe("401 recovery by adoption and refresh", () => {
           ["complete-body", "Bearer third"],
         ])
         expect(yield* (yield* FakeConnection).resolves).toBe(ONE)
-      }).pipe(Effect.provide(twoStepHost)),
+      }),
   )
 })
 
-describe("401 recovery by adoption alone", () => {
+test.layer(rotatedHost)("401 recovery by adoption alone", (it: Tests) => {
   it.effect("returns the replay after adoption without refreshing again", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
@@ -163,46 +172,50 @@ describe("401 recovery by adoption alone", () => {
       ).toStrictEqual(["Bearer second"])
       expect(yield* (yield* PluginRig).refreshes).toBe(ONE)
       expect(held.released()).toBe(ONE)
-    }).pipe(Effect.provide(rotatedHost)),
+    }),
   )
 })
 
 describe("401 recovery that cannot replay", () => {
-  it.effect(
-    "returns the original 401 when a refresh keeps the same access token",
-    () =>
+  test.layer(sameTokenHost)((it: Tests) => {
+    it.effect(
+      "returns the original 401 when a refresh keeps the same access token",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* fakeHost.setUp
+
+          const answered = yield* scenario.respond(
+            yield* scenario.send(scenario.messages()),
+            unauthorized(),
+          )
+
+          // Replaying the identical bearer token would just earn a second 401.
+          expect(yield* (yield* PluginRig).sent).toStrictEqual([])
+          expect([
+            answered.status,
+            yield* transformsSupport.bodyText(answered),
+          ]).toStrictEqual([UNAUTHORIZED, "unauthorized"])
+        }),
+    )
+  })
+
+  test.layer(quietHost)((it: Tests) => {
+    it.effect("does not replay a turn the caller already aborted", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* fakeHost.setUp
 
-        const answered = yield* scenario.respond(
-          yield* scenario.send(scenario.messages()),
-          unauthorized(),
+        const controller = new AbortController(),
+          outbound = yield* scenario.send(scenario.abortable(controller.signal))
+
+        controller.abort()
+
+        expect((yield* scenario.respond(outbound, unauthorized())).status).toBe(
+          UNAUTHORIZED,
         )
-
-        // Replaying the identical bearer token would just earn a second 401.
-        expect(yield* (yield* PluginRig).sent).toStrictEqual([])
-        expect([
-          answered.status,
-          yield* transformsSupport.bodyText(answered),
-        ]).toStrictEqual([UNAUTHORIZED, "unauthorized"])
-      }).pipe(Effect.provide(sameTokenHost)),
-  )
-
-  it.effect("does not replay a turn the caller already aborted", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* fakeHost.setUp
-
-      const controller = new AbortController(),
-        outbound = yield* scenario.send(scenario.abortable(controller.signal))
-
-      controller.abort()
-
-      expect((yield* scenario.respond(outbound, unauthorized())).status).toBe(
-        UNAUTHORIZED,
-      )
-      expect(yield* (yield* PluginRig).refreshes).toBe(ZERO)
-    }).pipe(Effect.provide(quietHost)),
-  )
+        expect(yield* (yield* PluginRig).refreshes).toBe(ZERO)
+      }),
+    )
+  })
 })

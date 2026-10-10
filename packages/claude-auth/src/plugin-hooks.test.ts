@@ -1,18 +1,29 @@
 import { Effect, Struct } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import FakeCatalog from "./fake-catalog.test-support.ts"
 import FakeConnection from "./fake-connection.test-support.ts"
 import FakeHooks from "./fake-hooks.test-support.ts"
 import { TestClock } from "effect/testing"
+import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
 import sessionContext from "./session-context.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof scenario.onHost>> | Scope.Scope
+  >
+}
 
 /* Past the source cache window, so the request path's re-check is live. */
 const AFTER_CACHE_WINDOW = 30_000,
   ANTHROPIC_ONLY = '{"providerID":"anthropic"}',
   BILLING_HEADER = /^x-anthropic-billing-header:/u,
   FIRST_ARGUMENT = 0,
+  /** The model requests that carry the subscription identity. */
+  IDENTITY_HOOKS = ["context", "compaction", "generate", "title"] as const,
   NATIVE = 1,
   ONE_RESOLVE = 1,
   /* A response carrying one tool call under `name`. */
@@ -37,7 +48,7 @@ const AFTER_CACHE_WINDOW = 30_000,
       .respondAs(kind, scenario.messages(), callOf(name))
       .pipe(Effect.flatMap((response) => namesIn(response)))
 
-describe("plugin hooks", () => {
+test.layer(ours)("plugin hooks", (it: Tests) => {
   it.effect(
     "scopes all hooks to Anthropic and never resolves on the hot path",
     () =>
@@ -67,11 +78,11 @@ describe("plugin hooks", () => {
           ONE_RESOLVE,
           ONE_RESOLVE,
         ])
-      }).pipe(Effect.provide(ours)),
+      }),
   )
 })
 
-describe("plugin pricing", () => {
+test.layer(ours)("plugin pricing", (it: Tests) => {
   it.effect("keeps native model pricing by default", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
@@ -81,31 +92,36 @@ describe("plugin pricing", () => {
         anthropic: NATIVE,
         other: NATIVE,
       })
-    }).pipe(Effect.provide(ours)),
+    }),
   )
 })
 
 describe("plugin identity", () => {
-  it.effect.each(["context", "compaction", "generate", "title"] as const)(
-    "applies subscription identity to the %s model request",
-    (name) =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-        yield* fakeHost.setUp
+  // One block per request, so each test sets up a plugin of its own.
+  for (const name of IDENTITY_HOOKS) {
+    test.layer(ours)((it: Tests) => {
+      it.effect(
+        `applies subscription identity to the ${name} model request`,
+        () =>
+          Effect.gen(function* run() {
+            expect.hasAssertions()
+            yield* fakeHost.setUp
 
-        const event = scenario.contextEvent()
+            const event = scenario.contextEvent()
 
-        yield* (yield* FakeHooks).fire(name, event)
+            yield* (yield* FakeHooks).fire(name, event)
 
-        expect(event.system.map((part) => part.text)).toStrictEqual([
-          expect.stringMatching(BILLING_HEADER),
-          sessionContext.systemIdentity,
-        ])
-      }).pipe(Effect.provide(ours)),
-  )
+            expect(event.system.map((part) => part.text)).toStrictEqual([
+              expect.stringMatching(BILLING_HEADER),
+              sessionContext.systemIdentity,
+            ])
+          }),
+      )
+    })
+  }
 })
 
-describe("plugin aliases for auxiliary requests", () => {
+test.layer(ours)("plugin aliases for auxiliary requests", (it: Tests) => {
   it.effect(
     "keeps primary fallback aliases when an auxiliary request runs",
     () =>
@@ -127,6 +143,6 @@ describe("plugin aliases for auxiliary requests", () => {
           yield* restoredName("generate", "mcp_Edit"),
           yield* restoredName("title", "mcp_Read"),
         ]).toStrictEqual(["read", "edit", "mcp_Read"])
-      }).pipe(Effect.provide(ours)),
+      }),
   )
 })

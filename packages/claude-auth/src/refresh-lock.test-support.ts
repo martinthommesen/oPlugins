@@ -39,6 +39,14 @@ const BASE_TIME = 1_000_000,
   ),
   NANOS_PER_MILLI = 1_000_000n,
   OTHER_PID = 1,
+  /** A lease as another process writes it. */
+  OtherLease = Schema.fromJsonString(
+    Schema.Struct({
+      expiresAt: Schema.Number,
+      owner: Schema.String,
+      pid: Schema.Number,
+    }),
+  ),
   /*
    * First 16 hex of sha256(SOURCE), pinned as a literal so a change to the
    * ticket naming scheme fails here instead of silently orphaning every live
@@ -245,12 +253,14 @@ const BASE_TIME = 1_000_000,
     expiresAt: number,
   ) {
     const fs = yield* FileSystem.FileSystem,
+      lease = yield* Schema.encodeEffect(OtherLease)({
+        expiresAt,
+        owner: "other",
+        pid: OTHER_PID,
+      }).pipe(Effect.orDie),
       path = (yield* Path.Path).join(dir, `${PREFIX}${ticket}.lock`)
 
-    yield* fs.writeFileString(
-      path,
-      JSON.stringify({ expiresAt, owner: "other", pid: OTHER_PID }),
-    )
+    yield* fs.writeFileString(path, lease)
 
     return path
   })

@@ -1,7 +1,16 @@
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import { Effect } from "effect"
 import RequestTransforms from "./request-transforms.ts"
+import type { Vitest } from "@effect/vitest"
 import support from "./request-transforms.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof support.layer>> | Scope.Scope
+  >
+}
 
 const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
   FOUR_ASSERTIONS = 4,
@@ -52,82 +61,90 @@ const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
     })
 
 describe("outbound request replays", () => {
-  it.effect(
-    "buffers independent bodies for the original request and two retries",
-    () =>
+  test.layer(support.layer())((it: Tests) => {
+    it.effect(
+      "buffers independent bodies for the original request and two retries",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(TWO_ASSERTIONS)
+
+          const api = yield* RequestTransforms,
+            original = yield* api.request(sdkEvent(), { access: "first" }),
+            second = yield* api.replay(original.snapshot, { access: "second" }),
+            third = yield* api.replay(original.snapshot, { access: "third" })
+
+          expect(
+            yield* Effect.all([
+              support.bodyText(original.request),
+              support.bodyText(second),
+              support.bodyText(third),
+            ]),
+          ).toStrictEqual([BODY, BODY, BODY])
+          expect(second.headers.get("x-client-request-id")).not.toBe(
+            third.headers.get("x-client-request-id"),
+          )
+        }),
+    )
+  })
+
+  test.layer(support.layer())((it: Tests) => {
+    it.effect(
+      "replays with the new credential and the request's own options",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(FOUR_ASSERTIONS)
+
+          const api = yield* RequestTransforms,
+            original = yield* api.request(sdkEvent(), { access: "first" }),
+            second = yield* api.replay(original.snapshot, { access: "second" }),
+            third = yield* api.replay(original.snapshot, { access: "third" })
+
+          expect(second.headers.get("authorization")).toBe("Bearer second")
+          expect(third.headers.get("authorization")).toBe("Bearer third")
+          expect(second.headers.get("x-custom")).toBe("keep")
+          expect(second.redirect).toBe("manual")
+        }),
+    )
+  })
+})
+
+describe("outbound request URL", () => {
+  test.layer(support.layer())((it: Tests) => {
+    it.effect("adds the beta query parameter and keeps the others", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
         const api = yield* RequestTransforms,
-          original = yield* api.request(sdkEvent(), { access: "first" }),
-          retryOne = yield* api.replay(original.snapshot, { access: "second" }),
-          retryTwo = yield* api.replay(original.snapshot, { access: "third" })
+          transformed = yield* api.request(sdkEvent(), { access: "first" }),
+          url = new URL(transformed.request.url)
 
-        expect(
-          yield* Effect.all([
-            support.bodyText(original.request),
-            support.bodyText(retryOne),
-            support.bodyText(retryTwo),
-          ]),
-        ).toStrictEqual([BODY, BODY, BODY])
-        expect(retryOne.headers.get("x-client-request-id")).not.toBe(
-          retryTwo.headers.get("x-client-request-id"),
-        )
-      }).pipe(Effect.provide(support.layer())),
-  )
+        expect(url.searchParams.get("beta")).toBe("true")
+        expect(url.searchParams.get("existing")).toBe("1")
+      }),
+    )
+  })
 
-  it.effect(
-    "replays with the new credential and the request's own options",
-    () =>
+  test.layer(support.layer())((it: Tests) => {
+    it.effect("does not overwrite an existing beta query parameter", () =>
       Effect.gen(function* run() {
-        expect.assertions(FOUR_ASSERTIONS)
+        expect.assertions(ONE_ASSERTION)
 
-        const api = yield* RequestTransforms,
-          original = yield* api.request(sdkEvent(), { access: "first" }),
-          retryOne = yield* api.replay(original.snapshot, { access: "second" }),
-          retryTwo = yield* api.replay(original.snapshot, { access: "third" })
+        const transformed = yield* transform(
+          support.httpEvent(
+            new Request(`${MESSAGES_URL}?beta=false`),
+            "claude-sonnet-4-5",
+          ),
+        )
 
-        expect(retryOne.headers.get("authorization")).toBe("Bearer second")
-        expect(retryTwo.headers.get("authorization")).toBe("Bearer third")
-        expect(retryOne.headers.get("x-custom")).toBe("keep")
-        expect(retryOne.redirect).toBe("manual")
-      }).pipe(Effect.provide(support.layer())),
-  )
+        expect(new URL(transformed.request.url).searchParams.get("beta")).toBe(
+          "false",
+        )
+      }),
+    )
+  })
 })
 
-describe("outbound request URL", () => {
-  it.effect("adds the beta query parameter and keeps the others", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const api = yield* RequestTransforms,
-        transformed = yield* api.request(sdkEvent(), { access: "first" }),
-        url = new URL(transformed.request.url)
-
-      expect(url.searchParams.get("beta")).toBe("true")
-      expect(url.searchParams.get("existing")).toBe("1")
-    }).pipe(Effect.provide(support.layer())),
-  )
-
-  it.effect("does not overwrite an existing beta query parameter", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
-
-      const transformed = yield* transform(
-        support.httpEvent(
-          new Request(`${MESSAGES_URL}?beta=false`),
-          "claude-sonnet-4-5",
-        ),
-      )
-
-      expect(new URL(transformed.request.url).searchParams.get("beta")).toBe(
-        "false",
-      )
-    }).pipe(Effect.provide(support.layer())),
-  )
-})
-
-describe("outbound request model", () => {
+test.layer(support.layer())("outbound request model", (it: Tests) => {
   it.effect(
     "selects beta flags using the wire model rather than a configured alias",
     () =>
@@ -140,44 +157,52 @@ describe("outbound request model", () => {
         expect(transformed.request.headers.get("anthropic-beta")).not.toContain(
           "effort-2025-11-24",
         )
-      }).pipe(Effect.provide(support.layer())),
+      }),
   )
 })
 
 describe("outbound request tool aliases", () => {
-  it.effect("returns the aliases it applied and keeps them for replays", () =>
-    Effect.gen(function* run() {
-      expect.assertions(THREE_ASSERTIONS)
+  test.layer(support.layer())((it: Tests) => {
+    it.effect("returns the aliases it applied and keeps them for replays", () =>
+      Effect.gen(function* run() {
+        expect.assertions(THREE_ASSERTIONS)
 
-      const api = yield* RequestTransforms,
-        transformed = yield* transform(
-          postEvent(TOOLS_BODY, "claude-sonnet-4-5"),
-        ),
-        wireReplay = yield* api.replay(transformed.snapshot, { access: "next" })
+        const api = yield* RequestTransforms,
+          transformed = yield* transform(
+            postEvent(TOOLS_BODY, "claude-sonnet-4-5"),
+          ),
+          wireReplay = yield* api.replay(transformed.snapshot, {
+            access: "next",
+          })
 
-      expect(transformed.originalByAlias).toStrictEqual({ mcp_Shell: "shell" })
-      expect(yield* support.bodyText(transformed.request)).toMatch(
-        /"mcp_Shell"/u,
-      )
-      expect(yield* support.bodyText(wireReplay)).toMatch(/"mcp_Shell"/u)
-    }).pipe(Effect.provide(support.layer())),
-  )
+        expect(transformed.originalByAlias).toStrictEqual({
+          mcp_Shell: "shell",
+        })
+        expect(yield* support.bodyText(transformed.request)).toMatch(
+          /"mcp_Shell"/u,
+        )
+        expect(yield* support.bodyText(wireReplay)).toMatch(/"mcp_Shell"/u)
+      }),
+    )
+  })
 
-  it.effect("sends a fresh content-length for the aliased body", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
+  test.layer(support.layer())((it: Tests) => {
+    it.effect("sends a fresh content-length for the aliased body", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
 
-      const transformed = yield* transform(
-        postEvent(TOOLS_BODY, "claude-sonnet-4-5", {
-          "content-length": String(TOOLS_BODY.length),
-        }),
-      )
+        const transformed = yield* transform(
+          postEvent(TOOLS_BODY, "claude-sonnet-4-5", {
+            "content-length": String(TOOLS_BODY.length),
+          }),
+        )
 
-      // No copied header: fetch derives the length from the body it sends.
-      expect(transformed.request.headers.has("content-length")).toBe(false)
-      expect(yield* support.bodyText(transformed.request)).toBe(
-        '{"tools":[{"name":"mcp_Shell"}]}',
-      )
-    }).pipe(Effect.provide(support.layer())),
-  )
+        // No copied header: fetch derives the length from the body it sends.
+        expect(transformed.request.headers.has("content-length")).toBe(false)
+        expect(yield* support.bodyText(transformed.request)).toBe(
+          '{"tools":[{"name":"mcp_Shell"}]}',
+        )
+      }),
+    )
+  })
 })

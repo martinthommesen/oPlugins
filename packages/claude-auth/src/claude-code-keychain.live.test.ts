@@ -18,11 +18,18 @@ import {
   Option,
   Schema,
 } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeCodeStores from "./claude-code-stores.ts"
 import DebugLog from "./debug-log.ts"
 import Environment from "./environment.ts"
+import type { Scope } from "effect"
+import type { Vitest } from "@effect/vitest"
 import nodePlatform from "./node-platform.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<Layer.Success<typeof layer> | Scope.Scope>
+}
 
 const ACCOUNT = String.raw`live "test" \ account`,
   EXIT_SUCCESS = 0,
@@ -173,37 +180,41 @@ const ACCOUNT = String.raw`live "test" \ account`,
   })
 
 describe.runIf(enabled)("write-back through the real security tool", () => {
-  it.live("stores the full blob when it fits one interactive line", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const outcome = yield* runLive(NO_PADDING)
-
-      expect(outcome.observed).toStrictEqual({
-        note: "ünïcode",
-        padding: Option.none(),
-        result: "written",
-        tokens: Option.some(["live-new-access", "live-new-refresh"]),
-      })
-      expect(outcome.remaining).not.toBe(EXIT_SUCCESS)
-    }).pipe(Effect.provide(layer)),
-  )
-
-  it.live(
-    "stores the full blob when it is too long for one interactive line",
-    () =>
+  test.layer(layer, { excludeTestServices: true })((it: Tests) => {
+    it.effect("stores the full blob when it fits one interactive line", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
-        const outcome = yield* runLive(PADDED_LENGTH)
+        const outcome = yield* runLive(NO_PADDING)
 
         expect(outcome.observed).toStrictEqual({
           note: "ünïcode",
-          padding: Option.some(PADDED_LENGTH),
+          padding: Option.none(),
           result: "written",
           tokens: Option.some(["live-new-access", "live-new-refresh"]),
         })
         expect(outcome.remaining).not.toBe(EXIT_SUCCESS)
-      }).pipe(Effect.provide(layer)),
-  )
+      }),
+    )
+  })
+
+  test.layer(layer, { excludeTestServices: true })((it: Tests) => {
+    it.effect(
+      "stores the full blob when it is too long for one interactive line",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(TWO_ASSERTIONS)
+
+          const outcome = yield* runLive(PADDED_LENGTH)
+
+          expect(outcome.observed).toStrictEqual({
+            note: "ünïcode",
+            padding: Option.some(PADDED_LENGTH),
+            result: "written",
+            tokens: Option.some(["live-new-access", "live-new-refresh"]),
+          })
+          expect(outcome.remaining).not.toBe(EXIT_SUCCESS)
+        }),
+    )
+  })
 })

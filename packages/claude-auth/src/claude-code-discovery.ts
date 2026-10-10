@@ -158,7 +158,7 @@ const Captured = Schema.Tuple([Schema.String, Schema.String]),
     }
 
     if (Option.isSome(scan.failure)) {
-      return yield* Effect.fail(scan.failure.value)
+      return yield* scan.failure.value
     }
 
     return yield* fileAccounts.fileAccount

@@ -1,4 +1,12 @@
-import { Array as Arr, Clock, Effect, FileSystem, Option, Path } from "effect"
+import {
+  Array as Arr,
+  Clock,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  Schema,
+} from "effect"
 import ClaudeCodeStores from "#src/claude-code-stores.ts"
 import type ClaudeCredentials from "#src/claude-credentials.ts"
 import HeadlessSmokeError from "./headless-smoke-error.ts"
@@ -13,6 +21,8 @@ interface CredentialSource {
 }
 
 const CREDENTIALS_FILE = ".credentials.json",
+  /** Any JSON value, as text. */
+  Json = Schema.fromJsonString(Schema.Unknown),
   MINIMUM_VALIDITY_MS = 300_000,
   NEAR_EXPIRY_MS = 1000,
   OFFLINE_ACCESS = "offline-test-access",
@@ -53,16 +63,15 @@ const CREDENTIALS_FILE = ".credentials.json",
         stored = yield* fs.readFileString(
           path.join(source.configDir, CREDENTIALS_FILE),
         ),
-        tokens = yield* blob.parseCredentials(stored)
+        tokens = yield* blob.parseCredentials(stored),
+        written = afterRefresh(source, tokens, now)
 
-      if (!afterRefresh(source, tokens, now)) {
-        yield* Effect.fail(
-          new HeadlessSmokeError({
-            message:
-              "Near-expiry refresh did not rotate and write back credentials",
-          }),
-        )
-      }
+      yield* Effect.fail(
+        new HeadlessSmokeError({
+          message:
+            "Near-expiry refresh did not rotate and write back credentials",
+        }),
+      ).pipe(Effect.when(Effect.succeed(!written)))
     },
   ),
   /*
@@ -94,7 +103,9 @@ const CREDENTIALS_FILE = ".credentials.json",
 
     yield* addCredentials(
       target,
-      JSON.stringify({ claudeAiOauth: source.value.credentials }),
+      yield* Schema.encodeEffect(Json)({
+        claudeAiOauth: source.value.credentials,
+      }),
     )
 
     return {
@@ -156,7 +167,7 @@ const CREDENTIALS_FILE = ".credentials.json",
 
     yield* addCredentials(
       target,
-      JSON.stringify({
+      yield* Schema.encodeEffect(Json)({
         claudeAiOauth: {
           accessToken: OFFLINE_ACCESS,
           expiresAt: now + OFFLINE_LIFETIME_MS,

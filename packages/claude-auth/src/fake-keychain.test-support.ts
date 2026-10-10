@@ -69,7 +69,7 @@ class FakeKeychain extends Context.Service<
     readonly read: (name: string) => Effect.Effect<Option.Option<string>>
     readonly write: (name: string, content: string) => Effect.Effect<void>
   }
->()("oclaude/test/FakeKeychain") {
+>()("oclaude/fake-keychain.test-support/FakeKeychain") {
   /** The fake Keychain, and the spawner that reaches it. */
   public static readonly layer: Layer.Layer<
     ChildProcessSpawner.ChildProcessSpawner | FakeKeychain

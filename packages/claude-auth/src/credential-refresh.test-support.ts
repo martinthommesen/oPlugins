@@ -101,9 +101,7 @@ const BAD_REQUEST = 400,
     }),
   /* The rig the current test runs against. */
   currentRig: Effect.Effect<RefreshRig["Service"], never, RefreshRig> =
-    Effect.gen(function* rigOfTest() {
-      return yield* RefreshRig
-    }),
+    RefreshRig,
   /* What the store holds now. */
   currentlyStored = currentRig.pipe(
     Effect.flatMap((rig) => Ref.get(rig.stored)),
@@ -136,6 +134,11 @@ const BAD_REQUEST = 400,
           ),
         ),
     ),
+  /* Make the store hold `tokens`, as when another process rotates them. */
+  holdInStore = (
+    tokens: Option.Option<Tokens>,
+  ): Effect.Effect<void, never, RefreshRig> =>
+    currentRig.pipe(Effect.flatMap((rig) => Ref.set(rig.stored, tokens))),
   /* The token endpoint rejecting the refresh token for good. */
   invalidGrant: Effect.Effect<Outcome> = Effect.succeed(
     TokenExchange.Outcome.Terminal({
@@ -245,6 +248,7 @@ export default Object.freeze({
   credentialOf,
   currentRig,
   heldLock,
+  holdInStore,
   imported: accountMethod.importAccount,
   invalidGrant,
   issued,

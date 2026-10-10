@@ -1,10 +1,19 @@
 import { Effect, Option, Ref } from "effect"
-import { describe, expect, it } from "@effect/vitest"
+import type { Layer, Scope } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import CapturedStderr from "./captured-stderr.test-support.ts"
+import type { Vitest } from "@effect/vitest"
 import claudeCodeCredential from "./claude-code-credential.ts"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
 import sources from "./claude-code-sources.ts"
 import support from "./credential-refresh.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+  >
+}
 
 type Script = typeof support.script
 
@@ -74,105 +83,101 @@ const ONE_MS = 1,
     Effect.flatMap((rig) => Ref.get(rig.writes)),
   )
 
-describe("adoption of an external credential", () => {
-  it.effect("adopts a distinct usable source credential", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
+test.layer(rotatedElsewhere)(
+  "adoption of an external credential",
+  (it: Tests) => {
+    it.effect("adopts a distinct usable source credential", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
 
-      const adopted = yield* support.adopt(yield* original)
+        const adopted = yield* support.adopt(yield* original)
 
-      expect(support.summary(adopted)).toStrictEqual({
-        access: Option.some("external-access"),
-        kind: "adopted",
-        retryAfterMs: Option.none(),
-      })
-    }).pipe(Effect.provide(rotatedElsewhere)),
-  )
-})
+        expect(support.summary(adopted)).toStrictEqual({
+          access: Option.some("external-access"),
+          kind: "adopted",
+          retryAfterMs: Option.none(),
+        })
+      }),
+    )
+  },
+)
 
 describe("refresh whose write-back failed", () => {
-  it.effect("does not resurrect the stale source left by a failed write", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
+  test.layer(answering("failed"))((it: Tests) => {
+    it.effect(
+      "does not resurrect the stale source left by a failed write",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
 
-      const refreshed = yield* support.refresh(yield* original),
-        retried = yield* Effect.forEach(
-          Option.toArray(support.credentialAfter(refreshed)),
-          (next) => support.adopt(next),
-        )
+          const refreshed = yield* support.refresh(yield* original),
+            retried = yield* Effect.forEach(
+              Option.toArray(support.credentialAfter(refreshed)),
+              (next) => support.adopt(next),
+            )
 
-      expect(support.summary(refreshed).access).toStrictEqual(
-        Option.some("new-access"),
-      )
-      expect(retried.map((result) => support.summary(result))).toStrictEqual([
-        UNCHANGED,
-      ])
-    }).pipe(Effect.provide(answering("failed"))),
-  )
+          expect(support.summary(refreshed).access).toStrictEqual(
+            Option.some("new-access"),
+          )
+          expect(
+            retried.map((result) => support.summary(result)),
+          ).toStrictEqual([UNCHANGED])
+        }),
+    )
+  })
 
-  it.effect("does not retry a write the store already decided against", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-      yield* support.refresh(yield* original)
-
-      // A failed write is a decision about the stored blob; repeating the
-      // Whole guarded sequence reaches the same conclusion.
-      expect(yield* writesSoFar).toHaveLength(SINGLE_WRITE)
-    }).pipe(Effect.provide(answering("failed"))),
-  )
-})
-
-describe("write-back warnings", () => {
-  it.effect(
-    "warns that Claude Code will be signed out when write-back fails",
-    () =>
+  test.layer(answering("failed"))((it: Tests) => {
+    it.effect("does not retry a write the store already decided against", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
         yield* support.refresh(yield* original)
 
-        const text = yield* (yield* CapturedStderr).text
-
-        expect(text.trim().split("\n")).toHaveLength(SINGLE_WRITE)
-        expect(text).toMatch(/could not be saved/u)
-      }).pipe(Effect.provide(answering("failed"))),
-  )
-
-  it.effect("does not warn when write-back lands", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-      yield* support.refresh(yield* original)
-
-      expect(yield* (yield* CapturedStderr).text).toBe("")
-    }).pipe(Effect.provide(answering("written"))),
-  )
+        // A failed write is a decision about the stored blob; repeating the
+        // Whole guarded sequence reaches the same conclusion.
+        expect(yield* writesSoFar).toHaveLength(SINGLE_WRITE)
+      }),
+    )
+  })
 })
 
-describe("refresh whose store stays unreachable", () => {
-  it.effect("keeps the source hash when the store stays unreachable", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
+describe("write-back warnings", () => {
+  test.layer(answering("failed"))((it: Tests) => {
+    it.effect(
+      "warns that Claude Code will be signed out when write-back fails",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+          yield* support.refresh(yield* original)
 
-      const oldHash = yield* sources.tokenFingerprint("old-access"),
-        refreshed = yield* support.refresh(yield* original)
+          const text = yield* (yield* CapturedStderr).text
 
-      // The store retries; this layer does not.
-      expect(yield* writesSoFar).toHaveLength(SINGLE_WRITE)
-      expect(support.summary(refreshed).kind).toBe("refreshed")
-      expect(hashAfter(refreshed)).toStrictEqual(Option.some(oldHash))
-    }).pipe(Effect.provide(answering("unavailable"))),
-  )
+          expect(text.trim().split("\n")).toHaveLength(SINGLE_WRITE)
+          expect(text).toMatch(/could not be saved/u)
+        }),
+    )
+  })
+
+  test.layer(answering("written"))((it: Tests) => {
+    it.effect("does not warn when write-back lands", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
+        yield* support.refresh(yield* original)
+
+        expect(yield* (yield* CapturedStderr).text).toBe("")
+      }),
+    )
+  })
 })
 
-describe("refresh that meets a write-back conflict", () => {
-  it.effect(
-    "keeps its own refresh when a conflicting winner is not adoptable",
-    () =>
+test.layer(answering("unavailable"))(
+  "refresh whose store stays unreachable",
+  (it: Tests) => {
+    it.effect("keeps the source hash when the store stays unreachable", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
@@ -180,27 +185,51 @@ describe("refresh that meets a write-back conflict", () => {
         const oldHash = yield* sources.tokenFingerprint("old-access"),
           refreshed = yield* support.refresh(yield* original)
 
-        expect(support.summary(refreshed)).toStrictEqual({
-          access: Option.some("new-access"),
-          kind: "refreshed",
+        // The store retries; this layer does not.
+        expect(yield* writesSoFar).toHaveLength(SINGLE_WRITE)
+        expect(support.summary(refreshed).kind).toBe("refreshed")
+        expect(hashAfter(refreshed)).toStrictEqual(Option.some(oldHash))
+      }),
+    )
+  },
+)
+
+describe("refresh that meets a write-back conflict", () => {
+  test.layer(expiredWinner)((it: Tests) => {
+    it.effect(
+      "keeps its own refresh when a conflicting winner is not adoptable",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const oldHash = yield* sources.tokenFingerprint("old-access"),
+            refreshed = yield* support.refresh(yield* original)
+
+          expect(support.summary(refreshed)).toStrictEqual({
+            access: Option.some("new-access"),
+            kind: "refreshed",
+            retryAfterMs: Option.none(),
+          })
+          expect(hashAfter(refreshed)).toStrictEqual(Option.some(oldHash))
+        }),
+    )
+  })
+
+  test.layer(liveWinner)((it: Tests) => {
+    it.effect("adopts the winning source after a write-back conflict", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
+
+        const result = yield* support.refresh(yield* original)
+
+        expect(support.summary(result)).toStrictEqual({
+          access: Option.some("winner-access"),
+          kind: "adopted",
           retryAfterMs: Option.none(),
         })
-        expect(hashAfter(refreshed)).toStrictEqual(Option.some(oldHash))
-      }).pipe(Effect.provide(expiredWinner)),
-  )
-
-  it.effect("adopts the winning source after a write-back conflict", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-      yield* support.begin
-
-      const result = yield* support.refresh(yield* original)
-
-      expect(support.summary(result)).toStrictEqual({
-        access: Option.some("winner-access"),
-        kind: "adopted",
-        retryAfterMs: Option.none(),
-      })
-    }).pipe(Effect.provide(liveWinner)),
-  )
+      }),
+    )
+  })
 })

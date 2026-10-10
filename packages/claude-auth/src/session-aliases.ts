@@ -67,7 +67,7 @@ class SessionAliases extends Context.Service<
       aliases: OriginalByAlias,
     ) => Effect.Effect<void>
   }
->()("oclaude/SessionAliases") {
+>()("oclaude/session-aliases/SessionAliases") {
   /* The key for one session and request kind. */
   public static readonly keyOf = (sessionID: string, kind: string): string =>
     `${sessionID}:${kind}`

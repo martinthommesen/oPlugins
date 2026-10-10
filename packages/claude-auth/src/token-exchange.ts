@@ -171,7 +171,7 @@ class TokenExchange extends Context.Service<
     /** Exchange `refreshToken` for fresh credentials, once, within 30 seconds. */
     readonly exchange: (refreshToken: string) => Effect.Effect<RefreshOutcome>
   }
->()("oclaude/TokenExchange") {
+>()("oclaude/token-exchange/TokenExchange") {
   /** Builds and matches the outcomes `exchange` returns. */
   public static readonly Outcome = Outcome
 

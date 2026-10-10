@@ -1,9 +1,17 @@
+import type { Config, Scope } from "effect"
 import { Effect, Layer, Option, Random } from "effect"
-import { describe, expect, it } from "@effect/vitest"
-import type { Config } from "effect"
+import { describe, expect, it as test } from "@effect/vitest"
 import RefreshBackoff from "./refresh-backoff.ts"
 import { TestClock } from "effect/testing"
+import type { Vitest } from "@effect/vitest"
 import testEnvironment from "./test-environment.test-support.ts"
+
+/** The `it` of a `test.layer` block: `it.effect`, given its services. */
+interface Tests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof backoffAt>> | Scope.Scope
+  >
+}
 
 const BOTTOM = 0,
   DEFAULT_BASE_MS = 15_000,
@@ -49,48 +57,52 @@ const BOTTOM = 0,
   }
 
 describe("refresh cooldown", () => {
-  it.effect(
-    "activates a cooldown on a transient failure and reports the failure kind",
-    () =>
-      Effect.gen(function* run() {
-        expect.assertions(FIVE_ASSERTIONS)
+  test.layer(backoffAt(BOTTOM))((it: Tests) => {
+    it.effect(
+      "activates a cooldown on a transient failure and reports the failure kind",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(FIVE_ASSERTIONS)
 
-        const backoff = yield* RefreshBackoff,
-          ms = yield* backoff.noteTransient(SRC, Option.none())
+          const backoff = yield* RefreshBackoff,
+            ms = yield* backoff.noteTransient(SRC, Option.none())
 
-        expect(ms).toBeGreaterThan(NONE)
-        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ms)
+          expect(ms).toBeGreaterThan(NONE)
+          expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ms)
 
-        yield* TestClock.adjust(ONE_MS)
+          yield* TestClock.adjust(ONE_MS)
 
-        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ms - ONE_MS)
+          expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ms - ONE_MS)
 
-        yield* TestClock.adjust(ms)
+          yield* TestClock.adjust(ms)
 
-        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
-        expect(yield* backoff.failureKind(SRC)).toStrictEqual(
-          Option.some("transient"),
-        )
-      }).pipe(Effect.provide(backoffAt(BOTTOM))),
-  )
+          expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
+          expect(yield* backoff.failureKind(SRC)).toStrictEqual(
+            Option.some("transient"),
+          )
+        }),
+    )
+  })
 
-  it.effect(
-    "escalates the cooldown across consecutive transient failures",
-    () =>
-      Effect.gen(function* run() {
-        expect.assertions(ONE_ASSERTION)
+  test.layer(backoffAt(BOTTOM))((it: Tests) => {
+    it.effect(
+      "escalates the cooldown across consecutive transient failures",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(ONE_ASSERTION)
 
-        const backoff = yield* RefreshBackoff,
-          first = yield* backoff.noteTransient(SRC, Option.none()),
-          second = yield* backoff.noteTransient(SRC, Option.none())
+          const backoff = yield* RefreshBackoff,
+            first = yield* backoff.noteTransient(SRC, Option.none()),
+            second = yield* backoff.noteTransient(SRC, Option.none())
 
-        // Consecutive transients back off further.
-        expect(second).toBeGreaterThan(first)
-      }).pipe(Effect.provide(backoffAt(BOTTOM))),
-  )
+          // Consecutive transients back off further.
+          expect(second).toBeGreaterThan(first)
+        }),
+    )
+  })
 })
 
-describe("refresh failure latch", () => {
+test.layer(backoffAt(BOTTOM))("refresh failure latch", (it: Tests) => {
   it.effect("records a terminal failure without a cooldown", () =>
     Effect.gen(function* run() {
       expect.assertions(TWO_ASSERTIONS)
@@ -103,97 +115,108 @@ describe("refresh failure latch", () => {
         Option.some("terminal"),
       )
       expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
-    }).pipe(Effect.provide(backoffAt(BOTTOM))),
+    }),
   )
 })
 
 describe("refresh cooldown reset", () => {
-  it.effect(
-    "clears cooldown, consecutive count, and failure kind on success",
-    () =>
+  test.layer(backoffAt(BOTTOM))((it: Tests) => {
+    it.effect(
+      "clears cooldown, consecutive count, and failure kind on success",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(THREE_ASSERTIONS)
+
+          const backoff = yield* RefreshBackoff,
+            firstEver = yield* backoff.noteTransient(SRC, Option.none())
+
+          yield* backoff.noteTransient(SRC, Option.none())
+          yield* backoff.clear(SRC)
+          yield* TestClock.adjust(ONE_MS)
+
+          expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
+          expect(yield* backoff.failureKind(SRC)).toStrictEqual(Option.none())
+          // Consecutive count reset: the next transient starts from the base again.
+          expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(
+            firstEver,
+          )
+        }),
+    )
+  })
+
+  test.layer(backoffAt(BOTTOM))((it: Tests) => {
+    it.effect(
+      "counts consecutive transients until the outcome is cleared",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(FIVE_ASSERTIONS)
+
+          const backoff = yield* RefreshBackoff,
+            noteAndCount = backoff
+              .noteTransient(SRC, Option.none())
+              .pipe(Effect.andThen(backoff.transientCount(SRC)))
+
+          expect(yield* backoff.transientCount(SRC)).toBe(NONE)
+          expect(yield* noteAndCount).toBe(ONCE)
+          expect(yield* noteAndCount).toBe(TWICE)
+
+          yield* backoff.clear(SRC)
+
+          expect(yield* backoff.transientCount(SRC)).toBe(NONE)
+          // Counting restarts from one.
+          expect(yield* noteAndCount).toBe(ONCE)
+        }),
+    )
+  })
+})
+
+describe("refresh cooldown length", () => {
+  test.layer(backoffAt(TOP))((it: Tests) => {
+    it.effect("ends the cooldown exactly at its deadline", () =>
       Effect.gen(function* run() {
         expect.assertions(THREE_ASSERTIONS)
 
         const backoff = yield* RefreshBackoff,
-          firstEver = yield* backoff.noteTransient(SRC, Option.none())
+          cooldown = yield* backoff.noteTransient(SRC, Option.none())
 
-        yield* backoff.noteTransient(SRC, Option.none())
-        yield* backoff.clear(SRC)
+        expect(cooldown).toBe(DEFAULT_BASE_MS)
+
+        yield* TestClock.adjust(DEFAULT_BASE_MS - ONE_MS)
+
+        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ONE_MS)
+
         yield* TestClock.adjust(ONE_MS)
 
+        // A request at the deadline may refresh.
         expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
-        expect(yield* backoff.failureKind(SRC)).toStrictEqual(Option.none())
-        // Consecutive count reset: the next transient starts from the base again.
-        expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(firstEver)
-      }).pipe(Effect.provide(backoffAt(BOTTOM))),
-  )
+      }),
+    )
+  })
 
-  it.effect("counts consecutive transients until the outcome is cleared", () =>
-    Effect.gen(function* run() {
-      expect.assertions(FIVE_ASSERTIONS)
+  test.layer(backoffAt(BOTTOM))((it: Tests) => {
+    it.effect("honors a retry-after hint when setting the cooldown", () =>
+      Effect.gen(function* run() {
+        expect.assertions(TWO_ASSERTIONS)
 
-      const backoff = yield* RefreshBackoff,
-        noteAndCount = backoff
-          .noteTransient(SRC, Option.none())
-          .pipe(Effect.andThen(backoff.transientCount(SRC)))
+        const backoff = yield* RefreshBackoff,
+          cooldown = yield* backoff.noteTransient(SRC, Option.some(HINT_MS))
 
-      expect(yield* backoff.transientCount(SRC)).toBe(NONE)
-      expect(yield* noteAndCount).toBe(ONCE)
-      expect(yield* noteAndCount).toBe(TWICE)
+        expect(cooldown).toBe(HINT_MS)
+        expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(HINT_MS)
+      }),
+    )
+  })
 
-      yield* backoff.clear(SRC)
+  test.layer(backoffAt(TOP, OVERRIDE_VARIABLES))((it: Tests) => {
+    it.effect("takes its base cooldown from the environment", () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
 
-      expect(yield* backoff.transientCount(SRC)).toBe(NONE)
-      // Counting restarts from one.
-      expect(yield* noteAndCount).toBe(ONCE)
-    }).pipe(Effect.provide(backoffAt(BOTTOM))),
-  )
-})
+        const backoff = yield* RefreshBackoff,
+          cooldown = yield* backoff.noteTransient(SRC, Option.none())
 
-describe("refresh cooldown length", () => {
-  it.effect("ends the cooldown exactly at its deadline", () =>
-    Effect.gen(function* run() {
-      expect.assertions(THREE_ASSERTIONS)
-
-      const backoff = yield* RefreshBackoff
-
-      expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(
-        DEFAULT_BASE_MS,
-      )
-
-      yield* TestClock.adjust(DEFAULT_BASE_MS - ONE_MS)
-
-      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(ONE_MS)
-
-      yield* TestClock.adjust(ONE_MS)
-
-      // A request at the deadline may refresh.
-      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(NONE)
-    }).pipe(Effect.provide(backoffAt(TOP))),
-  )
-
-  it.effect("honors a retry-after hint when setting the cooldown", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const backoff = yield* RefreshBackoff
-
-      expect(yield* backoff.noteTransient(SRC, Option.some(HINT_MS))).toBe(
-        HINT_MS,
-      )
-      expect(yield* backoff.cooldownRemainingMs(SRC)).toBe(HINT_MS)
-    }).pipe(Effect.provide(backoffAt(BOTTOM))),
-  )
-
-  it.effect("takes its base cooldown from the environment", () =>
-    Effect.gen(function* run() {
-      expect.assertions(ONE_ASSERTION)
-
-      const backoff = yield* RefreshBackoff
-
-      expect(yield* backoff.noteTransient(SRC, Option.none())).toBe(
-        OVERRIDDEN_BASE_MS,
-      )
-    }).pipe(Effect.provide(backoffAt(TOP, OVERRIDE_VARIABLES))),
-  )
+        expect(cooldown).toBe(OVERRIDDEN_BASE_MS)
+      }),
+    )
+  })
 })

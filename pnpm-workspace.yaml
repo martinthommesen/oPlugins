@@ -16,7 +16,7 @@ catalog:
   "@types/node": ^26.6.5
   effect: 4.0.0-rc.112
   esbuild: 0.28.2
-  solid-js: 1.9.12
+  solid-js: 1.9.17
   typescript: 7.0.2
   vitest: 4.1.11
 

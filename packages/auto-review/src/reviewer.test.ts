@@ -5,6 +5,7 @@ import { CodexResponses } from "./codex-client.ts"
 import type { Config } from "effect"
 import { MalformedAssessment } from "./assessment.ts"
 import { ModelUnavailable } from "./errors/model-unavailable.ts"
+import { RequestFailed } from "./errors/request-failed.ts"
 import { ReviewTimedOut } from "./errors/review-timed-out.ts"
 import { Reviewer } from "./reviewer.ts"
 import { TestClock } from "effect/testing"
@@ -15,6 +16,17 @@ type Script = (model: string) => Effect.Effect<string, CompletionError>
 const ALLOW = '{"outcome":"allow"}'
 
 const HTTP_BAD_REQUEST = 400
+
+const TWO_REVIEWS = 2
+
+const invalidRequest: Script = (model) =>
+  Effect.fail(
+    new RequestFailed({
+      cause: "Invalid context length.",
+      model,
+      operation: "status",
+    }),
+  )
 
 const request = {
   cacheKey: "ses_1",
@@ -36,13 +48,6 @@ const rejectPrimary: Script = (model) => {
   return Effect.succeed(ALLOW)
 }
 
-/**
- * Builds a reviewer over a scripted backend that records requested models.
- * @param {Script} script The backend's answer for each model.
- * @param {Ref.Ref<readonly string[]>} models Collects requested models.
- * @returns {Layer.Layer<Reviewer, Config.ConfigError>} The reviewer under
- * test.
- */
 const reviewerWith = (
   script: Script,
   models: Ref.Ref<readonly string[]>,
@@ -103,6 +108,25 @@ describe("reviewer models", () => {
 })
 
 describe("reviewer failures", () => {
+  it.effect(
+    "does not remember a fallback for an ordinary request failure",
+    () =>
+      Effect.gen(function* ordinaryFailure() {
+        const models = yield* Ref.make<readonly string[]>([])
+
+        const failures = yield* Effect.provide(
+          Effect.all([Effect.flip(review), Effect.flip(review)]),
+          reviewerWith(invalidRequest, models),
+        )
+
+        expect(failures).toHaveLength(TWO_REVIEWS)
+        expect(yield* Ref.get(models)).toStrictEqual([
+          "codex-auto-review",
+          "codex-auto-review",
+        ])
+      }),
+  )
+
   it.effect("fails when the answer is not an assessment", () =>
     Effect.gen(function* malformed() {
       const models = yield* Ref.make<readonly string[]>([])

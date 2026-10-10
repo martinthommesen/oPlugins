@@ -24,89 +24,62 @@ const BreakerDecision = Data.taggedEnum<BreakerDecision>()
 interface TurnDenials {
   readonly consecutive: number
   readonly total: number
-  /** The user message that started the turn being counted. */
-  readonly turn: string
+}
+
+interface ReviewTurn {
+  readonly sessionId: string
+  readonly userMessageId: string
 }
 
 interface Interface {
   /** Counts an approval, which ends a run of consecutive denials. */
-  readonly recordApproval: (
-    sessionId: string,
-    turn: string,
-  ) => Effect.Effect<void>
+  readonly recordApproval: (turn: ReviewTurn) => Effect.Effect<void>
   /** Counts a denial and decides whether the agent or the user gets it. */
-  readonly recordDenial: (
-    sessionId: string,
-    turn: string,
-  ) => Effect.Effect<BreakerDecision>
+  readonly recordDenial: (turn: ReviewTurn) => Effect.Effect<BreakerDecision>
 }
 
 const NO_DENIALS = 0
 
 const ONE_DENIAL = 1
 
-/**
- * Reads a session's counts for a turn; a new turn starts from zero.
- * @param {HashMap.HashMap<string, TurnDenials>} sessions Counts by session.
- * @param {string} sessionId The session.
- * @param {string} turn The current turn.
- * @returns {TurnDenials} The counts.
- */
+const turnKey = (turn: ReviewTurn): string =>
+  JSON.stringify([turn.sessionId, turn.userMessageId])
+
 const countsFor = (
-  sessions: HashMap.HashMap<string, TurnDenials>,
-  sessionId: string,
-  turn: string,
+  turns: HashMap.HashMap<string, TurnDenials>,
+  key: string,
 ): TurnDenials =>
   pipe(
-    HashMap.get(sessions, sessionId),
-    Option.filter((counts) => counts.turn === turn),
+    HashMap.get(turns, key),
     Option.getOrElse(() => ({
       consecutive: NO_DENIALS,
       total: NO_DENIALS,
-      turn,
     })),
   )
 
-type Sessions = HashMap.HashMap<string, TurnDenials>
+type Turns = HashMap.HashMap<string, TurnDenials>
 
-/**
- * Builds the state transition for one denial.
- * @param {SettingsInterface} settings The configured denial limits.
- * @param {string} sessionId The session.
- * @param {string} turn The current turn.
- * @returns {Function} Maps the counts to a decision and the new counts.
- */
 const countDenial =
-  (settings: SettingsInterface, sessionId: string, turn: string) =>
+  (settings: SettingsInterface, key: string) =>
   (
     current: HashMap.HashMap<string, TurnDenials>,
-  ): readonly [BreakerDecision, Sessions] => {
-    const counts = countsFor(current, sessionId, turn)
+  ): readonly [BreakerDecision, Turns] => {
+    const counts = countsFor(current, key)
     const consecutive = counts.consecutive + ONE_DENIAL
     const total = counts.total + ONE_DENIAL
+    const next = HashMap.set(current, key, { consecutive, total })
 
     if (
       consecutive >= settings.maxConsecutiveDenials ||
       total >= settings.maxTotalDenials
     ) {
-      const reset = { consecutive: NO_DENIALS, total: NO_DENIALS, turn }
-
-      return [
-        BreakerDecision.Escalate({ consecutive, total }),
-        HashMap.set(current, sessionId, reset),
-      ]
+      return [BreakerDecision.Escalate({ consecutive, total }), next]
     }
 
-    return [
-      BreakerDecision.Deny({ consecutive, total }),
-      HashMap.set(current, sessionId, { consecutive, total, turn }),
-    ]
+    return [BreakerDecision.Deny({ consecutive, total }), next]
   }
 
-/**
- * Tracks review denials per session and turn, and stops a session that keeps
- * pushing against denials by asking the user instead, as Codex does.
- */
+/** Shares denial counts across a root session and its subagents. */
 class DenialBreaker extends Context.Service<DenialBreaker, Interface>()(
   "opencode-auto-review/DenialBreaker",
 ) {
@@ -114,25 +87,26 @@ class DenialBreaker extends Context.Service<DenialBreaker, Interface>()(
     DenialBreaker,
     Effect.gen(function* makeDenialBreaker() {
       const settings = yield* Settings
-      const sessions = yield* Ref.make(HashMap.empty<string, TurnDenials>())
+      const turns = yield* Ref.make(HashMap.empty<string, TurnDenials>())
 
-      const recordApproval = (
-        sessionId: string,
-        turn: string,
-      ): Effect.Effect<void> =>
-        Ref.update(sessions, (current) =>
-          HashMap.set(current, sessionId, {
-            consecutive: NO_DENIALS,
-            total: countsFor(current, sessionId, turn).total,
-            turn,
-          }),
-        )
+      const recordApproval = Effect.fn("DenialBreaker.recordApproval")(
+        function* recordApproval(turn: ReviewTurn) {
+          const key = turnKey(turn)
 
-      const recordDenial = (
-        sessionId: string,
-        turn: string,
-      ): Effect.Effect<BreakerDecision> =>
-        Ref.modify(sessions, countDenial(settings, sessionId, turn))
+          yield* Ref.update(turns, (current) =>
+            HashMap.set(current, key, {
+              consecutive: NO_DENIALS,
+              total: countsFor(current, key).total,
+            }),
+          )
+        },
+      )
+
+      const recordDenial = Effect.fn("DenialBreaker.recordDenial")(
+        function* recordDenial(turn: ReviewTurn) {
+          return yield* Ref.modify(turns, countDenial(settings, turnKey(turn)))
+        },
+      )
 
       return DenialBreaker.of({ recordApproval, recordDenial })
     }),
@@ -140,3 +114,5 @@ class DenialBreaker extends Context.Service<DenialBreaker, Interface>()(
 }
 
 export { BreakerDecision, DenialBreaker }
+
+export type { ReviewTurn }

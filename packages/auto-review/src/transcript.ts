@@ -1,10 +1,12 @@
 import {
   Array as Arr,
+  Effect,
   Number as Num,
   Option,
   String as Str,
   pipe,
 } from "effect"
+import { ContextUnavailable } from "./errors/context-unavailable.ts"
 import { ConversationItem } from "./conversation.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
 
@@ -28,19 +30,15 @@ const MAX_ACTION_CHARS = 8000
 
 const TRANSCRIPT_BUDGET_CHARS = 48_000
 
-const FIRST_ENTRY_NUMBER = 1
+const SECTION_OVERHEAD_CHARS = 512
+
+const NO_CHARS = 0
 
 const speakerLabel = {
   delegator: "delegating agent",
   user: "user",
 } as const satisfies Record<Speaker, string>
 
-/**
- * Shortens text past a limit, marking the cut the way Codex's policy expects.
- * @param {number} limit Maximum characters kept.
- * @param {string} text The text to shorten.
- * @returns {string} `text`, or its prefix followed by a truncation marker.
- */
 const truncate = (limit: number, text: string): string => {
   if (text.length <= limit) {
     return text
@@ -51,28 +49,31 @@ const truncate = (limit: number, text: string): string => {
   return `${Str.takeLeft(text, limit)}<truncated omitted_chars="${omitted}" />`
 }
 
-/**
- * Converts one conversation item into a transcript entry.
- * @param {Speaker} speaker Who wrote the session's user messages.
- * @returns {(item: ConversationItem) => Entry} The converter.
- */
+const speakerText = (speaker: Speaker, text: string): string => {
+  if (speaker === "user") {
+    return text
+  }
+
+  return truncate(MAX_ENTRY_CHARS, text)
+}
+
 const toEntry =
   (speaker: Speaker) =>
   (item: ConversationItem): Entry =>
     ConversationItem.$match(item, {
       AssistantText: ({ text }) => ({
         label: "assistant",
-        text,
+        text: truncate(MAX_ENTRY_CHARS, text),
         trusted: false,
       }),
       ShellCommand: ({ command }) => ({
         label: `${speakerLabel[speaker]} shell command`,
-        text: command,
+        text: speakerText(speaker, command),
         trusted: speaker === "user",
       }),
       Summary: ({ text }) => ({
         label: "summary of earlier conversation",
-        text,
+        text: truncate(MAX_ENTRY_CHARS, text),
         trusted: false,
       }),
       ToolCall: ({ input, name }) => ({
@@ -82,27 +83,24 @@ const toEntry =
       }),
       UserMessage: ({ text }) => ({
         label: speakerLabel[speaker],
-        text,
+        text: speakerText(speaker, text),
         trusted: speaker === "user",
       }),
     })
 
-const entryLength = (entry: Entry): number =>
-  entry.label.length + entry.text.length
+const renderEntry = (entry: Entry): string =>
+  JSON.stringify({ label: entry.label, text: entry.text })
 
-/**
- * Picks the newest run of entries whose combined length fits a budget.
- * @param {readonly Entry[]} entries Candidates, oldest first.
- * @param {number} available Characters available.
- * @returns {ReadonlySet<Entry>} The entries that fit.
- */
+const entryLength = (entry: Entry): number =>
+  renderEntry(entry).length + "\n".length
+
 const newestThatFit = (
   entries: readonly Entry[],
   available: number,
 ): ReadonlySet<Entry> => {
   const kept = new Set<Entry>()
 
-  let used = Num.sumAll([])
+  let used = NO_CHARS
 
   for (const entry of Arr.reverse(entries)) {
     used += entryLength(entry)
@@ -117,49 +115,45 @@ const newestThatFit = (
   return kept
 }
 
-/**
- * Keeps every trusted entry and the newest run of untrusted entries that fits
- * the budget left after them.
- * @param {readonly Entry[]} entries The full section, oldest first.
- * @returns {readonly Entry[]} The kept entries, oldest first.
- */
-const fitBudget = (entries: readonly Entry[]): readonly Entry[] => {
+const fitBudget = Effect.fn("Transcript.fitBudget")(function* fitBudget(
+  entries: readonly Entry[],
+) {
   const trusted = pipe(
     entries,
     Arr.filter((entry) => entry.trusted),
   )
 
   const required = pipe(trusted, Arr.map(entryLength), Num.sumAll)
+  const available = TRANSCRIPT_BUDGET_CHARS - SECTION_OVERHEAD_CHARS - required
+
+  if (available < NO_CHARS) {
+    return yield* new ContextUnavailable({
+      reason:
+        "The user's messages exceed the reviewer context limit. They were not truncated.",
+    })
+  }
 
   const fitting = newestThatFit(
     pipe(
       entries,
       Arr.filter((entry) => !entry.trusted),
     ),
-    TRANSCRIPT_BUDGET_CHARS - required,
+    available,
   )
 
-  return pipe(
+  return new Set([...trusted, ...fitting])
+})
+
+const renderSection = (
+  entries: readonly Entry[],
+  selected: Readonly<Pick<ReadonlySet<Entry>, "has">>,
+): string => {
+  const kept = pipe(
     entries,
-    Arr.filter((entry) => entry.trusted || fitting.has(entry)),
+    Arr.filter((entry) => selected.has(entry)),
   )
-}
 
-/**
- * Renders a transcript section, oldest entry first.
- * @param {readonly Entry[]} entries Entries before budgeting.
- * @returns {string} The rendered section.
- */
-const renderSection = (entries: readonly Entry[]): string => {
-  const kept = fitBudget(entries)
-
-  const lines = pipe(
-    kept,
-    Arr.map(
-      (entry, index) =>
-        `[${index + FIRST_ENTRY_NUMBER}] ${entry.label}: ${truncate(MAX_ENTRY_CHARS, entry.text)}`,
-    ),
-  )
+  const lines = pipe(kept, Arr.map(renderEntry))
 
   if (kept.length < entries.length) {
     const omitted = entries.length - kept.length
@@ -176,40 +170,43 @@ const renderSection = (entries: readonly Entry[]): string => {
   )
 }
 
-/**
- * Renders the conversation that led to a permission request.
- * @param {readonly ConversationItem[]} items The requesting session.
- * @param {Option.Option<readonly ConversationItem[]>} root The root session,
- * when the request comes from a subagent.
- * @returns {string} The transcript text sent to the reviewer.
- */
-const renderTranscript = (
-  items: readonly ConversationItem[],
-  root: Option.Option<readonly ConversationItem[]>,
-): string =>
-  Option.match(root, {
-    onNone: () => pipe(items, Arr.map(toEntry("user")), renderSection),
-    onSome: (rootItems) =>
-      [
-        "## Root conversation (the user's own messages)",
+const renderTranscript = Effect.fn("Transcript.renderTranscript")(
+  function* renderTranscript(
+    items: readonly ConversationItem[],
+    root: Option.Option<readonly ConversationItem[]>,
+  ) {
+    const rootEntries = Option.match(root, {
+      onNone: () => [],
+      onSome: (rootItems) =>
         pipe(
           rootItems,
           Arr.map(toEntry("user")),
           Arr.filter((entry) => entry.trusted),
-          renderSection,
         ),
-        "",
-        "## Subagent conversation (its user messages come from the delegating agent)",
-        pipe(items, Arr.map(toEntry("delegator")), renderSection),
-      ].join("\n"),
-  })
+    })
 
-/**
- * Finds the tool call that raised a permission request.
- * @param {readonly ConversationItem[]} items The requesting session.
- * @param {PermissionEvaluation} evaluation The permission request.
- * @returns {Option.Option<ToolCall>} The call, when the transcript has it.
- */
+    const convert = Option.match(root, {
+      onNone: () => toEntry("user"),
+      onSome: () => toEntry("delegator"),
+    })
+
+    const entries = pipe(items, Arr.map(convert))
+    const selected = yield* fitBudget([...rootEntries, ...entries])
+
+    if (Option.isNone(root)) {
+      return renderSection(entries, selected)
+    }
+
+    return [
+      "## Root conversation (the user's own messages)",
+      renderSection(rootEntries, selected),
+      "",
+      "## Subagent conversation (its user messages come from the delegating agent)",
+      renderSection(entries, selected),
+    ].join("\n")
+  },
+)
+
 const findToolCall = (
   items: readonly ConversationItem[],
   evaluation: PermissionEvaluation,
@@ -219,41 +216,49 @@ const findToolCall = (
       pipe(
         items,
         Arr.filter(ConversationItem.$is("ToolCall")),
-        Arr.findLast((call) => call.id === source.id),
+        Arr.findLast(
+          (call) =>
+            call.id === source.id && call.messageId === source.messageID,
+        ),
       ),
     ),
   )
 
-/**
- * Renders the action awaiting approval as JSON.
- * @param {readonly ConversationItem[]} items The requesting session.
- * @param {PermissionEvaluation} evaluation The permission request.
- * @returns {string} The planned action sent to the reviewer.
- */
-const renderPlannedAction = (
-  items: readonly ConversationItem[],
-  evaluation: PermissionEvaluation,
-): string => {
-  const call = Option.map(findToolCall(items, evaluation), (tool) => ({
-    input: tool.input,
-    name: tool.name,
-  }))
+const renderPlannedAction = Effect.fn("Transcript.renderPlannedAction")(
+  function* renderPlannedAction(
+    items: readonly ConversationItem[],
+    evaluation: PermissionEvaluation,
+  ) {
+    const call = Option.map(findToolCall(items, evaluation), (tool) => ({
+      input: tool.input,
+      name: tool.name,
+    }))
 
-  const action = JSON.stringify({
-    action: evaluation.action,
-    metadata: evaluation.metadata,
-    resources: evaluation.resources,
-    tool_call: Option.getOrUndefined(call),
-  })
+    if (evaluation.source && Option.isNone(call)) {
+      return yield* new ContextUnavailable({
+        reason:
+          "OpenCode could not provide the tool call that raised this permission request.",
+      })
+    }
 
-  return truncate(MAX_ACTION_CHARS, action)
-}
+    const action = JSON.stringify({
+      action: evaluation.action,
+      metadata: evaluation.metadata,
+      resources: evaluation.resources,
+      tool_call: Option.getOrUndefined(call),
+    })
 
-/**
- * Identifies the current turn: the newest user message in the session.
- * @param {readonly ConversationItem[]} items The requesting session.
- * @returns {Option.Option<string>} The message id, when there is one.
- */
+    if (action.length > MAX_ACTION_CHARS) {
+      return yield* new ContextUnavailable({
+        reason:
+          "The planned action exceeds the reviewer context limit. It was not truncated.",
+      })
+    }
+
+    return action
+  },
+)
+
 const currentTurn = (
   items: readonly ConversationItem[],
 ): Option.Option<string> =>
@@ -264,3 +269,5 @@ const currentTurn = (
   )
 
 export { currentTurn, renderPlannedAction, renderTranscript, truncate }
+
+export { ContextUnavailable } from "./errors/context-unavailable.ts"

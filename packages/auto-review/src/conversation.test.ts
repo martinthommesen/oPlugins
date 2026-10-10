@@ -61,9 +61,51 @@ describe(fromSessionMessages, () => {
         ConversationItem.ToolCall({
           id: "call_1",
           input: '{"command":"pnpm test"}',
+          messageId: "msg_2",
           name: "bash",
         }),
       ])
     }),
+  )
+})
+
+describe("conversation evidence", () => {
+  it.effect(
+    "does not treat partially streamed arguments as a complete call",
+    () =>
+      Effect.gen(function* partialCall() {
+        const messages = yield* decodeMessages([
+          {
+            agent: "build",
+            content: [
+              {
+                id: "call_streaming",
+                name: "bash",
+                state: { input: '{"command":"rm', status: "streaming" },
+                time: CREATED,
+                type: "tool",
+              },
+            ],
+            id: "msg_2",
+            model: { id: "gpt-5.5", providerID: "openai" },
+            time: CREATED,
+            type: "assistant",
+          },
+        ])
+
+        expect(fromSessionMessages(messages)).toStrictEqual([])
+      }),
+  )
+
+  it.effect(
+    "does not include tool outputs in the reviewer's conversation",
+    () =>
+      Effect.gen(function* omitOutput() {
+        const messages = yield* decodeMessages([assistantMessage])
+
+        expect(JSON.stringify(fromSessionMessages(messages))).not.toContain(
+          '"ok"',
+        )
+      }),
   )
 })

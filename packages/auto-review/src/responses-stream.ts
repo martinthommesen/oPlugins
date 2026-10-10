@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Schema, Stream } from "effect"
+import { Effect, Match, Option, Schema, String as Str, Stream } from "effect"
 import { RequestFailed, streamFailed } from "./errors/request-failed.ts"
 import type { HttpClientResponse } from "effect/unstable/http"
 import { Sse } from "effect/unstable/encoding"
@@ -8,25 +8,32 @@ const ResponseError = Schema.Struct({
   message: Schema.optionalKey(Schema.String),
 })
 
-const FailedResponse = Schema.Struct({
+const ResponseState = Schema.Struct({
   error: Schema.optionalKey(Schema.NullOr(ResponseError)),
+  status: Schema.optionalKey(Schema.String),
 })
 
 /** The fields of a Responses stream event the client reads. */
 const StreamEvent = Schema.Struct({
   delta: Schema.optionalKey(Schema.String),
   message: Schema.optionalKey(Schema.String),
-  response: Schema.optionalKey(FailedResponse),
+  response: Schema.optionalKey(ResponseState),
   type: Schema.String,
 })
 
 interface StreamEvent extends Schema.Schema.Type<typeof StreamEvent> {}
 
-/**
- * Describes a failed stream event for diagnostics.
- * @param {StreamEvent} event A `response.failed` or `error` event.
- * @returns {string} The backend's message, or the event type.
- */
+interface Output {
+  readonly completed: boolean
+  readonly text: string
+}
+
+const MAX_OUTPUT_CHARS = 16_000
+
+const decodeEvent = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(StreamEvent),
+)
+
 const eventFailure = (event: StreamEvent): string =>
   Option.firstSomeOf([
     Option.fromUndefinedOr(event.message),
@@ -36,46 +43,78 @@ const eventFailure = (event: StreamEvent): string =>
     ),
   ]).pipe(Option.getOrElse(() => event.type))
 
-/**
- * Folds one stream event into the text received so far.
- * @param {string} model The requested model, for errors.
- * @returns {Function} The fold step, failing on error events.
- */
+const failStream = (model: string, cause: string): RequestFailed =>
+  new RequestFailed({ cause, model, operation: "stream" })
+
 const appendEvent =
   (model: string) =>
-  (text: string, event: StreamEvent): Effect.Effect<string, RequestFailed> =>
+  (output: Output, event: StreamEvent): Effect.Effect<Output, RequestFailed> =>
     Match.value(event.type).pipe(
-      Match.when("response.output_text.delta", () =>
-        Effect.succeed(text + (event.delta ?? "")),
+      Match.when("response.output_text.delta", () => {
+        const text = output.text + (event.delta ?? "")
+
+        if (text.length > MAX_OUTPUT_CHARS) {
+          return Effect.fail(
+            failStream(model, "Reviewer output exceeds its size limit."),
+          )
+        }
+
+        return Effect.succeed({ completed: false, text })
+      }),
+      Match.when("response.completed", () => {
+        const completed = Option.fromUndefinedOr(event.response).pipe(
+          Option.filter((response) => response.status === "completed"),
+          Option.filter((response) =>
+            Option.isNone(Option.fromNullishOr(response.error)),
+          ),
+        )
+
+        if (Option.isNone(completed)) {
+          return Effect.fail(
+            failStream(model, "Response did not complete successfully."),
+          )
+        }
+
+        return Effect.succeed({ completed: true, text: output.text })
+      }),
+      Match.whenOr(
+        "response.failed",
+        "response.incomplete",
+        "response.refusal.delta",
+        "response.refusal.done",
+        "error",
+        () => Effect.fail(failStream(model, eventFailure(event))),
       ),
-      Match.whenOr("response.failed", "error", () =>
-        Effect.fail(
-          new RequestFailed({
-            cause: eventFailure(event),
-            model,
-            operation: "stream",
-          }),
-        ),
-      ),
-      Match.orElse(() => Effect.succeed(text)),
+      Match.orElse(() => Effect.succeed(output)),
     )
 
-/**
- * Reads a streaming Responses body into the model's final text.
- * @param {string} model The requested model, for errors.
- * @param {HttpClientResponse.HttpClientResponse} response A success response.
- * @returns {Effect.Effect<string, RequestFailed>} The output text.
- */
-const readOutputText = (
-  model: string,
-  response: HttpClientResponse.HttpClientResponse,
-): Effect.Effect<string, RequestFailed> =>
-  response.stream.pipe(
-    Stream.decodeText(),
-    Stream.pipeThroughChannel(Sse.decodeDataSchema(StreamEvent)),
-    Stream.map((event) => event.data),
-    streamFailed(model),
-    Stream.runFoldEffect(() => "", appendEvent(model)),
-  )
+const readOutputText = Effect.fn("CodexResponses.readOutputText")(
+  function* readOutputText(
+    model: string,
+    response: HttpClientResponse.HttpClientResponse,
+  ) {
+    const output = yield* response.stream.pipe(
+      Stream.decodeText(),
+      Stream.pipeThroughChannel(Sse.decode()),
+      Stream.filter((event) => event.data !== "[DONE]"),
+      Stream.mapEffect((event) => decodeEvent(event.data)),
+      Stream.takeUntil((event) => event.type === "response.completed"),
+      streamFailed(model),
+      Stream.runFoldEffect(
+        (): Output => ({ completed: false, text: "" }),
+        appendEvent(model),
+      ),
+    )
+
+    if (!output.completed || Str.isEmpty(Str.trim(output.text))) {
+      return yield* failStream(
+        model,
+        "Stream ended without a completed assessment.",
+      )
+    }
+
+    return output.text
+  },
+)
 
 export { readOutputText }

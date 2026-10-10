@@ -38,14 +38,6 @@ const ResponsesRequest = Schema.Struct({
 /** Codex sends this beta header with every Responses request. */
 const RESPONSES_BETA = "responses=experimental"
 
-/**
- * Builds the streaming Responses request for one completion.
- * @param {Completion} completion What to send.
- * @param {ChatGptToken} token The credential to send it with.
- * @param {ReasoningEffort} effort The reasoning effort to request.
- * @returns {Effect.Effect<HttpClientRequest.HttpClientRequest, RequestFailed>}
- * The request.
- */
 const buildRequest = (
   completion: Completion,
   token: ChatGptToken,

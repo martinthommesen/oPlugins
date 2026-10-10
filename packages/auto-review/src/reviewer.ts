@@ -44,19 +44,11 @@ interface Interface {
 interface Dependencies {
   readonly codex: CodexResponses["Service"]
   readonly instructions: string
-  /**
-   * Set once the account turns the primary model away, so later reviews go
-   * straight to the fallback instead of paying for the rejection again.
-   */
+  /** Avoids retrying a rejected primary model until the plugin reloads. */
   readonly primaryUnavailable: Ref.Ref<boolean>
   readonly settings: SettingsInterface
 }
 
-/**
- * Builds the single-model assessment step.
- * @param {Dependencies} dependencies The reviewer's services.
- * @returns {Function} Asks one model and parses its verdict.
- */
 const assessWith = (
   dependencies: Dependencies,
 ): ((
@@ -79,11 +71,6 @@ const assessWith = (
     return { assessment, model }
   })
 
-/**
- * Builds the review operation: primary model, fallback, and deadline.
- * @param {Dependencies} dependencies The reviewer's services.
- * @returns {Interface["review"]} The review operation.
- */
 const reviewWith = (dependencies: Dependencies): Interface["review"] => {
   const { primaryUnavailable, settings } = dependencies
   const assess = assessWith(dependencies)
@@ -153,5 +140,7 @@ class Reviewer extends Context.Service<Reviewer, Interface>()(
 }
 
 export { Reviewer }
+
+export { ReviewTimedOut } from "./errors/review-timed-out.ts"
 
 export type { Review, ReviewError, ReviewRequest }

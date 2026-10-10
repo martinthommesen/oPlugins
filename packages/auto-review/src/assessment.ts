@@ -53,12 +53,6 @@ const OBJECT_END = "}"
 
 type Span = readonly [start: number, end: number]
 
-/**
- * Finds the JSON object a reviewer wrapped in prose.
- * @param {string} text The reviewer's final message.
- * @returns {Option.Option<string>} The span from the first `{` to the last
- * `}`, if there is one.
- */
 const outermostObject = (text: string): Option.Option<string> =>
   Option.all([
     Str.indexOf(OBJECT_START)(text),

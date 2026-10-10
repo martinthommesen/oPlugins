@@ -49,11 +49,6 @@ const decodeMetadata = Schema.decodeUnknownOption(
   Schema.Struct({ accountID: Schema.String }),
 )
 
-/**
- * Reads the ChatGPT account id from an access token's JWT payload.
- * @param {string} token The access token.
- * @returns {Option.Option<string>} The account id, when the token names one.
- */
 const accountIdFromToken = (token: string): Option.Option<string> =>
   pipe(
     token.split("."),
@@ -89,16 +84,10 @@ const notOAuth = (): Effect.Effect<never, AuthUnavailable> =>
   Effect.fail(
     new AuthUnavailable({
       reason:
-        "OpenAI is connected with an API key. Auto-review needs “Sign in with ChatGPT”.",
+        'OpenAI is connected with an API key. Auto-review needs "Sign in with ChatGPT".',
     }),
   )
 
-/**
- * Turns an OAuth credential into a backend token, failing when it is expired
- * or names no account.
- * @param {Credential.OAuth} oauth The active OpenAI OAuth credential.
- * @returns {Effect.Effect<ChatGptToken, AuthUnavailable>} The token.
- */
 const fromOAuth = Effect.fn("ChatGptAuth.fromOAuth")(function* fromOAuth(
   oauth: Credential.OAuth,
 ) {

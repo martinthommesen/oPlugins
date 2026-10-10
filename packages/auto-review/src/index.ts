@@ -10,12 +10,6 @@ import { Plugin } from "@opencode/plugin/effect"
 import { Reviewer } from "./reviewer.ts"
 import { Settings } from "./settings.ts"
 
-/**
- * Wires the plugin's services for one plugin instance.
- * @param {Plugin.Context} context The plugin context OpenCode passed in.
- * @returns {Layer.Layer<AutoReview, Config.ConfigError>} The services, which
- * fail to build when the plugin options are invalid.
- */
 const servicesFor = (
   context: Plugin.Context,
 ): Layer.Layer<AutoReview, Config.ConfigError> => {
@@ -37,7 +31,9 @@ const servicesFor = (
 
   const breaker = DenialBreaker.layer.pipe(Layer.provide(settings))
 
-  return AutoReview.layer.pipe(Layer.provide([breaker, host, reviewer]))
+  return AutoReview.layer.pipe(
+    Layer.provide([breaker, host, reviewer, settings]),
+  )
 }
 
 const plugin = Effect.fn("AutoReviewPlugin")(

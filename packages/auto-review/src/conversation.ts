@@ -10,6 +10,7 @@ type ConversationItem = Data.TaggedEnum<{
     readonly id: string
     /** The call's input as JSON text. */
     readonly input: string
+    readonly messageId: string
     readonly name: string
   }
   UserMessage: { readonly id: string; readonly text: string }
@@ -17,10 +18,14 @@ type ConversationItem = Data.TaggedEnum<{
 
 const ConversationItem = Data.taggedEnum<ConversationItem>()
 
-const fromToolCall = (part: SessionMessage.AssistantTool): ConversationItem =>
+const fromToolCall = (
+  messageId: string,
+  part: SessionMessage.AssistantTool,
+): ConversationItem =>
   ConversationItem.ToolCall({
     id: part.id,
     input: JSON.stringify(part.state.input),
+    messageId,
     name: part.name,
   })
 
@@ -34,7 +39,11 @@ const fromAssistant = (
         Match.discriminators("type")({
           reasoning: () => [],
           text: ({ text }) => [ConversationItem.AssistantText({ text })],
-          tool: (tool) => [fromToolCall(tool)],
+          tool: (tool) =>
+            Match.value(tool.state).pipe(
+              Match.discriminator("status")("streaming", () => []),
+              Match.orElse(() => [fromToolCall(message.id, tool)]),
+            ),
         }),
         Match.exhaustive,
       ),

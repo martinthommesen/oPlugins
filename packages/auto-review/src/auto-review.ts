@@ -1,23 +1,27 @@
 import { BreakerDecision, DenialBreaker } from "./denial-breaker.ts"
-import { Context, Effect, Layer, Option, pipe } from "effect"
-import type { Review, ReviewError } from "./reviewer.ts"
+import { Context, Duration, Effect, Layer, Option } from "effect"
+import {
+  ContextUnavailable,
+  currentTurn,
+  renderPlannedAction,
+  renderTranscript,
+} from "./transcript.ts"
+import { ReviewTimedOut, Reviewer } from "./reviewer.ts"
 import {
   Verdict,
   denialMessage,
   escalationMessage,
   undecided,
 } from "./verdict.ts"
-import {
-  currentTurn,
-  renderPlannedAction,
-  renderTranscript,
-} from "./transcript.ts"
 import type { ConversationItem } from "./conversation.ts"
 import { Host } from "./host.ts"
 import type { HostError } from "./errors/host-error.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
-import { Reviewer } from "./reviewer.ts"
+import type { Review } from "./reviewer.ts"
+import type { ReviewFailure } from "./verdict.ts"
+import type { ReviewTurn } from "./denial-breaker.ts"
 import type { SessionId } from "./host.ts"
+import { Settings } from "./settings.ts"
 
 interface Interface {
   /**
@@ -33,20 +37,20 @@ interface Dependencies {
   readonly reviewer: Reviewer["Service"]
 }
 
+type Decide = (
+  evaluation: PermissionEvaluation,
+) => Effect.Effect<Verdict, ReviewFailure>
+
 /** Subagents nest; this bounds the walk up to the user's own session. */
 const MAX_SESSION_DEPTH = 8
 
 const NEXT_LEVEL = 1
 
-/** Stands in for the turn id before the session has a user message. */
-const SESSION_START = "session-start"
+interface RootConversation {
+  readonly items: readonly ConversationItem[]
+  readonly sessionId: SessionId
+}
 
-/**
- * Applies a verdict to the host's permission evaluation.
- * @param {PermissionEvaluation} evaluation The event OpenCode passed in.
- * @param {Verdict} verdict The decision.
- * @returns {Effect.Effect<void>} Mutates the event as the hook contract asks.
- */
 const apply = (
   evaluation: PermissionEvaluation,
   verdict: Verdict,
@@ -67,58 +71,51 @@ const apply = (
     })
   })
 
-/**
- * Builds the walk from a subagent session up to the user's root session.
- * @param {Host["Service"]} host The host service.
- * @returns {Function} Reads the root session's conversation.
- */
 const rootConversationWith = (
   host: Host["Service"],
 ): ((
   sessionId: SessionId,
   depth: number,
-) => Effect.Effect<readonly ConversationItem[], HostError>) => {
-  const rootConversation = (
-    sessionId: SessionId,
-    depth: number,
-  ): Effect.Effect<readonly ConversationItem[], HostError> =>
-    host.session(sessionId).pipe(
-      Effect.flatMap((snapshot) =>
-        pipe(
-          snapshot.parentId,
-          Option.filter(() => depth < MAX_SESSION_DEPTH),
-          Option.match({
-            onNone: () => Effect.succeed(snapshot.items),
-            onSome: (parent) => rootConversation(parent, depth + NEXT_LEVEL),
-          }),
-        ),
-      ),
-    )
+) => Effect.Effect<RootConversation, HostError | ContextUnavailable>) => {
+  const rootConversation = Effect.fn("AutoReview.rootConversation")(
+    function* walkRoot(
+      sessionId: SessionId,
+      depth: number,
+    ): Effect.fn.Return<RootConversation, HostError | ContextUnavailable> {
+      const snapshot = yield* host.session(sessionId)
+
+      if (Option.isNone(snapshot.parentId)) {
+        return { items: snapshot.items, sessionId }
+      }
+
+      if (depth >= MAX_SESSION_DEPTH) {
+        return yield* new ContextUnavailable({
+          reason:
+            "OpenCode's session chain is too deep to identify the user's root conversation.",
+        })
+      }
+
+      return yield* rootConversation(
+        snapshot.parentId.value,
+        depth + NEXT_LEVEL,
+      )
+    },
+  )
 
   return rootConversation
 }
 
-/**
- * Builds the step that turns an assessment into a verdict, counting denials.
- * @param {DenialBreaker["Service"]} breaker The denial counter.
- * @returns {Function} Settles one review.
- */
 const settleWith = (
   breaker: DenialBreaker["Service"],
-): ((
-  sessionId: string,
-  turn: string,
-  review: Review,
-) => Effect.Effect<Verdict>) =>
+): ((turn: ReviewTurn, review: Review) => Effect.Effect<Verdict>) =>
   Effect.fn("AutoReview.settle")(function* settle(
-    sessionId: string,
-    turn: string,
+    turn: ReviewTurn,
     review: Review,
   ) {
     const { assessment } = review
 
     if (assessment.outcome === "allow") {
-      yield* breaker.recordApproval(sessionId, turn)
+      yield* breaker.recordApproval(turn)
 
       return Verdict.Allow({
         model: review.model,
@@ -126,7 +123,7 @@ const settleWith = (
       })
     }
 
-    const decision = yield* breaker.recordDenial(sessionId, turn)
+    const decision = yield* breaker.recordDenial(turn)
 
     return BreakerDecision.$match(decision, {
       Deny: () => Verdict.Deny({ message: denialMessage(assessment) }),
@@ -135,16 +132,7 @@ const settleWith = (
     })
   })
 
-/**
- * Builds the review of one permission request.
- * @param {Dependencies} dependencies The services a review uses.
- * @returns {Function} Reviews a request and returns the verdict.
- */
-const decideWith = (
-  dependencies: Dependencies,
-): ((
-  evaluation: PermissionEvaluation,
-) => Effect.Effect<Verdict, HostError | ReviewError>) => {
+const decideWith = (dependencies: Dependencies): Decide => {
   const { host, reviewer } = dependencies
   const rootConversation = rootConversationWith(host)
   const settle = settleWith(dependencies.breaker)
@@ -155,22 +143,40 @@ const decideWith = (
     const snapshot = yield* host.session(evaluation.sessionID)
 
     const root = yield* Option.match(snapshot.parentId, {
-      onNone: () => Effect.succeedNone,
-      onSome: (parent) => Effect.asSome(rootConversation(parent, NEXT_LEVEL)),
+      onNone: () =>
+        Effect.succeed({
+          items: snapshot.items,
+          sessionId: evaluation.sessionID,
+        }),
+      onSome: (parent) => rootConversation(parent, NEXT_LEVEL),
     })
+
+    const userMessageId = yield* Effect.fromOption(
+      currentTurn(root.items),
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new ContextUnavailable({
+            reason:
+              "The root conversation contains no user message to identify this turn.",
+          }),
+      ),
+    )
+
+    const plannedAction = yield* renderPlannedAction(snapshot.items, evaluation)
+
+    const transcript = yield* renderTranscript(
+      snapshot.items,
+      snapshot.parentId.pipe(Option.map(() => root.items)),
+    )
 
     const review = yield* reviewer.review({
       cacheKey: evaluation.sessionID,
-      plannedAction: renderPlannedAction(snapshot.items, evaluation),
-      transcript: renderTranscript(snapshot.items, root),
+      plannedAction,
+      transcript,
     })
 
-    const turn = Option.getOrElse(
-      currentTurn(snapshot.items),
-      () => SESSION_START,
-    )
-
-    return yield* settle(evaluation.sessionID, turn, review)
+    return yield* settle({ sessionId: root.sessionId, userMessageId }, review)
   })
 }
 
@@ -181,6 +187,8 @@ class AutoReview extends Context.Service<AutoReview, Interface>()(
   public static readonly layer = Layer.effect(
     AutoReview,
     Effect.gen(function* makeAutoReview() {
+      const settings = yield* Settings
+
       const decide = decideWith({
         breaker: yield* DenialBreaker,
         host: yield* Host,
@@ -195,12 +203,24 @@ class AutoReview extends Context.Service<AutoReview, Interface>()(
         }
 
         const verdict = yield* decide(evaluation).pipe(
+          Effect.timeoutOrElse({
+            duration: settings.timeout,
+            orElse: () =>
+              Effect.fail(
+                new ReviewTimedOut({
+                  timeout: Duration.format(settings.timeout),
+                }),
+              ),
+          }),
           Effect.matchEffect({
-            onFailure: (failure) =>
-              Effect.logWarning(
+            onFailure: (failure: ReviewFailure) => {
+              const fallback = undecided(failure)
+
+              return Effect.logWarning(
                 "Auto-review failed; asking the user.",
-                failure,
-              ).pipe(Effect.as(undecided(failure))),
+                fallback,
+              ).pipe(Effect.as(fallback))
+            },
             onSuccess: Effect.succeed,
           }),
         )

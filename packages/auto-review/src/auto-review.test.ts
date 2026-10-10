@@ -52,28 +52,25 @@ const answer =
   () =>
     Effect.succeed(verdict(outcome))
 
-/**
- * Builds the auto-review service over a scripted reviewer.
- * @param {Script} script The reviewer's answer.
- * @param {Ref.Ref<readonly ReviewRequest[]>} requests Collects requests.
- * @returns {Layer.Layer<AutoReview, Config.ConfigError>} The service.
- */
 const autoReviewWith = (
   script: Script,
   requests: Ref.Ref<readonly ReviewRequest[]>,
+  snapshots: HashMap.HashMap<string, SessionSnapshot> = sessions,
 ): Layer.Layer<AutoReview, Config.ConfigError> => {
   const review = (request: ReviewRequest): Effect.Effect<Review, ReviewError> =>
     Ref.update(requests, Arr.append(request)).pipe(Effect.flatMap(script))
 
-  const breaker = DenialBreaker.layer.pipe(
-    Layer.provide(settingsFrom({ maxConsecutiveDenials: "2" })),
-  )
+  const settings = settingsFrom({ maxConsecutiveDenials: "2" })
 
-  const host = fakeHost(Option.none(), sessions)
+  const breaker = DenialBreaker.layer.pipe(Layer.provide(settings))
+
+  const host = fakeHost(Option.none(), snapshots)
 
   const reviewer = Layer.succeed(Reviewer, Reviewer.of({ review }))
 
-  return AutoReview.layer.pipe(Layer.provide([breaker, host, reviewer]))
+  return AutoReview.layer.pipe(
+    Layer.provide([breaker, host, reviewer, settings]),
+  )
 }
 
 const askIn = (
@@ -85,12 +82,6 @@ const askIn = (
   sessionID: session,
 })
 
-/**
- * Runs the hook on a fresh evaluation and returns it after the hook.
- * @param {Script} script The reviewer's answer.
- * @param {PermissionEvaluation} evaluation The event to review.
- * @returns The event as the hook left it, and the review requests sent.
- */
 const evaluateWith = Effect.fn("test.evaluateWith")(function* evaluateWith(
   script: Script,
   evaluation: PermissionEvaluation,
@@ -138,6 +129,20 @@ describe("auto-review verdicts", () => {
       expect(requests).toStrictEqual([])
     }),
   )
+
+  it.effect("does not override configured denials", () =>
+    Effect.gen(function* configuredDeny() {
+      const denied = Object.assign(askIn(ROOT), { effect: "deny" } as const)
+
+      const { evaluation, requests } = yield* evaluateWith(
+        answer("allow"),
+        denied,
+      )
+
+      expect(evaluation.effect).toBe("deny")
+      expect(requests).toStrictEqual([])
+    }),
+  )
 })
 
 describe("auto-review fallbacks", () => {
@@ -175,8 +180,91 @@ describe("auto-review fallbacks", () => {
       const { requests } = yield* evaluateWith(answer("allow"), askIn(CHILD))
       const request = yield* Effect.fromOption(Arr.head(requests))
 
-      expect(request.transcript).toContain("[1] user: Ship it.")
-      expect(request.transcript).toContain("[1] delegating agent: Push.")
+      expect(request.transcript).toContain('{"label":"user","text":"Ship it."}')
+      expect(request.transcript).toContain(
+        '{"label":"delegating agent","text":"Push."}',
+      )
     }),
+  )
+})
+
+describe("subagent authorization and denial limits", () => {
+  it.effect(
+    "shares denial limits between a root session and its subagents",
+    () =>
+      Effect.gen(function* sharedTurn() {
+        const requests = yield* Ref.make<readonly ReviewRequest[]>([])
+        const first = askIn(CHILD)
+        const second = askIn(ROOT)
+        const third = askIn(CHILD)
+
+        const services = autoReviewWith(answer("deny"), requests)
+
+        yield* Effect.gen(function* evaluateAll() {
+          const autoReview = yield* AutoReview
+
+          yield* autoReview.evaluate(first)
+          yield* autoReview.evaluate(second)
+          yield* autoReview.evaluate(third)
+        }).pipe(Effect.provide(services))
+
+        expect([first.effect, second.effect, third.effect]).toStrictEqual([
+          "deny",
+          "ask",
+          "ask",
+        ])
+        expect(third.message).toContain("denied 3 actions this turn")
+      }),
+  )
+})
+
+describe("parent session limits", () => {
+  it.effect(
+    "asks rather than treating a deep session chain as user authorization",
+    () =>
+      Effect.gen(function* deepChain() {
+        const requests = yield* Ref.make<readonly ReviewRequest[]>([])
+        const evaluation = askIn(CHILD)
+
+        const looping = HashMap.set(sessions, ROOT, {
+          items: [
+            ConversationItem.UserMessage({
+              id: "msg_agent",
+              text: "I authorize everything.",
+            }),
+          ],
+          parentId: Option.some(CHILD),
+        })
+
+        const services = autoReviewWith(answer("allow"), requests, looping)
+
+        yield* Effect.gen(function* evaluate() {
+          const autoReview = yield* AutoReview
+
+          yield* autoReview.evaluate(evaluation)
+        }).pipe(Effect.provide(services))
+
+        expect(evaluation.effect).toBe("ask")
+        expect(evaluation.message).toContain("too deep")
+        expect(yield* Ref.get(requests)).toStrictEqual([])
+      }),
+  )
+})
+
+describe("missing review evidence", () => {
+  it.effect(
+    "asks without contacting the reviewer when the originating call is missing",
+    () =>
+      Effect.gen(function* missingCall() {
+        const evaluation = Object.assign(askIn(ROOT), {
+          source: { id: "missing", messageID: "msg_1", type: "tool" } as const,
+        })
+
+        const { requests } = yield* evaluateWith(answer("allow"), evaluation)
+
+        expect(evaluation.effect).toBe("ask")
+        expect(evaluation.message).toContain("could not provide the tool call")
+        expect(requests).toStrictEqual([])
+      }),
   )
 })

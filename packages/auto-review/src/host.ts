@@ -31,11 +31,6 @@ const OPENAI_INTEGRATION = "openai"
 class Host extends Context.Service<Host, Interface>()(
   "opencode-auto-review/Host",
 ) {
-  /**
-   * Adapts the plugin context to the `Host` service.
-   * @param {Plugin.Context} context The plugin context OpenCode passed in.
-   * @returns {Layer.Layer<Host>} A layer providing `Host`.
-   */
   public static readonly fromPlugin = (
     context: Plugin.Context,
   ): Layer.Layer<Host> => {

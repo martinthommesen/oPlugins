@@ -4,8 +4,7 @@ import { Effect } from "effect"
 
 const directory = new URL("../src/vendor/codex/", import.meta.url)
 
-const read = (name: string): Effect.Effect<string> =>
-  Effect.promise(async () => readFile(new URL(name, directory), "utf8"))
+const EXIT_FAILURE = 1
 
 const render = (template: string, policy: string): string =>
   [
@@ -20,15 +19,19 @@ const render = (template: string, policy: string): string =>
     "",
   ].join("\n")
 
-const program = Effect.gen(function* vendorCodexPolicy() {
-  const [template, policy] = yield* Effect.all([
-    read("policy_template.md"),
-    read("policy.md"),
+const program = Effect.promise(async () => {
+  const [template, policy] = await Promise.all([
+    readFile(new URL("policy_template.md", directory), "utf8"),
+    readFile(new URL("policy.md", directory), "utf8"),
   ])
 
-  yield* Effect.promise(async () =>
-    writeFile(new URL("policy.ts", directory), render(template, policy)),
-  )
-})
+  await writeFile(new URL("policy.ts", directory), render(template, policy))
+}).pipe(
+  Effect.onError(() =>
+    Effect.sync(() => {
+      process.exitCode = EXIT_FAILURE
+    }),
+  ),
+)
 
-Effect.runFork(program)
+Effect.runCallback(program)

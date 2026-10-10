@@ -1,5 +1,6 @@
-import { Context, Effect, Layer, Schedule } from "effect"
+import { Context, Effect, Layer, Option, Schedule, Schema } from "effect"
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
@@ -40,13 +41,52 @@ const TRANSIENT_RETRIES = 2
 
 const RETRY_BASE_DELAY = "250 millis"
 
-/**
- * Classifies a response before its body is read.
- * @param {string} model The requested model.
- * @param {HttpClientResponse.HttpClientResponse} response The response.
- * @returns {Effect.Effect<HttpClientResponse.HttpClientResponse, CompletionError>}
- * The response when its status is a success.
- */
+const ResponseError = Schema.Struct({
+  code: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  message: Schema.optionalKey(Schema.String),
+})
+
+const ErrorPayload = Schema.Struct({
+  detail: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(ResponseError),
+})
+
+const decodeError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(ErrorPayload),
+)
+
+const MODEL_ERROR_CODES = new Set([
+  "invalid_model",
+  "model_not_available",
+  "model_not_found",
+  "model_not_supported",
+  "unsupported_model",
+])
+
+const MODEL_REJECTION =
+  /\b(?:unsupported|unknown|unavailable|invalid) model\b|\bmodel\b.{0,160}\b(?:not supported|not available|not found|does not exist)\b|\b(?:do not have access|don't have access)\b.{0,80}\bmodel\b/iu
+
+const modelRejected = (detail: string): boolean =>
+  Option.exists(decodeError(detail), (payload) => {
+    const error = Option.fromUndefinedOr(payload.error)
+
+    const code = error.pipe(
+      Option.flatMap((value) => Option.fromNullishOr(value.code)),
+    )
+
+    const message = error.pipe(
+      Option.flatMap((value) => Option.fromUndefinedOr(value.message)),
+    )
+
+    return (
+      Option.exists(code, (value) => MODEL_ERROR_CODES.has(value)) ||
+      Option.exists(
+        Option.orElse(message, () => Option.fromUndefinedOr(payload.detail)),
+        (value) => MODEL_REJECTION.test(value),
+      )
+    )
+  })
+
 const checkStatus = Effect.fn("CodexResponses.checkStatus")(
   function* checkStatus(
     model: string,
@@ -54,18 +94,30 @@ const checkStatus = Effect.fn("CodexResponses.checkStatus")(
   ) {
     const { status } = response
 
-    if (status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN) {
+    if (status === HTTP_UNAUTHORIZED) {
       return yield* new AuthUnavailable({
         reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
       })
     }
 
-    if (status === HTTP_BAD_REQUEST || status === HTTP_NOT_FOUND) {
+    if (
+      status === HTTP_BAD_REQUEST ||
+      status === HTTP_FORBIDDEN ||
+      status === HTTP_NOT_FOUND
+    ) {
       const detail = yield* response.text.pipe(
         requestFailed(model, "readErrorBody"),
       )
 
-      return yield* new ModelUnavailable({ detail, model, status })
+      if (modelRejected(detail)) {
+        return yield* new ModelUnavailable({ detail, model, status })
+      }
+    }
+
+    if (status === HTTP_FORBIDDEN) {
+      return yield* new AuthUnavailable({
+        reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
+      })
     }
 
     return yield* HttpClientResponse.filterStatusOk(response).pipe(
@@ -103,9 +155,12 @@ class CodexResponses extends Context.Service<CodexResponses, Interface>()(
           settings.reasoningEffort,
         )
 
-        const response = yield* client
-          .execute(request)
-          .pipe(requestFailed(completion.model, "execute"))
+        const response = yield* client.execute(request).pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, {
+            redirect: "error",
+          }),
+          requestFailed(completion.model, "execute"),
+        )
 
         const ok = yield* checkStatus(completion.model, response)
 

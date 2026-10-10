@@ -1,17 +1,17 @@
 # opencode-auto-review
 
 OpenCode v2 plugin that sends permission prompts to a reviewer model before
-they reach you, in the style of Codex's
+they reach you. It uses Codex's
 [Auto-review](https://developers.openai.com/codex/concepts/sandboxing/auto-review).
 
 When a permission rule resolves to **ask**, the plugin shows the reviewer the
 conversation and the exact action, and applies its verdict:
 
-- **Allow**: the action runs without a prompt.
-- **Deny**: the action is refused. The agent gets the reviewer's reason and
+- An allow decision runs the action without a prompt.
+- A deny decision refuses the action. The agent gets the reviewer's reason and
   Codex's instruction to find a materially safer path or stop and ask.
-- **Ask**: you get the normal prompt, with a note saying why. This happens
-  when the review fails, times out, or keeps denying (see below).
+- An ask decision leaves the normal prompt for you, with a note saying why.
+  This happens when the review fails, times out, lacks context, or keeps denying.
 
 Rules that already resolve to **allow** are not reviewed, and configured
 **deny** rules never reach the plugin.
@@ -19,9 +19,9 @@ Rules that already resolve to **allow** are not reviewed, and configured
 ## Requirements
 
 - OpenCode 2.0.26 or newer.
-- OpenAI connected with **Sign in with ChatGPT** (`/connect` → OpenAI). The
-  reviewer calls the ChatGPT Codex backend with that sign-in. An OpenAI API key
-  does not work.
+- OpenAI connected with "Sign in with ChatGPT". Run `/connect` and choose
+  OpenAI. The reviewer uses that sign-in to call the ChatGPT Codex backend.
+  An OpenAI API key does not work.
 
 ## Install
 
@@ -60,43 +60,61 @@ Pass options with the object form of the plugin entry:
 }
 ```
 
-| Option                  | Default                                 | Meaning                                                                       |
-| ----------------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
-| `model`                 | `codex-auto-review`                     | Reviewer model requested first.                                               |
-| `fallbackModel`         | `gpt-5.5`                               | Used once the account turns `model` away. Set it equal to `model` to disable. |
-| `reasoningEffort`       | `low`                                   | `minimal`, `low`, `medium`, or `high`.                                        |
-| `timeout`               | `90 seconds`                            | Deadline for one review, fallback included.                                   |
-| `maxConsecutiveDenials` | `3`                                     | Consecutive denials in one turn before you are asked instead.                 |
-| `maxTotalDenials`       | `10`                                    | Total denials in one turn before you are asked instead.                       |
-| `extraPolicy`           | (empty)                                 | Text added to the security policy, such as trusted hosts or repositories.     |
-| `baseUrl`               | `https://chatgpt.com/backend-api/codex` | Codex Responses backend.                                                      |
+| Option                  | Default                                 | Meaning                                                                     |
+| ----------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| `model`                 | `codex-auto-review`                     | Reviewer model requested first.                                             |
+| `fallbackModel`         | `gpt-5.5`                               | Used after the backend rejects `model`. Set it equal to `model` to disable. |
+| `reasoningEffort`       | `low`                                   | `minimal`, `low`, `medium`, or `high`.                                      |
+| `timeout`               | `90 seconds`                            | Positive, finite deadline including context loading, retries, and fallback. |
+| `maxConsecutiveDenials` | `3`                                     | Positive integer. Consecutive denials per user turn before asking you.      |
+| `maxTotalDenials`       | `10`                                    | Positive integer. Total denials per user turn before asking you.            |
+| `extraPolicy`           | (empty)                                 | Text added to the security policy, such as trusted hosts or repositories.   |
+| `baseUrl`               | `https://chatgpt.com/backend-api/codex` | HTTP(S) backend URL without credentials, a query, or a fragment.            |
 
 Invalid options stop the plugin from loading. OpenCode's log then shows the
 error, and permission prompts behave as if the plugin were not installed.
 
+Only set `baseUrl` to a backend you trust. It receives your ChatGPT access token
+and conversation. Use HTTPS unless testing a local backend. Requests do not
+follow redirects.
+
 ## How it works
 
-- **Reviewer model.** `codex-auto-review` is the hidden model Codex uses for
-  Auto-review. OpenAI enables it per account and does not document it, so it
-  can change or disappear. When the backend rejects it, the plugin switches to
-  `fallbackModel` until the plugin reloads and logs a warning.
-- **Policy.** The instructions are Codex's Auto-review policy template and
-  default security policy, copied unchanged from the Codex repository (see
-  `src/vendor/codex/UPSTREAM.md`). The plugin adds a short section describing
-  OpenCode and replaces Codex's output contract with one that says the
-  reviewer has no tools.
-- **What the reviewer sees.** User messages, the agent's messages and tool
-  calls (inputs truncated), conversation summaries, and the planned action:
-  the permission request plus the tool call that raised it. Tool outputs are
-  left out, so content the agent read cannot address the reviewer directly.
-  For a subagent, the reviewer also sees the user's messages from the root
-  session, and the subagent's own "user" messages are labeled as coming from
-  the delegating agent.
-- **Turns and denials.** A turn starts at the newest user message. Like
-  Codex, a run of denials (3 in a row, or 10 in total, per turn) hands the
-  decision back to you; an approval resets the consecutive count.
-- **Failures** (not signed in, expired sign-in, backend errors, timeouts,
-  unreadable answers) leave the prompt for you, with the reason in the prompt.
+`codex-auto-review` is the hidden model Codex uses for Auto-review.
+OpenAI enables it per account and does not document it, so it
+can change or disappear. When the backend rejects it, the plugin switches to
+`fallbackModel` until the plugin reloads and logs a warning. Other request
+errors do not select the fallback.
+
+The instructions are Codex's Auto-review policy template and default security
+policy, copied unchanged from the Codex repository. Its source is documented
+in `src/vendor/codex/UPSTREAM.md`. The plugin adds a short section describing
+OpenCode and replaces Codex's output contract with one that says the
+reviewer has no tools.
+
+The reviewer sees user messages, the agent's messages and tool calls,
+conversation summaries, and the planned action. The planned action
+contains the permission request and the exact tool call that raised it.
+Tool outputs are left out. Each transcript entry quotes its text separately
+from its speaker label, so embedded labels remain part of that entry's text.
+For a subagent, the reviewer also sees the user's messages from the root
+session, and the subagent's own "user" messages are labeled as coming from
+the delegating agent. If the root session or originating tool call cannot
+be identified, the plugin asks you instead.
+
+The transcript has a 48,000-character budget. Older agent entries can be
+omitted, and agent text and historical tool inputs can be shortened. User
+messages are never shortened. The planned action has an 8,000-character limit
+and is never shortened. If either cannot fit, the plugin asks you instead.
+
+A turn starts at the newest user message in the root session. The root and
+its subagents share denial counts. Three consecutive denials or ten total
+denials per turn hand the decision back to you. An approval resets only the
+consecutive count. Reaching the total limit keeps subsequent denials with you
+until a new user turn, even after an approval.
+
+Missing or expired sign-ins, backend errors, timeouts, unfinished response
+streams, and unreadable answers leave the prompt for you, with the reason.
 
 ## Limitations
 

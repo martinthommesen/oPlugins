@@ -1,0 +1,22 @@
+packages:
+  - packages/*
+
+# The OpenCode host supplies `effect` and its platform packages to plugins at
+# runtime, so these pins follow `@opencode/plugin`'s own dependencies rather
+# than the newest releases.
+catalog:
+  "@effect/platform-node": 4.0.0-rc.112
+  "@effect/platform-node-shared": 4.0.0-rc.112
+  "@effect/vitest": 4.0.0-rc.112
+  "@opencode/plugin": 2.0.26
+  "@opencode/schema": 2.0.26
+  "@opencode/theme": 2.0.26
+  "@opentui/solid": 0.5.17
+  "@types/node": ^22.20.5
+  effect: 4.0.0-rc.112
+  solid-js: 1.9.12
+  typescript: 5.9.3
+  vitest: 4.1.11
+
+allowBuilds:
+  msgpackr-extract: false

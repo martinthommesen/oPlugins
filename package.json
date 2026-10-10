@@ -1,0 +1,28 @@
+{
+  "name": "oplugins",
+  "private": true,
+  "description": "OpenCode v2 plugins.",
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run test",
+    "lint": "oxlint && oxfmt --check .",
+    "lint:fix": "oxlint --fix && oxfmt --write .",
+    "lint:effect": "pnpm -r run lint:effect",
+    "format": "oxfmt --write .",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "@effect/language-service": "0.87.4",
+    "@oxlint/plugins": "1.87.0",
+    "effect": "catalog:",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

@@ -1,0 +1,44 @@
+{
+  "name": "opencode-advisor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenCode v2 plugin that lets agents consult a configurable advisor model for a second opinion.",
+  "keywords": [
+    "opencode",
+    "plugin"
+  ],
+  "license": "MIT",
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "!src/testing.ts"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "oxlint && oxfmt --check .",
+    "lint:fix": "oxlint --fix && oxfmt --write .",
+    "format": "oxfmt --write .",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-rc.112",
+    "@opencode/plugin": "2.0.26",
+    "@opencode/schema": "2.0.26",
+    "@oxlint/plugins": "1.87.0",
+    "@types/node": "^22.20.5",
+    "effect": "4.0.0-rc.112",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

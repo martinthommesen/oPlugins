@@ -67,7 +67,6 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
-          registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
         if: steps.release-please.outputs.oclaude_release_created == 'true'
@@ -77,7 +76,9 @@ jobs:
         if: steps.release-please.outputs.oclaude_release_created == 'true'
       - run: pnpm --filter oclaude run verify:dist
         if: steps.release-please.outputs.oclaude_release_created == 'true'
+        # npm trusted publishing (OIDC through `id-token: write`), no token.
+        # It can only be configured once the package exists on npm, so this
+        # step stays off until the repository variable OCLAUDE_NPM_PUBLISH is
+        # set to `true`.
       - run: pnpm --filter oclaude publish --access public --provenance --no-git-checks --ignore-scripts
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.release-please.outputs.oclaude_release_created == 'true' && vars.OCLAUDE_NPM_PUBLISH == 'true'

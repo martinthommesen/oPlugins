@@ -22,7 +22,7 @@
     "typescript": "catalog:"
   },
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=26"
   },
-  "packageManager": "pnpm@11.25.0"
+  "packageManager": "pnpm@12.11.2"
 }

@@ -4,7 +4,7 @@ OpenCode v2 plugins, one package each.
 
 ## Development
 
-Requires Node 22.18 or newer and pnpm 11.
+Requires Node 26 and pnpm 12.
 
 ```sh
 pnpm install

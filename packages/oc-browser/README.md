@@ -11,7 +11,7 @@ in [`docs/design.md`](docs/design.md).
 ## Requirements
 
 - OpenCode 2.0.26
-- Node 22.18 or newer and pnpm 11, to lint, build, and test from a checkout
+- Node 26 and pnpm 12, to lint, build, and test from a checkout
 - Google Chrome 120 or newer, or another Chromium-based browser
 
 ## Install

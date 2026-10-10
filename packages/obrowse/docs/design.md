@@ -250,11 +250,12 @@ a dev VM, a cloud workspace) as well as the local background service.
 
 ## Packaging and release
 
-- **Repository.** A pnpm workspace. The root stays the `obrowse` plugin
-  package (`src/`); the host source lives flat in `host/`, the extension
-  flat in `extension/`.
-- **Release.** release-please in manifest mode versions everything
-  together. CI builds the host binaries, publishes `obrowse` and the
+- **Repository.** `packages/obrowse` in the oPlugins pnpm monorepo
+  ([ADR 0008](adr/0008-package-in-the-oplugins-monorepo.md)). It holds the
+  `obrowse` plugin package (`src/`); the host source lives flat in `host/`,
+  the extension flat in `extension/`.
+- **Release.** release-please in manifest mode versions the oBrowse
+  packages together. CI builds the host binaries, publishes `obrowse` and the
   `@obrowse/host-<platform>` packages, and submits the extension to the Web
   Store from the same release.
 

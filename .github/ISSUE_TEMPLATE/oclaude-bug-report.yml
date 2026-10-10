@@ -1,5 +1,5 @@
-name: Bug Report
-description: Report a problem with oClaude
+name: oClaude bug report
+description: Report a problem with oClaude (packages/claude-auth)
 labels: ["bug"]
 body:
   - type: textarea

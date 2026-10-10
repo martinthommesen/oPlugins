@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+# release-please runs in manifest mode: release-please-config.json lists the
+# released packages and .release-please-manifest.json their last versions.
+# Only oclaude (packages/claude-auth) is released.
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run release-please (attempt 1)
+        uses: googleapis/release-please-action@v5
+        id: release-please-1
+        continue-on-error: true
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Run release-please (attempt 2)
+        if: steps.release-please-1.outcome == 'failure'
+        uses: googleapis/release-please-action@v5
+        id: release-please-2
+        continue-on-error: true
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Run release-please (attempt 3)
+        if: steps.release-please-1.outcome == 'failure' && steps.release-please-2.outcome == 'failure'
+        uses: googleapis/release-please-action@v5
+        id: release-please-3
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Select release-please outputs
+        id: release-please
+        shell: bash
+        run: |
+          created="${{ steps.release-please-1.outputs['packages/claude-auth--release_created'] }}"
+          if [[ "${{ steps.release-please-2.outcome }}" == "success" ]]; then
+            created="${{ steps.release-please-2.outputs['packages/claude-auth--release_created'] }}"
+          fi
+          if [[ "${{ steps.release-please-3.outcome }}" == "success" ]]; then
+            created="${{ steps.release-please-3.outputs['packages/claude-auth--release_created'] }}"
+          fi
+          echo "oclaude_release_created=$created" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+
+      - uses: pnpm/action-setup@v4
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+      - run: pnpm run check
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+      - run: pnpm --filter oclaude run build
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+      - run: pnpm --filter oclaude run verify:dist
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+      - run: pnpm --filter oclaude publish --access public --provenance --no-git-checks --ignore-scripts
+        if: steps.release-please.outputs.oclaude_release_created == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

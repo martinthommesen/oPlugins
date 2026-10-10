@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": true,
+  "separate-pull-requests": true,
+  "bootstrap-sha": "03e622ebe712c2c94e95712ebcab9a1dacdc80a8",
+  "packages": {
+    "packages/claude-auth": {
+      "component": "oclaude",
+      "package-name": "oclaude",
+      "release-as": "3.0.0"
+    }
+  }
+}

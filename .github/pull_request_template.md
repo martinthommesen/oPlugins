@@ -14,6 +14,6 @@
 
 - [ ] PR title follows [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`, etc.)
 - [ ] Breaking changes use `!` in the PR title or include a `BREAKING CHANGE:` footer
-- [ ] `pnpm run lint`, `pnpm run typecheck`, `pnpm run build`, and `pnpm test` pass locally (Node 22.6+, pnpm 10)
+- [ ] `pnpm run check` passes locally (Node 22.18+, pnpm 11); for oclaude, `pnpm --filter oclaude run build` too
 - [ ] Tests added or updated where applicable
 - [ ] README or docs updated where applicable

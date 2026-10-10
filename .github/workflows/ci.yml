@@ -7,12 +7,8 @@ on:
       - main
 
 jobs:
-  validate:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        host: ["2.0.7", "target"]
-    runs-on: ${{ matrix.os }}
+  check:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +22,29 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run typecheck
+      - run: pnpm run lint:effect
+      - run: pnpm run test
+
+  oclaude:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        host: ["2.0.7", "target"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/claude-auth
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run build
         # The keychain unit tests run against a stub; this lets the live test
         # write throwaway items through the real `security` tool. A dedicated

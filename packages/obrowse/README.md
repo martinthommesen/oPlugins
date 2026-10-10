@@ -5,7 +5,8 @@ OpenCode drive your browser.
 
 This is a scaffold. The plugin starts and writes to its debug log, the TUI
 plugin adds one palette command, and the extension's service worker only
-logs that it started. No browser control exists yet.
+logs that it started. No browser control exists yet. The agreed design is
+in [`docs/design.md`](docs/design.md).
 
 ## Requirements
 

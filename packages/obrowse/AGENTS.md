@@ -4,6 +4,14 @@ An OpenCode V2 server plugin (`src/index.ts`, Effect API), TUI plugin
 (`src/tui.ts`), and Chrome extension (`extension/`) that let OpenCode drive
 the user's browser.
 
+# Design
+
+`docs/design.md` is the agreed v1 design, and `docs/adr/` records why its
+hard-to-reverse parts are as they are. Read both before changing the
+architecture, the transport, the safety model, or packaging; a change that
+contradicts an ADR needs a new ADR. `GLOSSARY.md` holds the project's terms:
+use them in code, docs, and messages.
+
 # Learning more about Effect
 
 This repository uses the Effect Typescript library.

@@ -74,7 +74,8 @@ The lint policy forces a shape that is unusual but uniform:
   export it imported: `typeof ClaudeCredentials.Type`, `Credentials["Service"]`,
   `ReturnType<typeof helpers.parse>`. Declare such aliases locally, unexported.
 - **One class per file, all files flat in the package's `src/`** (`../`
-  imports are banned). Each error class gets its own `*-error.ts` file.
+  imports are banned; oBrowse's Chrome extension is flat in its own
+  `extension/`). Each error class gets its own `*-error.ts` file.
 - **Services** are `Context.Service` classes with `static readonly layer`
   (and `layerTest` when tests need a fake), built per the Effect guide:
   `Layer.effect` + `Effect.gen` + `Service.of`, methods via

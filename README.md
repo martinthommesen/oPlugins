@@ -21,6 +21,7 @@ for every package. See `AGENTS.md` for the policy behind them.
 | `packages/claude-auth` | `oclaude`              | Planned   |
 | `packages/auto-review` | `opencode-auto-review` | Private   |
 | `packages/advisor`     | `opencode-advisor`     | Private   |
+| `packages/obrowse`     | `obrowse`              | Planned   |
 
 ## Releasing
 

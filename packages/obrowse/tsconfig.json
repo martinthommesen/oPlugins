@@ -1,33 +1,5 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    // Node 22 has the ES2023 array methods; only the emit target is ES2022.
-    // DOM restores the fetch types the default `<target>.full` lib carried.
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "preserve",
-    "moduleResolution": "bundler",
-    "types": ["node"],
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "skipLibCheck": true,
-
-    "strict": true,
-    "allowUnreachableCode": false,
-    "allowUnusedLabels": false,
-    "erasableSyntaxOnly": true,
-    "exactOptionalPropertyTypes": true,
-    "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true,
-    "noImplicitReturns": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noUncheckedIndexedAccess": true,
-    "noUncheckedSideEffectImports": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "verbatimModuleSyntax": true
-  },
+  "extends": "../../tsconfig.base.json",
   // The extension has its own project, `extension/tsconfig.json`.
   "include": ["src/**/*.ts", "scripts/**/*.ts", "types/**/*.ts", "*.config.ts"]
 }

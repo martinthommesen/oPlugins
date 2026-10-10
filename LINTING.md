@@ -13,7 +13,9 @@ satisfies it. The model files are in `packages/claude-auth/src/`:
 - One class per file. Errors each get a file, written exactly like
   `packages/claude-auth/src/claude-auth-terminal-error.ts`.
 - Imports never climb (`../`). Every module lives directly in its package's
-  `src/`; test-only helpers are `*.test-support.ts`.
+  `src/` (or oBrowse's `extension/`); test-only helpers are
+  `*.test-support.ts`. oBrowse's extension code reaches a shared module in
+  `src/` as `#src/<file>.ts`.
 - `import * as` is banned; Effect platform modules come from the package
   index: `import { NodeFileSystem } from "@effect/platform-node-shared"`.
 - Imports are sorted by the first local name, uppercase before lowercase,
@@ -89,6 +91,12 @@ satisfies it. The model files are in `packages/claude-auth/src/`:
   as returning `PromiseLike`, which is what `tryPromise` asks for and which
   `promise-function-async` does not treat as a Promise:
   `try: (signal): PromiseLike<Response> => fetch(request, { signal })`.
+  oBrowse's extension calls `chrome.*` APIs, which return Promises; wrap
+  them the same way:
+  `try: (): PromiseLike<chrome.tabs.Tab[]> => chrome.tabs.query({})`.
+- oBrowse's service worker is the one module with a top-level call:
+  `Effect.runFork(program)`, which the `packages/obrowse/extension/**`
+  override allows.
 - An explicit annotation that widens a known value fails
   `no-known-value-widening`; let inference work, or use `satisfies`.
 

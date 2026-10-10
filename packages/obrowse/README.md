@@ -11,16 +11,16 @@ in [`docs/design.md`](docs/design.md).
 ## Requirements
 
 - OpenCode 2.0.26
-- Node 22.18 or newer and pnpm 10, to lint, build, and test from a checkout
+- Node 22.18 or newer and pnpm 11, to lint, build, and test from a checkout
 - Google Chrome 120 or newer, or another Chromium-based browser
 
 ## Install
 
-oBrowse is not published to npm. Build it from a checkout:
+oBrowse is not published to npm. Build it from an oPlugins checkout:
 
 ```sh
 pnpm install
-pnpm run build
+pnpm --filter obrowse run build
 ```
 
 Then add the built plugin to the plural `plugins` field in
@@ -29,14 +29,14 @@ Then add the built plugin to the plural `plugins` field in
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/obrowse/dist"],
+  "plugins": ["/path/to/oPlugins/packages/obrowse/dist"],
 }
 ```
 
 To load the extension, open `chrome://extensions`, turn on Developer mode,
-choose **Load unpacked**, and select `dist/extension`.
+choose **Load unpacked**, and select `packages/obrowse/dist/extension`.
 
-After pulling changes, run `pnpm run build` again. OpenCode picks the new
+After pulling changes, run the build again. OpenCode picks the new
 build up on its next start. For the extension, click the reload button on
 its card in `chrome://extensions`.
 
@@ -71,15 +71,19 @@ is not already one of these logs.
 
 ## Development
 
+From the repository root, `pnpm run check` lints, type-checks, and tests
+every package, oBrowse included. In `packages/obrowse`:
+
 ```sh
-pnpm run lint        # oxlint (every rule, type-aware) + oxfmt --check
 pnpm run typecheck   # the plugin project, then the extension project
+pnpm run lint:effect # Effect diagnostics for both projects
 pnpm test
 pnpm run build       # dist/ for the plugin, dist/extension/ for Chrome
 ```
 
-Read `AGENTS.md` and `LINTING.md` before writing code: the lint policy
-forces an unusual but uniform module shape.
+Read the root `AGENTS.md` and `LINTING.md`, then this package's
+`AGENTS.md`, before writing code: the lint policy forces an unusual but
+uniform module shape.
 
 ## Verify host compatibility
 

@@ -139,7 +139,7 @@ const DEGRADED_LOCK = {
     return LockAttempt.held({ lock: DEGRADED_LOCK })
   }),
   encoder = new TextEncoder(),
-  /* `OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR`, else OpenCode's data directory. */
+  /* `OC_AUTH_REFRESH_LOCK_DIR`, else OpenCode's data directory. */
   lockDir = Effect.gen(function* resolveLockDir() {
     const environment = yield* Environment
 
@@ -238,9 +238,9 @@ const DEGRADED_LOCK = {
 
 /**
  * The cross-process refresh lock. `acquire` takes the lock for one
- * credential source, in `OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR` or
+ * credential source, in `OC_AUTH_REFRESH_LOCK_DIR` or
  * OpenCode's data directory, leased for
- * `OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS` up to `maxTtlMs`. A held lock is
+ * `OC_AUTH_REFRESH_LOCK_TTL_MS` up to `maxTtlMs`. A held lock is
  * released when the caller's scope closes, if not before.
  */
 class RefreshLock extends Context.Service<

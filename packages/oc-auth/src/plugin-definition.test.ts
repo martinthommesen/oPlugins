@@ -50,7 +50,7 @@ describe("the plugin definition", () => {
     it.effect("exports one Effect plugin definition", () =>
       Effect.sync(() => {
         expect.hasAssertions()
-        expect(plugin.id).toBe("martinthommesen.oclaude")
+        expect(plugin.id).toBe("martinthommesen.oc-auth")
         expect(Object.keys(plugin).toSorted()).toStrictEqual(["effect", "id"])
       }),
     )

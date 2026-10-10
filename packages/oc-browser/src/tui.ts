@@ -25,23 +25,23 @@ interface Host {
   }
 }
 
-/** The TUI side of oBrowse: a palette command that confirms it loaded. */
+/** Oc-browser's CLI plugin: a palette command that confirms it loaded. */
 const tuiPlugin = {
-  id: "martinthommesen.obrowse.tui",
+  id: "martinthommesen.oc-browser.cli",
   setup: (context: Host): void => {
     context.keymap.layer(() => ({
       commands: [
         {
-          group: "oBrowse",
-          id: "obrowse.status",
+          group: "oc-browser",
+          id: "oc-browser.status",
           palette: true,
           run: (): void => {
             context.ui.toast.show({
-              message: "oBrowse is loaded",
+              message: "oc-browser is loaded",
               variant: "info",
             })
           },
-          title: "Show oBrowse status",
+          title: "Show oc-browser status",
         },
       ],
       mode: "global",

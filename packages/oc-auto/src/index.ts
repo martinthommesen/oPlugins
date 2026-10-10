@@ -49,9 +49,8 @@ const composeServices = (
     (effect) =>
       Effect.ignore(effect, {
         log: "Error",
-        message:
-          "opencode-auto-review did not start, so permission prompts are unchanged.",
+        message: "oc-auto did not start, so permission prompts are unchanged.",
       }),
   )
 
-export default Plugin.define({ effect: plugin, id: "opencode-auto-review" })
+export default Plugin.define({ effect: plugin, id: "martinthommesen.oc-auto" })

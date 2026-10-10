@@ -61,7 +61,7 @@ class Settings extends Context.Service<
         ).pipe(
           Effect.catchTag("SchemaError", (error) =>
             Effect.as(
-              Effect.logError("Invalid opencode-advisor options", error),
+              Effect.logError("Invalid oc-advisor options", error),
               defaults,
             ),
           ),

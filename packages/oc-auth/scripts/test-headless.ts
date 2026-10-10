@@ -11,7 +11,7 @@
  * copied token because doing so would invalidate its original source.
  *
  * To exercise near-expiry refresh and write-back, set
- * CLAUDE_AUTH_HEADLESS_REFRESH_CONFIG_DIR to a disposable Claude config
+ * OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR to a disposable Claude config
  * directory. Its refresh token will rotate and the resulting credentials will
  * remain in that directory.
  */
@@ -51,7 +51,7 @@ type HostVariable =
   | "CLAUDE_AUTH_DEBUG"
   | "CLAUDE_CODE_ENTRYPOINT"
   | "CLAUDE_CONFIG_DIR"
-  | "OPENCODE_CLAUDE_AUTH_SECURITY_BIN"
+  | "OC_AUTH_SECURITY_BIN"
   | "PATH"
   | "XDG_CACHE_HOME"
   | "XDG_CONFIG_HOME"
@@ -136,7 +136,7 @@ const asOfflinePass = (config: Settings): string => {
     CLAUDE_AUTH_DEBUG: layout.log,
     CLAUDE_CODE_ENTRYPOINT: "",
     CLAUDE_CONFIG_DIR: source.configDir,
-    OPENCODE_CLAUDE_AUTH_SECURITY_BIN: layout.security,
+    OC_AUTH_SECURITY_BIN: layout.security,
     PATH: `${layout.bin}:${config.path}`,
     XDG_CACHE_HOME: layout.cache,
     XDG_CONFIG_HOME: layout.config,

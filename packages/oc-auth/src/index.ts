@@ -26,7 +26,7 @@ const FIRST = 0,
           claudeAuth.setUp(context).pipe(Effect.provideContext(built)),
         ),
       ),
-    id: "martinthommesen.oclaude",
+    id: "martinthommesen.oc-auth",
   } satisfies Plugin.Plugin
 
 export default plugin

@@ -49,18 +49,15 @@ const CONTROL_CHARACTERS = /\p{Cc}/gu,
     home: Config.nonEmptyString("HOME").pipe(
       Config.orElse(() => Config.nonEmptyString("USERPROFILE")),
     ),
-    lockDir: present("OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR"),
-    lockTtlMs: positiveInt(
-      "OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS",
-      DEFAULT_LOCK_TTL_MS,
-    ),
+    lockDir: present("OC_AUTH_REFRESH_LOCK_DIR"),
+    lockTtlMs: positiveInt("OC_AUTH_REFRESH_LOCK_TTL_MS", DEFAULT_LOCK_TTL_MS),
     refreshCooldownMs: positiveInt(
-      "OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS",
+      "OC_AUTH_REFRESH_COOLDOWN_MS",
       DEFAULT_REFRESH_COOLDOWN_MS,
     ),
-    securityBinary: Config.nonEmptyString(
-      "OPENCODE_CLAUDE_AUTH_SECURITY_BIN",
-    ).pipe(Config.withDefault(DEFAULT_SECURITY_BINARY)),
+    securityBinary: Config.nonEmptyString("OC_AUTH_SECURITY_BIN").pipe(
+      Config.withDefault(DEFAULT_SECURITY_BINARY),
+    ),
     userAgent: singleLine("ANTHROPIC_USER_AGENT"),
     xdgDataHome: present("XDG_DATA_HOME"),
   })

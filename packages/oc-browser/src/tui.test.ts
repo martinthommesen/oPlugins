@@ -38,7 +38,7 @@ const FIRST = 0,
 
 describe("the TUI plugin", () => {
   it(
-    "adds a palette command that confirms oBrowse loaded",
+    "adds a palette command that confirms oc-browser loaded",
     { timeout: 5000 },
     () => {
       expect.hasAssertions()
@@ -50,12 +50,15 @@ describe("the TUI plugin", () => {
         command.run()
       }
 
-      expect(tuiPlugin.id).toBe("martinthommesen.obrowse.tui")
+      expect(tuiPlugin.id).toBe("martinthommesen.oc-browser.cli")
       expect(added.layers).toMatchObject([
-        { commands: [{ id: "obrowse.status", palette: true }], mode: "global" },
+        {
+          commands: [{ id: "oc-browser.status", palette: true }],
+          mode: "global",
+        },
       ])
       expect(added.toasts).toStrictEqual([
-        { message: "oBrowse is loaded", variant: "info" },
+        { message: "oc-browser is loaded", variant: "info" },
       ])
     },
   )

@@ -96,7 +96,7 @@ network access. CI runs this test on Linux and macOS.
 To check another V2 host version:
 
 ```sh
-OBROWSE_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+OC_BROWSER_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
 ```
 
 Set `HEADLESS_KEEP=1` to keep the sandbox afterwards.

@@ -4,7 +4,7 @@
  * Installs the requested host CLI and this package, packed, into a
  * temporary sandbox with its own config, data, cache, and state
  * directories, then checks that the host starts the plugin. Set
- * OBROWSE_HEADLESS_HOST_VERSION to test another host, and HEADLESS_KEEP to
+ * OC_BROWSER_HEADLESS_HOST_VERSION to test another host, and HEADLESS_KEEP to
  * keep the sandbox afterwards.
  */
 import { Console, Effect, FileSystem, Path } from "effect"

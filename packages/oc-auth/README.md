@@ -44,6 +44,20 @@ build up on its next start.
 See the [OpenCode v2 plugin guide](https://opencode.ai/v2/docs/build/plugins)
 for package and local-file configuration.
 
+### Moving from oClaude or opencode-claude-auth
+
+oc-auth is the renamed oClaude, itself a fork of `opencode-claude-auth`.
+Nothing migrates automatically:
+
+- Replace the old package or path in `plugins` with oc-auth's.
+- The plugin ID is now `martinthommesen.oc-auth`, and the CLI plugin's is
+  `martinthommesen.oc-auth.cli`.
+- The palette command is now `oc-auth.cache`.
+- Environment variables named `OPENCODE_CLAUDE_AUTH_*` are now
+  `OC_AUTH_*`.
+
+Claude Code's own credentials are read the same way as before.
+
 ## Connect
 
 1. Start `opencode`.
@@ -255,19 +269,19 @@ replaced.
 
 ## Environment variables
 
-| Variable                                   | Purpose                                                                                            | Default                                              |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `CLAUDE_CONFIG_DIR`                        | Claude Code config directory for file credentials and account mapping                              | `~/.claude`                                          |
-| `ANTHROPIC_CLI_VERSION`                    | Claude CLI version in billing and user-agent values                                                | Pinned runtime value                                 |
-| `ANTHROPIC_USER_AGENT`                     | Complete user-agent override                                                                       | Claude CLI user agent                                |
-| `ANTHROPIC_BETA_FLAGS`                     | Replaces the base beta set; the required flags and inbound header flags still merge in             | Built-in base set, also used when the value is empty |
-| `CLAUDE_CODE_ENTRYPOINT`                   | Billing entrypoint override                                                                        | `sdk-cli`                                            |
-| `CLAUDE_AUTH_DEBUG`                        | `1` for the default debug log, or an absolute log file path. `0`, `false`, `no`, `off` all disable | Disabled                                             |
-| `OPENCODE_CLAUDE_AUTH_SECURITY_BIN`        | Path to the macOS `security` binary. For tests only. Changing it hands credentials to that program | `/usr/bin/security`                                  |
-| `OPENCODE_CLAUDE_AUTH_REFRESH_COOLDOWN_MS` | Base transient refresh cooldown                                                                    | `15000`                                              |
-| `OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS` | Base cross-process refresh lock lease, capped at `120000`                                          | `20000`                                              |
-| `OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR`    | Refresh lock directory                                                                             | OpenCode data directory                              |
-| `XDG_DATA_HOME`                            | Selects the data directory holding the debug log and refresh locks                                 | `~/.local/share`                                     |
+| Variable                      | Purpose                                                                                            | Default                                              |
+| ----------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `CLAUDE_CONFIG_DIR`           | Claude Code config directory for file credentials and account mapping                              | `~/.claude`                                          |
+| `ANTHROPIC_CLI_VERSION`       | Claude CLI version in billing and user-agent values                                                | Pinned runtime value                                 |
+| `ANTHROPIC_USER_AGENT`        | Complete user-agent override                                                                       | Claude CLI user agent                                |
+| `ANTHROPIC_BETA_FLAGS`        | Replaces the base beta set; the required flags and inbound header flags still merge in             | Built-in base set, also used when the value is empty |
+| `CLAUDE_CODE_ENTRYPOINT`      | Billing entrypoint override                                                                        | `sdk-cli`                                            |
+| `CLAUDE_AUTH_DEBUG`           | `1` for the default debug log, or an absolute log file path. `0`, `false`, `no`, `off` all disable | Disabled                                             |
+| `OC_AUTH_SECURITY_BIN`        | Path to the macOS `security` binary. For tests only. Changing it hands credentials to that program | `/usr/bin/security`                                  |
+| `OC_AUTH_REFRESH_COOLDOWN_MS` | Base transient refresh cooldown                                                                    | `15000`                                              |
+| `OC_AUTH_REFRESH_LOCK_TTL_MS` | Base cross-process refresh lock lease, capped at `120000`                                          | `20000`                                              |
+| `OC_AUTH_REFRESH_LOCK_DIR`    | Refresh lock directory                                                                             | OpenCode data directory                              |
+| `XDG_DATA_HOME`               | Selects the data directory holding the debug log and refresh locks                                 | `~/.local/share`                                     |
 
 `ANTHROPIC_BETA_FLAGS` cannot drop `oauth-2025-04-20` or `claude-code-20250219`.
 Subscription auth does not work without them, so they are re-added after any
@@ -324,17 +338,17 @@ against both OpenCode 2.0.25 and the targeted release on Linux and macOS.
 To check another V2 host version:
 
 ```sh
-CLAUDE_AUTH_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+OC_AUTH_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
 ```
 
-`CLAUDE_AUTH_HEADLESS_MODEL` selects a model for the smoke test. Set
-`CLAUDE_AUTH_HEADLESS_CUSTOM_MODEL=1` with the offline test to exercise a model
+`OC_AUTH_HEADLESS_MODEL` selects a model for the smoke test. Set
+`OC_AUTH_HEADLESS_CUSTOM_MODEL=1` with the offline test to exercise a model
 outside the catalog using an explicit test-only model definition.
 
 Run `pnpm run test:headless` for the live read-tool test using your Claude Code
 account. This sends a model request and consumes subscription usage.
 
-On macOS, `CLAUDE_AUTH_LIVE_KEYCHAIN=1 pnpm test` also runs Keychain write-back
+On macOS, `OC_AUTH_LIVE_KEYCHAIN=1 pnpm test` also runs Keychain write-back
 against the real `security` tool. It adds throwaway items named
 `Claude Code-credentials-<random>` to the default keychain and deletes them
 again. CI runs it on its macOS leg with a dedicated keychain.

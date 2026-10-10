@@ -3,7 +3,7 @@
  * `fake-keychain.test-support.ts` can only imitate. A stub once hid a write
  * that stored an empty password and exited 0, so CI runs this on macOS.
  *
- * Opt-in with CLAUDE_AUTH_LIVE_KEYCHAIN=1: it adds throwaway items to the
+ * Opt-in with OC_AUTH_LIVE_KEYCHAIN=1: it adds throwaway items to the
  * default keychain (named like Claude Code's, with a random suffix no config
  * directory maps to) and deletes them again.
  */
@@ -74,14 +74,14 @@ const ACCOUNT = String.raw`live "test" \ account`,
     })
   },
   /*
-   * Whether this run opted in: macOS, with CLAUDE_AUTH_LIVE_KEYCHAIN=1. Read
+   * Whether this run opted in: macOS, with OC_AUTH_LIVE_KEYCHAIN=1. Read
    * through `Config` from the process environment, before any test runs.
    */
   enabled = Exit.match(
     Effect.runSyncExit(
       Effect.gen(function* liveRequested() {
         const flag = yield* Config.option(
-          Config.string("CLAUDE_AUTH_LIVE_KEYCHAIN"),
+          Config.string("OC_AUTH_LIVE_KEYCHAIN"),
         )
 
         return process.platform === "darwin" && Option.contains(flag, "1")

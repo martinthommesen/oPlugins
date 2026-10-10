@@ -184,7 +184,7 @@ const CREDENTIALS_FILE = ".credentials.json",
   }),
   /*
    * The credential source for this run: a fake one offline, the disposable
-   * directory `CLAUDE_AUTH_HEADLESS_REFRESH_CONFIG_DIR` names, or a copy of
+   * directory `OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR` names, or a copy of
    * a real account.
    */
   prepare = Effect.fn("Headless.prepareCredentials")(function* prepare(

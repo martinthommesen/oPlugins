@@ -59,7 +59,7 @@ Both workflows run only `ubuntu-latest`, and the one multi-account Keychain test
 **#6 -- macOS Keychain write-back branch has zero tests** -- `src/keychain.ts:590`
 _testing, conf 100_
 Every `writeBackCredentials` call in the suite passes source `"file"`. The darwin branch — stale guard, account lookup, re-read comparison, `security add-generic-password` commit — is the code that mutates the user's real credential store, and none of it is exercised. Findings #5 and #10 both live there.
-**Fix:** extend the existing fake `security` script to handle `add-generic-password`; the harness already fakes the binary via `OPENCODE_CLAUDE_AUTH_SECURITY_BIN`.
+**Fix:** extend the existing fake `security` script to handle `add-generic-password`; the harness already fakes the binary via `OC_AUTH_SECURITY_BIN`.
 
 **#9 -- Frozen test clock disables hot-path credential adoption in every test** -- `src/index.test.ts:226`
 _testing, conf 75_

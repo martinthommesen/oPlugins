@@ -46,5 +46,5 @@ export default Plugin.define({
         hooks.instructConsultations(Context.get(built, Host)),
       )
     }),
-  id: "opencode-advisor",
+  id: "martinthommesen.oc-advisor",
 })

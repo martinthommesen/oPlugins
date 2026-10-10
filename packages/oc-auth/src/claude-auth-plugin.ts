@@ -104,7 +104,7 @@ const AnyFunction = Schema.declare(Predicate.isFunction),
 
     return Effect.die(
       new Error(
-        `oClaude requires a compatible OpenCode v2 Effect plugin API (target: v${HOST_VERSION}; missing: ${missing.join(", ")})`,
+        `oc-auth requires a compatible OpenCode v2 Effect plugin API (target: v${HOST_VERSION}; missing: ${missing.join(", ")})`,
       ),
     )
   },

@@ -24,7 +24,7 @@ describe("the plugin definition", () => {
     it.effect("exports one Effect plugin definition", () =>
       Effect.sync(() => {
         expect.hasAssertions()
-        expect(plugin.id).toBe("martinthommesen.obrowse")
+        expect(plugin.id).toBe("martinthommesen.oc-browser")
         expect(Object.keys(plugin).toSorted()).toStrictEqual(["effect", "id"])
       }),
     )

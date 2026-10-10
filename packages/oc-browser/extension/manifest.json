@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "oBrowse",
+  "name": "oc-browser",
   "description": "Lets OpenCode drive this browser.",
   "minimum_chrome_version": "120",
   "background": {

@@ -25,7 +25,7 @@ const FIRST = 0,
           ocBrowser.setUp(context).pipe(Effect.provideContext(built)),
         ),
       ),
-    id: "martinthommesen.obrowse",
+    id: "martinthommesen.oc-browser",
   } satisfies Plugin.Plugin
 
 export default plugin

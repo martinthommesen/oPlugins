@@ -11,7 +11,7 @@ const TARGET_HOST = "target",
   /** What this run of the smoke test does, from the variables it reads. */
   settings = Config.all({
     hostVersion: Config.option(
-      Config.nonEmptyString("OBROWSE_HEADLESS_HOST_VERSION"),
+      Config.nonEmptyString("OC_BROWSER_HEADLESS_HOST_VERSION"),
     ).pipe(Config.map(hostVersionOf)),
     keep: Config.option(Config.nonEmptyString("HEADLESS_KEEP")).pipe(
       Config.map(Option.isSome),

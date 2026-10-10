@@ -121,8 +121,8 @@ const BASE_TIME = 1_000_000,
   ): Layer.Layer<RefreshLock, Config.ConfigError, Platform> => {
     const environment = testEnvironment({
       HOME: dir,
-      OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_DIR: dir,
-      OPENCODE_CLAUDE_AUTH_REFRESH_LOCK_TTL_MS: String(ttlMs),
+      OC_AUTH_REFRESH_LOCK_DIR: dir,
+      OC_AUTH_REFRESH_LOCK_TTL_MS: String(ttlMs),
     })
 
     return RefreshLock.layer.pipe(

@@ -59,12 +59,12 @@ jobs:
           security default-keychain -d user -s ci.keychain
       - run: pnpm test
         env:
-          CLAUDE_AUTH_LIVE_KEYCHAIN: ${{ runner.os == 'macOS' && '1' || '' }}
+          OC_AUTH_LIVE_KEYCHAIN: ${{ runner.os == 'macOS' && '1' || '' }}
         # dist is what consumers get, and nothing else loads it before publish.
       - run: pnpm run verify:dist
       - run: pnpm run test:host
         env:
-          CLAUDE_AUTH_HEADLESS_HOST_VERSION: ${{ matrix.host }}
+          OC_AUTH_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run
 
   oc-browser:
@@ -93,5 +93,5 @@ jobs:
       - run: pnpm run verify:dist
       - run: pnpm run test:host
         env:
-          OBROWSE_HEADLESS_HOST_VERSION: ${{ matrix.host }}
+          OC_BROWSER_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run

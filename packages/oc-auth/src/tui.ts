@@ -183,7 +183,7 @@ const coloredText = (color: () => Color): DomNode => {
     })
   },
   tuiPlugin: Plugin.Definition = {
-    id: "martinthommesen.oclaude.cache",
+    id: "martinthommesen.oc-auth.cli",
     setup: (context: Host) => {
       context.ui.slot({
         append: "sidebar.content",
@@ -200,7 +200,7 @@ const coloredText = (color: () => Color): DomNode => {
         commands: [
           {
             group: "Session",
-            id: "oclaude.cache",
+            id: "oc-auth.cache",
             palette: true,
             run: (): RunResult => {
               const route = context.ui.router.current()

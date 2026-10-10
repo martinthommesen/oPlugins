@@ -20,21 +20,27 @@ const pluginStarted = Effect.fn("Headless.pluginStarted")(function* started(
   host: Host,
   marker: string,
 ) {
-  const fs = yield* FileSystem.FileSystem,
+  const failure = new HeadlessSmokeError({
+      message: `The host did not start ${plugin.id}`,
+    }),
+    fs = yield* FileSystem.FileSystem,
     output = yield* commands.run({
       args: ["auth", "list", "--standalone"],
       command: host.opencode,
       cwd: host.work,
       env: host.env,
     }),
-    text = yield* fs.readFileString(marker).pipe(Effect.orElseSucceed(() => ""))
+    text = yield* fs
+      .readFileString(marker)
+      .pipe(Effect.orElseSucceed(() => "")),
+    unstarted = !text.split("\n").includes(plugin.id)
 
-  if (!text.split("\n").includes(plugin.id)) {
-    yield* commands.printError(output)
-    yield* new HeadlessSmokeError({
-      message: `The host did not start ${plugin.id}`,
-    })
-  }
+  yield* commands
+    .printError(output)
+    .pipe(
+      Effect.andThen(Effect.fail(failure)),
+      Effect.when(Effect.succeed(unstarted)),
+    )
 })
 
 /** The checks the smoke test runs against the installed host. */

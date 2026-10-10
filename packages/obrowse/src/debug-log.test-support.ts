@@ -1,5 +1,5 @@
 import type { Config, Path, Stdio } from "effect"
-import { Effect, FileSystem, Layer, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Schema } from "effect"
 import { NodeFileSystem, NodePath } from "@effect/platform-node-shared"
 import CapturedStderr from "./captured-stderr.test-support.ts"
 import DebugLog from "./debug-log.ts"
@@ -59,9 +59,10 @@ const LogRecord = Schema.fromJsonString(
       ),
       logger = DebugLog.layer.pipe(Layer.provide(environment))
 
-    return Effect.gen(function* run() {
-      return yield* body(yield* DebugLog)
-    }).pipe(Effect.provide(logger))
+    return Layer.build(logger).pipe(
+      Effect.flatMap((context) => body(Context.get(context, DebugLog))),
+      Effect.scoped,
+    )
   }
 
 /** What the debug-log tests share. */

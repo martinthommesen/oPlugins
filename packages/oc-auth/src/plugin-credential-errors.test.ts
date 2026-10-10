@@ -43,12 +43,12 @@ const EXHAUSTED_MESSAGE =
     ),
   exhaustedHost = didFail(
     Effect.fail(
-      new ClaudeAuthRefreshExhaustedError({ message: EXHAUSTED_MESSAGE }),
+      ClaudeAuthRefreshExhaustedError.make({ message: EXHAUSTED_MESSAGE }),
     ),
   ),
   terminalHost = didFail(
     Effect.fail(
-      new ClaudeAuthTerminalError({ message: ClaudeAuthTerminalError.text }),
+      ClaudeAuthTerminalError.make({ message: ClaudeAuthTerminalError.text }),
     ),
   )
 

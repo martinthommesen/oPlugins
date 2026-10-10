@@ -38,7 +38,7 @@ const DEFAULT_LOG_NAME = "obrowse-debug.log",
         (text) =>
           text.trim() === "" ||
           Option.exists(Arr.head(text.split("\n")), (line) =>
-            Option.isSome(Schema.decodeUnknownOption(LogRecord)(line)),
+            Option.isSome(Schema.decodeOption(LogRecord)(line)),
           ),
       ),
       Effect.orElseSucceed(() => false),
@@ -75,7 +75,7 @@ const DEFAULT_LOG_NAME = "obrowse-debug.log",
     }
 
     if (!path.isAbsolute(raw)) {
-      return yield* new DebugLogPathError({
+      return yield* DebugLogPathError.make({
         message: `OBROWSE_DEBUG must be 1 or an absolute log file path (got "${raw}")`,
       })
     }
@@ -94,7 +94,7 @@ const DEFAULT_LOG_NAME = "obrowse-debug.log",
     const environment = yield* Environment,
       fs = yield* FileSystem.FileSystem,
       paths = yield* Path.Path,
-      refusal = new DebugLogPathError({
+      refusal = DebugLogPathError.make({
         message: `OBROWSE_DEBUG refuses to truncate "${path}": it is not an oBrowse log`,
       })
 

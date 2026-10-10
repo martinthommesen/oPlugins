@@ -62,7 +62,7 @@ const NETWORK_FAILURE = 0,
       })
 
       if (failures >= policy.MAX_CONSECUTIVE_TRANSIENT) {
-        return yield* new ClaudeAuthRefreshExhaustedError({
+        return yield* ClaudeAuthRefreshExhaustedError.make({
           message: ClaudeAuthRefreshExhaustedError.textFor(failures, cause),
         })
       }

@@ -42,7 +42,7 @@
     "test:host": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); for (const file of ['./dist/tui.js', './dist/extension/manifest.json', './dist/extension/service-worker.js']) { if (!require('node:fs').existsSync(file)) { throw new Error(file + ' is missing') } }\"",
     "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
-    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --strict && effect-language-service diagnostics --project extension/tsconfig.json --strict"
+    "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict && effect-tsgo diagnostics --project extension/tsconfig.json --strict"
   },
   "dependencies": {
     "@effect/platform-node-shared": "catalog:"

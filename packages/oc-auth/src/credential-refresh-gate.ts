@@ -14,7 +14,7 @@ type Refresh = ReturnType<
 
 const NO_WAIT = 0,
   /* The refresh token was rejected for good. */
-  latched = new ClaudeAuthTerminalError({
+  latched = ClaudeAuthTerminalError.make({
     message: ClaudeAuthTerminalError.text,
   }),
   /*

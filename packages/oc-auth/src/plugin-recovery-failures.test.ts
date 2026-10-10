@@ -49,7 +49,7 @@ const FIRST_CALL = 1,
   ),
   /* A replay that fails before any response. */
   failingFetch = Effect.fail(
-    new AnthropicFetchError({
+    AnthropicFetchError.make({
       cause: new TypeError("fetch failed"),
       message: "the replayed request failed",
     }),

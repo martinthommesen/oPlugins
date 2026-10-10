@@ -113,7 +113,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
       .join(": ")}).`,
   /* A write-path failure as the store error the write-back reports. */
   unreachable = (failure: { readonly message: string }): ClaudeCodeStoreError =>
-    new ClaudeCodeStoreError({ message: failure.message }),
+    ClaudeCodeStoreError.make({ message: failure.message }),
   /*
    * The stored password of `service`, or none when there is no such item.
    * Any other failure carries a message the user can act on.
@@ -146,7 +146,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
       return Option.none<string>()
     }
 
-    return yield* new ClaudeCodeStoreError({
+    return yield* ClaudeCodeStoreError.make({
       message: readErrorMessage(service, read.failure),
     })
   }),
@@ -201,7 +201,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
           timeout: WRITE_PATH_TIMEOUT,
         })
         .pipe(
-          Effect.map((text) => Option.some(text)),
+          Effect.asSome,
           Effect.catchTag(
             "KeychainSecurityError",
             (failure: {

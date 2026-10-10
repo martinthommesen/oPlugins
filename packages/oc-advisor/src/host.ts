@@ -78,7 +78,7 @@ const CLEANUP_RETRIES = 1,
     <Value, Failure, Requirements>(
       self: Effect.Effect<Value, Failure, Requirements>,
     ): Effect.Effect<Value, HostError, Requirements> =>
-      Effect.mapError(self, (cause) => new HostError({ cause, operation })),
+      Effect.mapError(self, (cause) => HostError.make({ cause, operation })),
   /*
    * Deletes a consultation session with bounded cleanup and one retry,
    * keeping it tracked if deletion fails.

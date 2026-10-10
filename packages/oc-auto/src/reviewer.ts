@@ -103,7 +103,7 @@ const assessWith = (
           duration: settings.timeout,
           orElse: () =>
             Effect.fail(
-              new ReviewTimedOut({
+              ReviewTimedOut.make({
                 timeout: Duration.format(settings.timeout),
               }),
             ),

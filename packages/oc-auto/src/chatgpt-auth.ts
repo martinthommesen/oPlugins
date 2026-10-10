@@ -66,16 +66,16 @@ const AuthClaim = Schema.Struct({
       ),
     ),
   noAccount = (): AuthUnavailable =>
-    new AuthUnavailable({
+    AuthUnavailable.make({
       reason: "The ChatGPT sign-in does not name a ChatGPT account.",
     }),
   notConnected = (): AuthUnavailable =>
-    new AuthUnavailable({
+    AuthUnavailable.make({
       reason: "OpenAI is not connected. Run /connect and choose OpenAI.",
     }),
   notOAuth = (): Effect.Effect<never, AuthUnavailable> =>
     Effect.fail(
-      new AuthUnavailable({
+      AuthUnavailable.make({
         reason:
           'OpenAI is connected with an API key. Auto-review needs "Sign in with ChatGPT".',
       }),
@@ -94,7 +94,7 @@ const AuthClaim = Schema.Struct({
       now = yield* Clock.currentTimeMillis
 
     if (oauth.expires <= now) {
-      return yield* new AuthUnavailable({
+      return yield* AuthUnavailable.make({
         reason:
           "The ChatGPT sign-in has expired. OpenCode renews it the next time it sends a request to an OpenAI model.",
       })

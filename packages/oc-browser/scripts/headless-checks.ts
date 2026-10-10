@@ -20,7 +20,7 @@ const pluginStarted = Effect.fn("Headless.pluginStarted")(function* started(
   host: Host,
   marker: string,
 ) {
-  const failure = new HeadlessSmokeError({
+  const failure = HeadlessSmokeError.make({
       message: `The host did not start ${plugin.id}`,
     }),
     fs = yield* FileSystem.FileSystem,

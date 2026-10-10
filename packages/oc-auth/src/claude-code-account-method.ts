@@ -74,7 +74,7 @@ const AccountAnswer = Schema.Struct({ account: Schema.String }),
   ),
   /* Fail `/connect` with `message` for the user. */
   refuse = (message: string): Effect.Effect<never, AccountSelectionError> =>
-    Effect.fail(new AccountSelectionError({ message })),
+    Effect.fail(AccountSelectionError.make({ message })),
   /*
    * The store the user asked for. With several accounts the form must name
    * one; with one, it is that one.

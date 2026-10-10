@@ -40,7 +40,9 @@ const FIRST = 0,
       integration = yield* FakeIntegration
 
     return {
-      event: { subscribe: events.subscribe },
+      event: {
+        subscribe: (): ReturnType<Host["event"]["subscribe"]> => events.stream,
+      },
       integration: {
         connection: connection.connection,
         transform: integration.transform,

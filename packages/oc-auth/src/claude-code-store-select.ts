@@ -52,7 +52,7 @@ const keychainStore = (
         Option.match({
           onNone: () =>
             Effect.fail(
-              new ClaudeCodeWriteRefusedError({
+              ClaudeCodeWriteRefusedError.make({
                 message: `Keychain item "${source}" is missing or has no account name`,
               }),
             ),

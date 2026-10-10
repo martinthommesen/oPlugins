@@ -19,7 +19,7 @@ type Refresh = Effect.Success<ReturnType<Script["refresh"]>>
 
 /** Everything a plugin scenario provides. */
 type Scenario =
-  | Layer.Success<ReturnType<typeof pluginServices>>
+  | Layer.Success<ReturnType<ReturnType<typeof pluginServices>>>
   | Layer.Success<ReturnType<typeof fakeHost.domains>>
 
 const FIRST = 0,
@@ -65,7 +65,7 @@ const FIRST = 0,
     script: Script = PluginRig.quiet,
     accounts: Accounts = [],
   ): Layer.Layer<Scenario> =>
-    Layer.merge(pluginServices(script, accounts), fakeHost.domains(active)),
+    Layer.merge(pluginServices(script)(accounts), fakeHost.domains(active)),
   /* A host whose active connection is this plugin's credential for `access`. */
   ours = (access: string): Active => FakeConnection.oauth(access),
   /* What a refresh came to: `access` renewed by the endpoint. */

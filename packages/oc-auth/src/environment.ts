@@ -14,7 +14,7 @@ const CONTROL_CHARACTERS = /\p{Cc}/gu,
   ProcessFacts = Schema.Struct({
     arch: Schema.String,
     nodeVersion: Schema.String,
-    pid: Schema.Number,
+    pid: Schema.Finite,
     platform: Schema.String,
   }),
   /*

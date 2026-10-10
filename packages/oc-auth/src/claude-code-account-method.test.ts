@@ -11,7 +11,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -59,8 +59,8 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   /* A refresh rig whose store holds what `accounts` hold. */
   storeHolding = (
     accounts: readonly Account[],
-  ): ReturnType<typeof refreshLayer> =>
-    refreshLayer(holding(accounts), Option.none()),
+  ): ReturnType<ReturnType<typeof refreshLayer>> =>
+    refreshLayer(holding(accounts))(Option.none()),
   storeWithA = storeHolding([accountA]),
   storeWithBoth = storeHolding(bothAccounts),
   storeWithCAndA = storeHolding([accountC, accountA]),

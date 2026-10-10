@@ -37,7 +37,7 @@ const EventError = Schema.Struct({
       ),
     ]).pipe(Option.getOrElse(() => event.type)),
   failStream = (model: string, cause: string): RequestFailed =>
-    new RequestFailed({ cause, model, operation: "stream" }),
+    RequestFailed.make({ cause, model, operation: "stream" }),
   /* Adds one stream event to the output read so far. */
   foldEvent =
     (model: string) =>

@@ -13,7 +13,7 @@
     "test": "pnpm -r run test"
   },
   "devDependencies": {
-    "@effect/language-service": "0.87.4",
+    "@effect/tsgo": "0.51.1",
     "@oxlint/plugins": "1.87.0",
     "effect": "catalog:",
     "oxfmt": "0.72.0",

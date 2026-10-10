@@ -86,7 +86,7 @@ const CustomTool = Schema.Struct({ type: Schema.Literal("custom") }),
     ),
   /* The JSON object `text` holds, or none. */
   parsePayload = (text: string): Option.Option<JsonObject> =>
-    Schema.decodeUnknownOption(JsonText)(text).pipe(
+    Schema.decodeOption(JsonText)(text).pipe(
       Option.filter((value: Json) => guardObject(value)),
     ),
   /* The tools the conversation history called. */

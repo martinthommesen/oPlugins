@@ -63,7 +63,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
         Stream.fromReadableStream({
           evaluate: () => body,
           onError: (cause) =>
-            new RequestBodyError({
+            RequestBodyError.make({
               cause,
               message: "The request body could not be read.",
             }),

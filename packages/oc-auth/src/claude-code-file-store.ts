@@ -26,7 +26,7 @@ const CREDENTIALS_FILE = ".credentials.json",
     ),
   /* `failure` as the store error the user sees, with its errno code. */
   failedFile = (failure: FileFailure): ClaudeCodeStoreError =>
-    new ClaudeCodeStoreError({
+    ClaudeCodeStoreError.make({
       message: Option.match(errnoOf(failure), {
         onNone: () => failure.message,
         onSome: (code) => `${failure.message} (${code})`,

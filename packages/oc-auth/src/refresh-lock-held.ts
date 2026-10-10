@@ -35,9 +35,9 @@ const LEASE_BYTES = 256,
   LeaseRecord = Schema.fromJsonString(
     Schema.Struct({
       cooldown: Schema.Boolean,
-      expiresAt: Schema.Number,
+      expiresAt: Schema.Finite,
       owner: Schema.String,
-      pid: Schema.Number,
+      pid: Schema.Finite,
     }),
   ),
   RELEASED = 0,

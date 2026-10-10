@@ -33,7 +33,7 @@ const FIRST = 0,
   /* The access token in `blob`, or none when it holds none. */
   accessTokenIn = (blob: Option.Option<string>): Option.Option<string> =>
     blob.pipe(
-      Option.flatMap((text) => Schema.decodeUnknownOption(StoredToken)(text)),
+      Option.flatMap((text) => Schema.decodeOption(StoredToken)(text)),
       Option.map((stored) => stored.claudeAiOauth.accessToken),
     ),
   /* A credential blob as Claude Code stores it. */
@@ -92,8 +92,7 @@ const FIRST = 0,
           ["HOME", machine.home],
           ...Object.entries(machine.variables),
         ]),
-        machine.platform,
-      ),
+      )(machine.platform),
       stores = ClaudeCodeStores.layer.pipe(
         Layer.provide(DebugLog.layer),
         Layer.provide(environment),

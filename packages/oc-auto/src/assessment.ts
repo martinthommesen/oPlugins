@@ -62,7 +62,7 @@ const OBJECT_END = "}",
             Effect.flatMap(decodePayload),
           ),
         ),
-        Effect.mapError(() => new MalformedAssessment({ text })),
+        Effect.mapError(() => MalformedAssessment.make({ text })),
       ),
       rationale = Option.fromUndefinedOr(payload.rationale).pipe(
         Option.map(Str.trim),

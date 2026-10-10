@@ -23,7 +23,7 @@ type Provided =
   | CredentialRefresh
   | DebugLog
   | Layer.Success<ReturnType<typeof RefreshRig.layer>>
-  | Layer.Success<ReturnType<typeof testEnvironment>>
+  | Layer.Success<ReturnType<ReturnType<typeof testEnvironment>>>
   | Layer.Success<typeof platform>
   | RefreshBackoff
 
@@ -41,16 +41,17 @@ const FIRST = 0,
    * holding `stored`, with the real backoff and debug log on a machine
    * whose home holds nothing.
    */
-  refreshLayer = (
-    script: Script,
-    stored: Option.Option<Tokens>,
-  ): Layer.Layer<Provided, Config.ConfigError> =>
-    CredentialRefresh.layer.pipe(
-      Layer.provideMerge(RefreshRig.layer(script, stored)),
-      Layer.provideMerge(RefreshBackoff.layer),
-      Layer.provideMerge(DebugLog.layer),
-      Layer.provideMerge(testEnvironment({ HOME: "/nonexistent-home" })),
-      Layer.provideMerge(platform),
-    )
+  refreshLayer =
+    (script: Script) =>
+    (
+      stored: Option.Option<Tokens>,
+    ): Layer.Layer<Provided, Config.ConfigError> =>
+      CredentialRefresh.layer.pipe(
+        Layer.provideMerge(RefreshRig.layer(script, stored)),
+        Layer.provideMerge(RefreshBackoff.layer),
+        Layer.provideMerge(DebugLog.layer),
+        Layer.provideMerge(testEnvironment({ HOME: "/nonexistent-home" })()),
+        Layer.provideMerge(platform),
+      )
 
 export default refreshLayer

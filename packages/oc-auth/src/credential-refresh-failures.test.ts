@@ -12,7 +12,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -76,12 +76,10 @@ const AFTER_LONGEST_COOLDOWN_MS = 61_000,
   /* An endpoint rate limiting with `retryAfterMs` as its hint. */
   limitedScript = (retryAfterMs: Option.Option<number>): Script =>
     exchanging(() => support.rateLimited(retryAfterMs)),
-  limitedWithHint = refreshLayer(
-    limitedScript(Option.some(RETRY_AFTER_MS)),
+  limitedWithHint = refreshLayer(limitedScript(Option.some(RETRY_AFTER_MS)))(
     fixtureTokens,
   ),
-  limitedWithoutHint = refreshLayer(
-    limitedScript(Option.none()),
+  limitedWithoutHint = refreshLayer(limitedScript(Option.none()))(
     fixtureTokens,
   ),
   /* A store that cannot be read, as a locked Keychain. */
@@ -91,14 +89,12 @@ const AFTER_LONGEST_COOLDOWN_MS = 61_000,
       exchange: support.script.exchange,
       read: () =>
         Effect.fail(
-          new ClaudeCodeStoreError({ message: "macOS Keychain is locked" }),
+          ClaudeCodeStoreError.make({ message: "macOS Keychain is locked" }),
         ),
       writeBack: support.script.writeBack,
     }),
-    Option.none(),
-  ),
-  nothingStoredLimited = refreshLayer(
-    limitedScript(Option.none()),
+  )(Option.none()),
+  nothingStoredLimited = refreshLayer(limitedScript(Option.none()))(
     Option.none(),
   ),
   original = support.imported(support.account()),
@@ -144,7 +140,7 @@ const AFTER_LONGEST_COOLDOWN_MS = 61_000,
     backoffPolicy.MAX_CONSECUTIVE_TRANSIENT - ONE_EXCHANGE,
     () => "transient",
   ),
-  unreliableEndpoint = refreshLayer(outageScript, fixtureTokens)
+  unreliableEndpoint = refreshLayer(outageScript)(fixtureTokens)
 
 describe("refresh during its own cooldown", () => {
   test.layer(limitedWithoutHint)((it: Tests) => {

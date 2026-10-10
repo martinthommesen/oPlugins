@@ -129,7 +129,7 @@ const EVENT_STREAM = { "content-type": "text/event-stream" },
   ): Layer.Layer<RequestTransforms, Config.ConfigError> => {
     const environment = testEnvironment(
         Object.fromEntries([["HOME", HOME], ...Object.entries(variables)]),
-      ),
+      )(),
       logger = DebugLog.layer.pipe(Layer.provide(environment))
 
     return RequestTransforms.layer.pipe(

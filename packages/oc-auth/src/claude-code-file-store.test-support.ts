@@ -8,7 +8,7 @@ type Stores = ClaudeCodeStores["Service"]
 // The token pair a credentials file holds.
 const ClaudeAiOauth = Schema.Struct({
     accessToken: Schema.String,
-    expiresAt: Schema.Number,
+    expiresAt: Schema.Finite,
     refreshToken: Schema.String,
     subscriptionType: Schema.optionalKey(Schema.String),
   }),

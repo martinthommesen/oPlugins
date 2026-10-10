@@ -120,7 +120,7 @@ const CHILD = support.sessionId("ses_child"),
     () =>
       Effect.succeed(reviewed(outcome)),
   unavailable: Script = () =>
-    Effect.fail(new AuthUnavailable({ reason: "OpenAI is not connected." }))
+    Effect.fail(AuthUnavailable.make({ reason: "OpenAI is not connected." }))
 
 /** The auto-review tests' sessions, requests, and scripted reviewers. */
 export default Object.freeze({

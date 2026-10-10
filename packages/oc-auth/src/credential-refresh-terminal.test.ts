@@ -9,7 +9,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -43,16 +43,12 @@ const ONE_EXCHANGE = 1,
       ),
     ),
   ),
-  deadThenRenewedEmpty = refreshLayer(deadThenRenewed, Option.none()),
-  deadThenRenewedStored = refreshLayer(deadThenRenewed, atImport),
-  deadToken = refreshLayer(
-    answering(() => support.invalidGrant),
-    atImport,
-  ),
+  deadThenRenewedEmpty = refreshLayer(deadThenRenewed)(Option.none()),
+  deadThenRenewedStored = refreshLayer(deadThenRenewed)(atImport),
+  deadToken = refreshLayer(answering(() => support.invalidGrant))(atImport),
   limitedWithHint = refreshLayer(
     answering(() => support.rateLimited(Option.some(RETRY_AFTER_MS))),
-    atImport,
-  ),
+  )(atImport),
   /* What the fake held lock has been asked to do, in order. */
   lockEventsSoFar = support.currentRig.pipe(
     Effect.flatMap((rig) => Ref.get(rig.lockEvents)),
@@ -74,8 +70,7 @@ const ONE_EXCHANGE = 1,
         Effect.andThen(support.invalidGrant),
       ),
     ),
-    atImport,
-  )
+  )(atImport)
 
 describe("refresh with a dead refresh token", () => {
   test.layer(deadToken)((it: Tests) => {

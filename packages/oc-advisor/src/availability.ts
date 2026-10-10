@@ -62,7 +62,7 @@ const Availability = Data.taggedEnum<Decision>(),
     Availability.$match(availability, {
       Available: ({ model }) => Effect.succeed(model),
       Unavailable: ({ reason }) =>
-        Effect.fail(new AdvisorUnavailable({ reason })),
+        Effect.fail(AdvisorUnavailable.make({ reason })),
     })
 
 /** Deciding whether a session may consult the advisor. */

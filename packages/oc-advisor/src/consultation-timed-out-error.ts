@@ -6,7 +6,7 @@ class ConsultationTimedOut extends Schema.TaggedError<ConsultationTimedOut>()(
   "ConsultationTimedOut",
   {
     model: Schema.String,
-    seconds: Schema.Number,
+    seconds: Schema.Finite,
   },
 ) {}
 

@@ -68,7 +68,7 @@ const FIRST = 0,
         }
 
         if (depth >= MAX_SESSION_DEPTH) {
-          return yield* new ContextUnavailable({
+          return yield* ContextUnavailable.make({
             reason:
               "OpenCode's session chain is too deep to identify the user's root conversation.",
           })
@@ -122,12 +122,11 @@ const FIRST = 0,
     root: RootConversation,
   ): Effect.Effect<RootTurn, ContextUnavailable> =>
     Effect.fromOption(transcript.currentTurn(root.items)).pipe(
-      Effect.mapError(
-        () =>
-          new ContextUnavailable({
-            reason:
-              "The root conversation contains no user message to identify this turn.",
-          }),
+      Effect.mapError(() =>
+        ContextUnavailable.make({
+          reason:
+            "The root conversation contains no user message to identify this turn.",
+        }),
       ),
       Effect.map((userMessageId) => ({
         items: root.items,

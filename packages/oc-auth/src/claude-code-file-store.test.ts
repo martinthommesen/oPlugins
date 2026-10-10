@@ -97,7 +97,7 @@ test.layer(support.layer)("guarded file write-back", (it: Tests) => {
         written = yield* fs.readFileString(holder.path)
 
       expect(result).toBe("written")
-      expect(Schema.decodeUnknownOption(KeptFile)(written)).toStrictEqual(
+      expect(Schema.decodeOption(KeptFile)(written)).toStrictEqual(
         Option.some({
           claudeAiOauth: { accessToken: "new", subscriptionType: "max" },
           mcpOAuth: { server: { name: "keep" } },

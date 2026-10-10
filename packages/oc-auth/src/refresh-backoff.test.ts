@@ -42,7 +42,7 @@ const BOTTOM = 0,
     variables: Readonly<Record<string, string>> = DEFAULT_VARIABLES,
   ): Layer.Layer<RefreshBackoff, Config.ConfigError> => {
     const backoff = RefreshBackoff.layer.pipe(
-        Layer.provide(testEnvironment(variables)),
+        Layer.provide(testEnvironment(variables)()),
       ),
       random = Layer.succeed(Random.Random, {
         nextDoubleUnsafe: () => jitter,

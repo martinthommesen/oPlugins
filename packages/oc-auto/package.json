@@ -28,7 +28,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "vendor:codex": "node scripts/vendor-codex-policy.ts && oxfmt --write src/vendor/codex/policy.ts",
-    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --strict"
+    "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",

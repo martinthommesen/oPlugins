@@ -57,7 +57,7 @@ const EXIT_DENIED = 128,
     errorType: string,
     stderr: string,
   ): KeychainSecurityError =>
-    new KeychainSecurityError({
+    KeychainSecurityError.make({
       errorType,
       message: [
         `security ${run.args[FIRST] ?? ""} failed (${errorType})`,

@@ -33,7 +33,7 @@ const Lease = Schema.fromJsonString(
     const fs = yield* FileSystem.FileSystem
 
     return yield* fs.readFileString(path).pipe(
-      Effect.map((text) => Schema.decodeUnknownOption(Lease)(text)),
+      Effect.map((text) => Schema.decodeOption(Lease)(text)),
       Effect.orElseSucceed(() => Option.none<typeof Lease.Type>()),
     )
   }),

@@ -140,7 +140,7 @@ const ACCOUNT = String.raw`live "test" \ account`,
           "-w",
         ]),
       ),
-      written = yield* Schema.decodeUnknownEffect(LiveBlob)(verbatim.trim())
+      written = yield* Schema.decodeEffect(LiveBlob)(verbatim.trim())
 
     return {
       note: written.claudeAiOauth.note,

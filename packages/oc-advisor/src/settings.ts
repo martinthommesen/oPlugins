@@ -56,9 +56,7 @@ class Settings extends Context.Service<
     Layer.effect(
       Settings,
       Effect.gen(function* readSettings() {
-        const decoded = yield* Schema.decodeUnknownEffect(Options)(
-          options,
-        ).pipe(
+        const decoded = yield* Schema.decodeEffect(Options)(options).pipe(
           Effect.catchTag("SchemaError", (error) =>
             Effect.as(
               Effect.logError("Invalid oc-advisor options", error),

@@ -70,7 +70,7 @@ const availabilityIn = (
         duration: timeout,
         orElse: () =>
           Effect.fail(
-            new ConsultationTimedOut({
+            ConsultationTimedOut.make({
               model,
               seconds: Duration.toSeconds(timeout),
             }),

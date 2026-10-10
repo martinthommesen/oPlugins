@@ -158,7 +158,7 @@ const aboutCredential = (
       const entry = yield* entryFor(subject)
 
       if (leaderKey === subject.credentialKey) {
-        return yield* new ClaudeAuthTerminalError({
+        return yield* ClaudeAuthTerminalError.make({
           message: ClaudeAuthTerminalError.text,
         })
       }

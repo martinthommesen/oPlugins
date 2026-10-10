@@ -28,8 +28,8 @@ const FIRST = 0,
       openAiCredential: Effect.succeed(credential),
       session: Effect.fn("FakeHost.session")(function* session(id: SessionId) {
         return yield* Effect.fromOption(HashMap.get(sessions, id)).pipe(
-          Effect.mapError(
-            () => new HostError({ cause: id, operation: "session.get" }),
+          Effect.mapError(() =>
+            HostError.make({ cause: id, operation: "session.get" }),
           ),
         )
       }),

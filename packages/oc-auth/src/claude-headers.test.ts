@@ -22,10 +22,10 @@ const EFFORT = "effort-2025-11-24",
   /* An environment of `variables` plus a home. */
   environmentOf = (
     variables: Readonly<Record<string, string>> = {},
-  ): ReturnType<typeof testEnvironment> =>
+  ): ReturnType<ReturnType<typeof testEnvironment>> =>
     testEnvironment(
       Object.fromEntries([["HOME", HOME], ...Object.entries(variables)]),
-    ),
+    )(),
   /* The Claude Code headers for a request carrying `original`, for `model`. */
   headersFor = (
     original: Readonly<Record<string, string>>,

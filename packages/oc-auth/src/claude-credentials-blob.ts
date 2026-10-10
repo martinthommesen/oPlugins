@@ -50,7 +50,7 @@ const ASTRAL_START = 65_536,
   },
   /* The object holding the tokens: `claudeAiOauth` when set, else the root. */
   credentialObject = (root: JsonObject): Option.Option<JsonObject> =>
-    Schema.decodeUnknownOption(JsonRecord)(
+    Schema.decodeOption(JsonRecord)(
       Option.fromNullishOr(root["claudeAiOauth"]).pipe(
         Option.getOrElse(() => root),
       ),
@@ -60,7 +60,7 @@ const ASTRAL_START = 65_536,
   /* What a blob holds, for the log, without any of its values. */
   describe = (root: JsonObject, data: JsonObject): BlobSummary => ({
     hasAccessToken: Schema.is(Schema.String)(data["accessToken"]),
-    hasExpiry: Schema.is(Schema.Number)(data["expiresAt"]),
+    hasExpiry: Schema.is(Schema.Finite)(data["expiresAt"]),
     hasRefreshToken: Schema.is(Schema.String)(data["refreshToken"]),
     isMcpOnly:
       !Predicate.isTruthy(data["accessToken"]) &&

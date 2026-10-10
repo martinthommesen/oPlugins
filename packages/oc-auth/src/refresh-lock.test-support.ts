@@ -35,16 +35,16 @@ type Platform = Crypto.Crypto | FileSystem.FileSystem | Path.Path | Stdio.Stdio
 const BASE_TIME = 1_000_000,
   DEFAULT_TTL_MS = 20_000,
   LeaseExpiry = Schema.fromJsonString(
-    Schema.Struct({ expiresAt: Schema.Number }),
+    Schema.Struct({ expiresAt: Schema.Finite }),
   ),
   NANOS_PER_MILLI = 1_000_000n,
   OTHER_PID = 1,
   /** A lease as another process writes it. */
   OtherLease = Schema.fromJsonString(
     Schema.Struct({
-      expiresAt: Schema.Number,
+      expiresAt: Schema.Finite,
       owner: Schema.String,
-      pid: Schema.Number,
+      pid: Schema.Finite,
     }),
   ),
   /*
@@ -112,7 +112,7 @@ const BASE_TIME = 1_000_000,
     const fs = yield* FileSystem.FileSystem,
       text = yield* fs.readFileString(path)
 
-    return (yield* Schema.decodeUnknownEffect(LeaseExpiry)(text)).expiresAt
+    return (yield* Schema.decodeEffect(LeaseExpiry)(text)).expiresAt
   }),
   /* The lock service over `dir`, leasing for `ttlMs`. */
   locks = (
@@ -123,7 +123,7 @@ const BASE_TIME = 1_000_000,
       HOME: dir,
       OC_AUTH_REFRESH_LOCK_DIR: dir,
       OC_AUTH_REFRESH_LOCK_TTL_MS: String(ttlMs),
-    })
+    })()
 
     return RefreshLock.layer.pipe(
       Layer.provide(DebugLog.layer),

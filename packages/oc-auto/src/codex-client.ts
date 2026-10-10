@@ -81,7 +81,7 @@ const ErrorDetail = Schema.Struct({
     const { status } = response
 
     if (status === HTTP_UNAUTHORIZED) {
-      return yield* new AuthUnavailable({
+      return yield* AuthUnavailable.make({
         reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
       })
     }
@@ -96,12 +96,12 @@ const ErrorDetail = Schema.Struct({
       )
 
       if (modelRejected(detail)) {
-        return yield* new ModelUnavailable({ detail, model, status })
+        return yield* ModelUnavailable.make({ detail, model, status })
       }
     }
 
     if (status === HTTP_FORBIDDEN) {
-      return yield* new AuthUnavailable({
+      return yield* AuthUnavailable.make({
         reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
       })
     }

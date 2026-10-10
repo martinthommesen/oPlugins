@@ -22,7 +22,7 @@ const ACCOUNT_FILE = ".claude.json",
     }).pipe(
       Effect.orElseSucceed(() => ""),
       Effect.map((text) =>
-        Schema.decodeUnknownOption(AccountFile)(text).pipe(
+        Schema.decodeOption(AccountFile)(text).pipe(
           Option.map((file) => file.oauthAccount.emailAddress),
         ),
       ),

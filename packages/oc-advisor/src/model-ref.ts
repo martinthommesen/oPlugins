@@ -28,27 +28,21 @@ const coversVariant =
           info.providerID === ref.providerID &&
           info.id === ref.id,
       ),
-      Option.match({
-        onNone: () =>
-          Effect.fail(
-            new InvalidModel({
-              model,
-              reason: "no available model has that id",
-            }),
-          ),
-        onSome: Effect.succeed,
-      }),
-      Effect.filterOrFail(
-        coversVariant(ref),
-        () =>
-          new InvalidModel({ model, reason: "the model has no such variant" }),
+      Effect.fromOption(() =>
+        InvalidModel.make({
+          model,
+          reason: "no available model has that id",
+        }),
+      ),
+      Effect.filterOrFail(coversVariant(ref), () =>
+        InvalidModel.make({ model, reason: "the model has no such variant" }),
       ),
     ),
   /* Parses a `provider/model[#variant]` reference as the user wrote it. */
   parseModelRef = (model: string): Effect.Effect<Model.Ref, InvalidModel> =>
     Effect.try({
       catch: () =>
-        new InvalidModel({
+        InvalidModel.make({
           model,
           reason: "expected provider/model or provider/model#variant",
         }),

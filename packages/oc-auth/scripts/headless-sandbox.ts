@@ -1,4 +1,4 @@
-import { Console, Effect, Exit, FileSystem, Path } from "effect"
+import { Console, Effect, Exit, FileSystem, Path, pipe } from "effect"
 import type { Stdio } from "effect"
 import commands from "./headless-command.ts"
 
@@ -113,8 +113,9 @@ const EXECUTABLE = 0o755,
       ],
       fs = yield* FileSystem.FileSystem
 
-    yield* Effect.all(
-      directories.map((directory) =>
+    yield* pipe(
+      directories,
+      Effect.forEach((directory) =>
         fs.makeDirectory(directory, { recursive: true }),
       ),
     )

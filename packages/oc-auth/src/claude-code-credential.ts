@@ -37,7 +37,7 @@ const CLAUDE_CODE_METHOD = "claude-code",
   /** A host credential value this plugin imported, decoded to the parts it uses. */
   HostClaudeCode = Schema.Struct({
     access: Schema.String,
-    expires: Schema.Number,
+    expires: Schema.Finite,
     metadata: Metadata,
     methodID: Schema.Literal(CLAUDE_CODE_METHOD),
     refresh: Schema.String,

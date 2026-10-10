@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path } from "effect"
+import { Effect, FileSystem, Layer, Path } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 
 /* The generated module: both Markdown files as string constants. */
@@ -33,4 +33,11 @@ const render = (template: string, policy: string): string =>
     )
   })
 
-NodeRuntime.runMain(vendorPolicy.pipe(Effect.provide(NodeServices.layer)))
+NodeRuntime.runMain(
+  Layer.build(NodeServices.layer).pipe(
+    Effect.flatMap((services) =>
+      vendorPolicy.pipe(Effect.provideContext(services)),
+    ),
+    Effect.scoped,
+  ),
+)

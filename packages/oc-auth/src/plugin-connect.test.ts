@@ -123,7 +123,7 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
     },
   ),
   keychainLocked = Effect.fail(
-    new ClaudeCodeStoreError({ message: "macOS Keychain is locked" }),
+    ClaudeCodeStoreError.make({ message: "macOS Keychain is locked" }),
   ),
   lockedKeychain = scenario.onHost(Option.none(), answering(keychainLocked)),
   refreshingHost = scenario.onHost(

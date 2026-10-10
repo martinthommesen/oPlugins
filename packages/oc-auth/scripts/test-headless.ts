@@ -15,7 +15,15 @@
  * directory. Its refresh token will rotate and the resulting credentials will
  * remain in that directory.
  */
-import { Console, Crypto, Effect, FileSystem, Option, Path } from "effect"
+import {
+  Console,
+  Crypto,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+} from "effect"
 import { NodeRuntime } from "@effect/platform-node"
 import checks from "./headless-checks.ts"
 import credentials from "./headless-credentials.ts"
@@ -183,4 +191,11 @@ const asOfflinePass = (config: Settings): string => {
     yield* conclude(config, source, mock)
   }).pipe(Effect.scoped)
 
-NodeRuntime.runMain(smokeTest.pipe(Effect.provide(headlessServices)))
+NodeRuntime.runMain(
+  Layer.build(headlessServices).pipe(
+    Effect.flatMap((services) =>
+      smokeTest.pipe(Effect.provideContext(services)),
+    ),
+    Effect.scoped,
+  ),
+)

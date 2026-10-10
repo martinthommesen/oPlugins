@@ -24,7 +24,7 @@ const ALLOW = '{"outcome":"allow"}',
   TWO_REVIEWS = 2,
   invalidRequest: Script = (model) =>
     Effect.fail(
-      new RequestFailed({
+      RequestFailed.make({
         cause: "Invalid context length.",
         model,
         operation: "status",
@@ -33,7 +33,7 @@ const ALLOW = '{"outcome":"allow"}',
   rejectPrimary: Script = (model) => {
     if (model === "codex-auto-review") {
       return Effect.fail(
-        new ModelUnavailable({
+        ModelUnavailable.make({
           detail: "unsupported",
           model,
           status: HTTP_BAD_REQUEST,

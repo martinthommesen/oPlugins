@@ -23,8 +23,8 @@ class FakeEvents extends Context.Service<
     readonly closed: Effect.Effect<number>
     /** Fail the current subscription, as a dropped host stream would. */
     readonly drop: Effect.Effect<void>
-    /** The event API the plugin is given. */
-    readonly subscribe: Host["event"]["subscribe"]
+    /** The event stream the plugin is given; each run is one subscription. */
+    readonly stream: ReturnType<Host["event"]["subscribe"]>
     /** How many times the plugin subscribed. */
     readonly subscriptions: Effect.Effect<number>
     /** Emit a switch of the Anthropic credential to `credentialID`. */
@@ -40,6 +40,17 @@ class FakeEvents extends Context.Service<
           Option.none<Queue.Queue<HostEvent, string>>(),
         ),
         ended = yield* Ref.make(FIRST),
+        subscription = Stream.unwrap(
+          Queue.unbounded<HostEvent, string>().pipe(
+            Effect.tap((queue) => Ref.set(current, Option.some(queue))),
+            Effect.tap(() => Ref.update(count, (total) => total + ONE)),
+            Effect.map((queue) =>
+              Stream.fromQueue(queue).pipe(
+                Stream.ensuring(Ref.update(ended, (total) => total + ONE)),
+              ),
+            ),
+          ),
+        ),
         withCurrent = (
           use: (
             queue: Queue.Queue<HostEvent, string>,
@@ -58,18 +69,7 @@ class FakeEvents extends Context.Service<
       return FakeEvents.of({
         closed: Ref.get(ended),
         drop: withCurrent((queue) => Queue.fail(queue, "stream dropped")),
-        subscribe: () =>
-          Stream.unwrap(
-            Queue.unbounded<HostEvent, string>().pipe(
-              Effect.tap((queue) => Ref.set(current, Option.some(queue))),
-              Effect.tap(() => Ref.update(count, (total) => total + ONE)),
-              Effect.map((queue) =>
-                Stream.fromQueue(queue).pipe(
-                  Stream.ensuring(Ref.update(ended, (total) => total + ONE)),
-                ),
-              ),
-            ),
-          ),
+        stream: subscription,
         subscriptions: Ref.get(count),
         switchTo: (credentialID) =>
           withCurrent((queue) =>

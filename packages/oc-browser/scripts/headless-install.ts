@@ -67,7 +67,7 @@ const NO_CHANGES = {},
       )
 
     if (version !== required) {
-      return yield* new HeadlessSmokeError({
+      return yield* HeadlessSmokeError.make({
         message: `Expected ${required}, found ${version}`,
       })
     }
@@ -90,9 +90,7 @@ const NO_CHANGES = {},
         "--pack-destination",
         packed,
       ]).pipe(
-        Effect.flatMap((output) =>
-          Schema.decodeUnknownEffect(PackResult)(output),
-        ),
+        Effect.flatMap((output) => Schema.decodeEffect(PackResult)(output)),
       ),
       url = yield* inCheckout("npm", [
         "install",

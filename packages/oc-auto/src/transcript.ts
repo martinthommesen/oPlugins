@@ -127,7 +127,7 @@ const CalledTool = Schema.Struct({ input: Schema.String, name: Schema.String }),
       )
 
     if (spare < NO_CHARS) {
-      return yield* new ContextUnavailable({
+      return yield* ContextUnavailable.make({
         reason:
           "The user's messages exceed the reviewer context limit. They were not truncated.",
       })
@@ -189,7 +189,7 @@ const CalledTool = Schema.Struct({ input: Schema.String, name: Schema.String }),
       }))
 
       if (Predicate.isNotUndefined(evaluation.source) && Option.isNone(call)) {
-        return yield* new ContextUnavailable({
+        return yield* ContextUnavailable.make({
           reason:
             "OpenCode could not provide the tool call that raised this permission request.",
         })
@@ -205,7 +205,7 @@ const CalledTool = Schema.Struct({ input: Schema.String, name: Schema.String }),
         Effect.filterOrFail(
           (action) => action.length <= MAX_ACTION_CHARS,
           () =>
-            new ContextUnavailable({
+            ContextUnavailable.make({
               reason:
                 "The planned action exceeds the reviewer context limit. It was not truncated.",
             }),

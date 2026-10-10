@@ -25,7 +25,7 @@ const LogRecord = Schema.fromJsonString(
       text = yield* fs.readFileString(path)
 
     return yield* Effect.forEach(text.trim().split("\n"), (line) =>
-      Schema.decodeUnknownEffect(LogRecord)(line),
+      Schema.decodeEffect(LogRecord)(line),
     )
   }),
   /* A scoped temporary directory standing in for the user's home. */
@@ -56,7 +56,7 @@ const LogRecord = Schema.fromJsonString(
             ([, value]: readonly [string, string]) => value !== "",
           ),
         ]),
-      ),
+      )(),
       logger = DebugLog.layer.pipe(Layer.provide(environment))
 
     return Layer.build(logger).pipe(

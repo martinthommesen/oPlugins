@@ -58,7 +58,9 @@ const BAD_REQUEST = 400,
       return Effect.void
     }
 
-    return Effect.fail(new MockAnthropicError({ message: failures.join("; ") }))
+    return Effect.fail(
+      MockAnthropicError.make({ message: failures.join("; ") }),
+    )
   },
   /* Whether the plugin's test hook marked the request as the agent loop's. */
   fromPrimary = (sent: typeof requests.WireHeaders.Type): boolean =>
@@ -86,9 +88,9 @@ const BAD_REQUEST = 400,
     },
     Effect.catchTags({
       HttpServerError: (failure: { readonly message: string }) =>
-        Effect.fail(new MockAnthropicError({ message: failure.message })),
+        Effect.fail(MockAnthropicError.make({ message: failure.message })),
       SchemaError: (failure: { readonly message: string }) =>
-        Effect.fail(new MockAnthropicError({ message: failure.message })),
+        Effect.fail(MockAnthropicError.make({ message: failure.message })),
     }),
   ),
   /* Record why a request was rejected, and answer it as the API would. */
@@ -151,10 +153,10 @@ const BAD_REQUEST = 400,
     yield* check(failures.map((failure) => `rejected a request: ${failure}`))
 
     yield* Effect.fail(
-      new MockAnthropicError({ message: "no tool call reached the mock" }),
+      MockAnthropicError.make({ message: "no tool call reached the mock" }),
     ).pipe(Effect.when(Effect.succeed(toolCalls === NONE)))
     yield* Effect.fail(
-      new MockAnthropicError({ message: "no tool result reached the mock" }),
+      MockAnthropicError.make({ message: "no tool result reached the mock" }),
     ).pipe(Effect.when(Effect.succeed(toolResults === NONE)))
   }),
   /* `reply` in the form the request asked for. */

@@ -94,10 +94,10 @@ const NEVER_CHECKED = 0,
     now: number,
   ): Effect.Effect<Option.Option<ClaudeCodeCredential>> => {
     if (credential.expires <= now) {
-      return Fiber.join(pending).pipe(Effect.map(Option.some))
+      return Fiber.join(pending).pipe(Effect.asSome)
     }
 
-    return Effect.succeed(Option.some(credential))
+    return Effect.succeedSome(credential)
   },
   /*
    * The credential for a request. A store read can take seconds on a slow

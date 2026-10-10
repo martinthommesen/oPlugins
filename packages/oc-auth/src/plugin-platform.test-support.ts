@@ -27,7 +27,7 @@ const platform = Layer.mergeAll(
   ).pipe(
     Layer.provideMerge(DebugLog.layer),
     Layer.provideMerge(
-      testEnvironment({ HOME: "/nonexistent-claude-auth-home" }),
+      testEnvironment({ HOME: "/nonexistent-claude-auth-home" })(),
     ),
     Layer.provideMerge(platform),
     Layer.orDie,

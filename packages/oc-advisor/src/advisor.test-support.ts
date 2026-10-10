@@ -15,7 +15,7 @@ type Entries = readonly (readonly [string, Schema.Json])[]
 
 const FIRST = 0,
   /** A host call failing because the OpenCode server cannot be reached. */
-  SERVER_UNAVAILABLE = new HostError({
+  SERVER_UNAVAILABLE = HostError.make({
     cause: "server unavailable",
     operation: "session.get",
   }),

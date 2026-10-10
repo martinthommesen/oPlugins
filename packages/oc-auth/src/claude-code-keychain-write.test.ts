@@ -121,9 +121,7 @@ test.layer(support.layer)("keychain write-back", (it: Tests) => {
       expect(result).toBe("written")
       expect(
         stored.pipe(
-          Option.flatMap((blob) =>
-            Schema.decodeUnknownOption(KeptFields)(blob),
-          ),
+          Option.flatMap((blob) => Schema.decodeOption(KeptFields)(blob)),
           Option.map((blob) => blob.claudeAiOauth),
         ),
       ).toStrictEqual(
@@ -189,7 +187,7 @@ test.layer(support.layer)("keychain write-back of a long blob", (it: Tests) => {
       expect(result).toBe("written")
       expect(
         stored.pipe(
-          Option.flatMap((blob) => Schema.decodeUnknownOption(LargeBlob)(blob)),
+          Option.flatMap((blob) => Schema.decodeOption(LargeBlob)(blob)),
         ),
       ).toStrictEqual(
         Option.some({
@@ -219,7 +217,7 @@ test.layer(support.layer)(
 
           expect(result).toBe("written")
           expect(stored).toMatch(/^[\u0020-\u007E]*$/u)
-          expect(Schema.decodeUnknownOption(NotedBlob)(stored)).toStrictEqual(
+          expect(Schema.decodeOption(NotedBlob)(stored)).toStrictEqual(
             Option.some({ claudeAiOauth: { note: "ünïcode" } }),
           )
         }),

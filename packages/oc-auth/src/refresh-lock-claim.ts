@@ -6,7 +6,7 @@ import { Schema } from "effect"
  */
 const RefreshLockClaim = Schema.Struct({
   cooldown: Schema.Boolean,
-  expiresAt: Schema.Number,
+  expiresAt: Schema.Finite,
   path: Schema.String,
   ticket: Schema.BigInt,
 })

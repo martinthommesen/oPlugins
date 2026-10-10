@@ -8,7 +8,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -57,7 +57,7 @@ const COOLDOWN_MS = 20_000,
     read: support.script.read,
     writeBack: support.script.writeBack,
   }),
-  gatedStore = refreshLayer(gatedScript, fixtureTokens),
+  gatedStore = refreshLayer(gatedScript)(fixtureTokens),
   holderTokens = Option.some(support.tokens("holder-access", "holder-refresh")),
   /*
    * A refresh that loses its lease, during which the lock holder writes its
@@ -83,16 +83,16 @@ const COOLDOWN_MS = 20_000,
       read: support.script.read,
       writeBack: support.script.writeBack,
     }),
-  lostLease = refreshLayer(lockedBy(support.heldLock(false)), fixtureTokens),
+  lostLease = refreshLayer(lockedBy(support.heldLock(false)))(fixtureTokens),
   /* What the store holds after Claude Code rotated it. */
   newerTokens = Option.some(support.tokens("rotated-access")),
   original = support.imported(support.account()),
-  otherBusy = refreshLayer(lockedBy(support.busy), fixtureTokens),
+  otherBusy = refreshLayer(lockedBy(support.busy))(fixtureTokens),
   otherCooling = lockedBy(
     support.cooldownUntil(support.BASE_TIME + COOLDOWN_MS),
   ),
-  otherCoolingOld = refreshLayer(otherCooling, fixtureTokens),
-  otherCoolingRotated = refreshLayer(otherCooling, newerTokens)
+  otherCoolingOld = refreshLayer(otherCooling)(fixtureTokens),
+  otherCoolingRotated = refreshLayer(otherCooling)(newerTokens)
 
 test.layer(lostLease)("refresh after losing the lease", (it: Tests) => {
   it.effect(

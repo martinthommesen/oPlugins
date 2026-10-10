@@ -67,7 +67,7 @@ const CREDENTIALS_FILE = ".credentials.json",
         written = afterRefresh(source, tokens, now)
 
       yield* Effect.fail(
-        new HeadlessSmokeError({
+        HeadlessSmokeError.make({
           message:
             "Near-expiry refresh did not rotate and write back credentials",
         }),
@@ -88,14 +88,14 @@ const CREDENTIALS_FILE = ".credentials.json",
       target = path.join(root, "claude")
 
     if (Option.isNone(source)) {
-      return yield* new HeadlessSmokeError({
+      return yield* HeadlessSmokeError.make({
         message:
           "No Claude Code credentials found. Run `claude` before this smoke test.",
       })
     }
 
     if (source.value.credentials.expiresAt < now + MINIMUM_VALIDITY_MS) {
-      return yield* new HeadlessSmokeError({
+      return yield* HeadlessSmokeError.make({
         message:
           "Claude credentials expire within five minutes. Run `claude` first.",
       })
@@ -137,13 +137,13 @@ const CREDENTIALS_FILE = ".credentials.json",
         )
 
       if (Option.isNone(tokens)) {
-        return yield* new HeadlessSmokeError({
+        return yield* HeadlessSmokeError.make({
           message: `Invalid disposable credentials at ${store}`,
         })
       }
 
       if (Option.isNone(updated)) {
-        return yield* new HeadlessSmokeError({
+        return yield* HeadlessSmokeError.make({
           message: `Could not update disposable credentials at ${store}`,
         })
       }

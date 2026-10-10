@@ -123,7 +123,7 @@ const UNAVAILABLE = "unavailable",
       readBack = yield* store.read
 
     if (!Option.contains(readBack, written)) {
-      return yield* new ClaudeCodeStoreError({
+      return yield* ClaudeCodeStoreError.make({
         message: "the written credentials did not read back",
       })
     }
@@ -212,13 +212,10 @@ const UNAVAILABLE = "unavailable",
     Effect.Services<ReturnType<typeof writeThrough>>
   > =>
     writeThrough(store, request).pipe(
-      Effect.flatMap((first) => {
-        if (first !== UNAVAILABLE) {
-          return Effect.succeed(first)
-        }
-
-        return writeThrough(store, request)
-      }),
+      Effect.filterOrElse(
+        (first) => first !== UNAVAILABLE,
+        () => writeThrough(store, request),
+      ),
     ),
   /*
    * Guarded write of refreshed tokens into the source they came from. The

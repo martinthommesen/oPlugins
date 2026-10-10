@@ -1,7 +1,7 @@
-import { Effect, Match } from "effect"
-import type { Layer, Scope } from "effect"
+import { Effect, Exit, Match, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import FakeConnection from "./fake-connection.test-support.ts"
+import type { Layer } from "effect"
 import PluginRig from "./plugin-rig.test-support.ts"
 import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
@@ -206,10 +206,11 @@ describe("401 recovery that cannot replay", () => {
         expect.hasAssertions()
         yield* fakeHost.setUp
 
-        const controller = new AbortController(),
-          outbound = yield* scenario.send(scenario.abortable(controller.signal))
+        const caller = yield* Scope.make(),
+          callerSignal = yield* Effect.abortSignal.pipe(Scope.provide(caller)),
+          outbound = yield* scenario.send(scenario.abortable(callerSignal))
 
-        controller.abort()
+        yield* Scope.close(caller, Exit.void)
 
         expect((yield* scenario.respond(outbound, unauthorized())).status).toBe(
           UNAUTHORIZED,

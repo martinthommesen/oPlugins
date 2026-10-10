@@ -26,7 +26,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --strict"
+    "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

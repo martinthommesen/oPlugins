@@ -79,7 +79,7 @@ const FINGERPRINT = /^[a-f0-9]{32}$/u,
   }),
   /** A quiet debug log, an environment, and Node's platform services. */
   layer = Layer.mergeAll(DebugLog.layer, NodeCrypto.layer).pipe(
-    Layer.provideMerge(testEnvironment({ HOME: "/nonexistent" })),
+    Layer.provideMerge(testEnvironment({ HOME: "/nonexistent" })()),
     Layer.provideMerge(
       Layer.mergeAll(
         NodeFileSystem.layer,

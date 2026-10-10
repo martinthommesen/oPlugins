@@ -68,7 +68,7 @@ class AutoReview extends Context.Service<AutoReview, Interface>()(
               duration: deadline,
               orElse: () =>
                 Effect.fail(
-                  new ReviewTimedOut({ timeout: Duration.format(deadline) }),
+                  ReviewTimedOut.make({ timeout: Duration.format(deadline) }),
                 ),
             }),
             Effect.matchEffect({

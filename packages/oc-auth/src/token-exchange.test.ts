@@ -63,7 +63,7 @@ const AT = 1_767_225_600_000,
     Config.ConfigError,
     Layer.Success<typeof logSupport.layer>
   > => {
-    const log = DebugLog.layer.pipe(Layer.provide(testEnvironment(variables)))
+    const log = DebugLog.layer.pipe(Layer.provide(testEnvironment(variables)()))
 
     return TokenExchange.layerWithClient.pipe(
       Layer.provideMerge(TokenEndpoint.layer(reply)),
@@ -142,7 +142,7 @@ const AT = 1_767_225_600_000,
     sent.method,
     sent.url,
     sent.contentType,
-    Schema.decodeUnknownOption(Json)(sent.body),
+    Schema.decodeOption(Json)(sent.body),
   ]
 
 test.layer(

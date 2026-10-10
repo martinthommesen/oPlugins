@@ -31,7 +31,7 @@ const ACCOUNT_LABEL = /Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/mu,
   URL_PATTERN = /https?:\/\//u,
   /* Fail with `message`. */
   failWith = (message: string): Effect.Effect<never, HeadlessSmokeError> =>
-    Effect.fail(new HeadlessSmokeError({ message })),
+    Effect.fail(HeadlessSmokeError.make({ message })),
   /* Run the host with `args` in the sandbox. */
   hostRun = (
     host: Host,
@@ -69,7 +69,7 @@ const ACCOUNT_LABEL = /Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/mu,
     modelsPath: string,
   ) {
     const fs = yield* FileSystem.FileSystem,
-      models = yield* Schema.decodeUnknownEffect(ModelPrices)(
+      models = yield* Schema.decodeEffect(ModelPrices)(
         yield* fs.readFileString(modelsPath),
       ),
       subscription = models.filter((model) => model.providerID === "anthropic"),

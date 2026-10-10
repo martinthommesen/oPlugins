@@ -12,9 +12,8 @@ class RequestFailed extends Schema.TaggedError<RequestFailed>()(
     <Value, Failure, Requirements>(
       self: Effect.Effect<Value, Failure, Requirements>,
     ): Effect.Effect<Value, RequestFailed, Requirements> =>
-      Effect.mapError(
-        self,
-        (cause) => new RequestFailed({ cause, model, operation }),
+      Effect.mapError(self, (cause) =>
+        RequestFailed.make({ cause, model, operation }),
       )
 
   /* A pipeline step that maps any failure of the response stream to `RequestFailed`. */
@@ -23,9 +22,8 @@ class RequestFailed extends Schema.TaggedError<RequestFailed>()(
     <Value, Failure, Requirements>(
       self: Stream.Stream<Value, Failure, Requirements>,
     ): Stream.Stream<Value, RequestFailed, Requirements> =>
-      Stream.mapError(
-        self,
-        (cause) => new RequestFailed({ cause, model, operation: "stream" }),
+      Stream.mapError(self, (cause) =>
+        RequestFailed.make({ cause, model, operation: "stream" }),
       )
 }
 

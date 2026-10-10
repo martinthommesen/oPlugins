@@ -7,7 +7,7 @@
  * OC_BROWSER_HEADLESS_HOST_VERSION to test another host, and HEADLESS_KEEP to
  * keep the sandbox afterwards.
  */
-import { Console, Effect, FileSystem, Path } from "effect"
+import { Console, Effect, FileSystem, Layer, Path } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import checks from "./headless-checks.ts"
 import headlessSettings from "./headless-settings.ts"
@@ -77,4 +77,11 @@ const furnishHost = Effect.fn("Headless.writeHostFiles")(function* furnishHost(
     )
   }).pipe(Effect.scoped)
 
-NodeRuntime.runMain(smokeTest.pipe(Effect.provide(NodeServices.layer)))
+NodeRuntime.runMain(
+  Layer.build(NodeServices.layer).pipe(
+    Effect.flatMap((services) =>
+      smokeTest.pipe(Effect.provideContext(services)),
+    ),
+    Effect.scoped,
+  ),
+)

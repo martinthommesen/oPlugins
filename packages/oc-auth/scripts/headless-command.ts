@@ -77,7 +77,7 @@ const SUCCESS = 0,
 
     yield* printError(`${stdout}${stderr}`)
 
-    return yield* new HeadlessSmokeError({
+    return yield* HeadlessSmokeError.make({
       message: `${invocation.command} ${invocation.args.join(" ")} ${describe(code)}`,
     })
   }, Effect.scoped)

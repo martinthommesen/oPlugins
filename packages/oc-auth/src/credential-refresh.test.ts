@@ -11,7 +11,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -27,7 +27,9 @@ const ONE_MS = 1,
     retryAfterMs: Option.none(),
   },
   /* A store holding the old tokens whose write-back answers `result`. */
-  answering = (result: WriteResult): ReturnType<typeof refreshLayer> =>
+  answering = (
+    result: WriteResult,
+  ): ReturnType<ReturnType<typeof refreshLayer>> =>
     refreshLayer(
       Object.freeze({
         acquire: support.script.acquire,
@@ -35,15 +37,14 @@ const ONE_MS = 1,
         read: support.script.read,
         writeBack: () => Effect.succeed(result),
       }),
-      Option.some(support.account().credentials),
-    ),
+    )(Option.some(support.account().credentials)),
   /*
    * A store whose write-back meets a conflict: another writer leaves
    * `winner` in place first.
    */
   conflictWith = (
     winner: ReturnType<typeof support.tokens>,
-  ): ReturnType<typeof refreshLayer> =>
+  ): ReturnType<ReturnType<typeof refreshLayer>> =>
     refreshLayer(
       Object.freeze({
         acquire: support.script.acquire,
@@ -55,8 +56,7 @@ const ONE_MS = 1,
             Effect.as("conflict" as const),
           ),
       }),
-      Option.some(support.account().credentials),
-    ),
+    )(Option.some(support.account().credentials)),
   /* A conflicting winner that expired, so it cannot be adopted. */
   expiredWinner = conflictWith(
     support.tokens("expired-winner", "r", support.BASE_TIME - ONE_MS),
@@ -74,8 +74,7 @@ const ONE_MS = 1,
   /* A conflicting winner that is still valid. */
   liveWinner = conflictWith(support.tokens("winner-access", "winner-refresh")),
   original = support.imported(support.account()),
-  rotatedElsewhere = refreshLayer(
-    support.script,
+  rotatedElsewhere = refreshLayer(support.script)(
     Option.some(support.tokens("external-access", "external-refresh")),
   ),
   /* What the rig's store has been asked to write, in order. */

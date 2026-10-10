@@ -12,7 +12,7 @@ class HostError extends Schema.TaggedError<HostError>()("HostError", {
     <Value, Failure, Requirements>(
       self: Effect.Effect<Value, Failure, Requirements>,
     ): Effect.Effect<Value, HostError, Requirements> =>
-      Effect.mapError(self, (cause) => new HostError({ cause, operation }))
+      Effect.mapError(self, (cause) => HostError.make({ cause, operation }))
 }
 
 export default HostError

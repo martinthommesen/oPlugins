@@ -9,7 +9,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -69,8 +69,7 @@ const FIRST = 0,
       read: support.script.read,
       writeBack: support.script.writeBack,
     }),
-    Option.none(),
-  ),
+  )(Option.none()),
   original = support.imported(support.account()),
   otherBusy = refreshLayer(
     Object.freeze({
@@ -79,8 +78,7 @@ const FIRST = 0,
       read: support.script.read,
       writeBack: support.script.writeBack,
     }),
-    Option.some(support.account().credentials),
-  )
+  )(Option.some(support.account().credentials))
 
 test.layer(otherBusy)(
   "refresh while another process refreshes",

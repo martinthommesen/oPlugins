@@ -9,7 +9,7 @@ import support from "./credential-refresh.test-support.ts"
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
   readonly effect: Vitest.Test<
-    Layer.Success<ReturnType<typeof refreshLayer>> | Scope.Scope
+    Layer.Success<ReturnType<ReturnType<typeof refreshLayer>>> | Scope.Scope
   >
 }
 
@@ -78,8 +78,7 @@ const FIRST = 0,
         ),
       writeBack: support.script.writeBack,
     }),
-    Option.none(),
-  ),
+  )(Option.none()),
   firstFile = support.imported(fileAccount("first")),
   /* A rig whose endpoint waits for the gate before answering. */
   gatedScript: Script = Object.freeze({
@@ -92,7 +91,7 @@ const FIRST = 0,
     read: support.script.read,
     writeBack: support.script.writeBack,
   }),
-  generationsStore = refreshLayer(gatedScript, Option.some(expiredTokens)),
+  generationsStore = refreshLayer(gatedScript)(Option.some(expiredTokens)),
   /* The label carried by the credential a result holds. */
   labelOf = (result: Refresh): Option.Option<string> =>
     support
@@ -131,8 +130,7 @@ const FIRST = 0,
         ),
       writeBack: support.script.writeBack,
     }),
-    Option.none(),
-  ),
+  )(Option.none()),
   secondFile = support.imported(fileAccount("second"))
 
 test.layer(generationsStore)(

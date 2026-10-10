@@ -12,7 +12,7 @@ const send = Effect.fn("AnthropicFetch.send")(function* send(request: Request) {
 
   return yield* Effect.tryPromise({
     catch: (cause) =>
-      new AnthropicFetchError({
+      AnthropicFetchError.make({
         cause,
         message: "the replayed request failed",
       }),

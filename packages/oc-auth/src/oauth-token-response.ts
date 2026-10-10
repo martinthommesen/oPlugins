@@ -62,12 +62,12 @@ const AbsoluteExpiry = Schema.Struct({ expires_at: Schema.Finite }),
     currentRefreshToken: string,
     now: number,
   ): Option.Option<Credentials> => {
-    const data = Schema.decodeUnknownOption(Json)(raw),
+    const data = Schema.decodeOption(Json)(raw),
       grant = data.pipe(Option.flatMap(Schema.decodeUnknownOption(TokenGrant)))
 
     return Option.all({ expiresAt: chosenExpiry(data, now), grant }).pipe(
       Option.flatMap((found) =>
-        Schema.decodeUnknownOption(ClaudeCredentials)({
+        Schema.decodeOption(ClaudeCredentials)({
           accessToken: found.grant.access_token,
           expiresAt: Math.trunc(found.expiresAt),
           refreshToken: Option.getOrElse(
@@ -80,10 +80,10 @@ const AbsoluteExpiry = Schema.Struct({ expires_at: Schema.Finite }),
   },
   /* The OAuth error code in a token-endpoint error body, if it has one. */
   errorCode = (raw: string): Option.Option<string> =>
-    Schema.decodeUnknownOption(FlatError)(raw).pipe(
+    Schema.decodeOption(FlatError)(raw).pipe(
       Option.map((body) => body.error),
       Option.orElse(() =>
-        Schema.decodeUnknownOption(NestedError)(raw).pipe(
+        Schema.decodeOption(NestedError)(raw).pipe(
           Option.map((body) => body.error.type),
         ),
       ),

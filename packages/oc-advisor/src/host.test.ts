@@ -37,7 +37,7 @@ interface Scenario {
 }
 
 const CHILD_ID = Session.ID.make("ses_advisor_child"),
-  CHILD_INFO = Schema.decodeUnknownEffect(Session.Info)({
+  CHILD_INFO = Schema.decodeEffect(Session.Info)({
     cost: 0,
     id: CHILD_ID,
     location: { directory: "/advisor-test" },

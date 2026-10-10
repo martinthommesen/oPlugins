@@ -1,0 +1,80 @@
+{
+  "name": "@martinthommesen/oc-browser",
+  "version": "0.1.0",
+  "description": "oc-browser: an OpenCode v2 plugin and Chrome extension that let OpenCode drive the browser.",
+  "keywords": [
+    "browser",
+    "chrome",
+    "extension",
+    "opencode",
+    "plugin"
+  ],
+  "license": "MIT",
+  "author": "Martin Lammetun Thommesen <267603464+martinthommesen@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martinthommesen/oc-plugins.git",
+    "directory": "packages/oc-browser"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "imports": {
+    "#src/*": "./src/*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp types/index.d.ts types/tui.d.ts dist/ && pnpm run build:extension",
+    "build:extension": "esbuild extension/service-worker.ts --bundle --format=esm --platform=browser --target=chrome120 --outfile=dist/extension/service-worker.js && node -e \"const fs = require('node:fs'); const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8')); manifest.version = require('./package.json').version; fs.writeFileSync('dist/extension/manifest.json', JSON.stringify(manifest, null, 2) + '\\n')\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p extension/tsconfig.json",
+    "pretest": "node -e \"const n=require('node:fs').globSync(['src/**/*.test.ts', 'extension/**/*.test.ts']).length; if (n < 4) { console.error('expected at least 4 test files, found '+n); process.exit(1) }\"",
+    "test": "vitest run",
+    "test:host": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
+    "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); for (const file of ['./dist/tui.js', './dist/extension/manifest.json', './dist/extension/service-worker.js']) { if (!require('node:fs').existsSync(file)) { throw new Error(file + ' is missing') } }\"",
+    "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
+    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --strict && effect-language-service diagnostics --project extension/tsconfig.json --strict"
+  },
+  "dependencies": {
+    "@effect/platform-node-shared": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@opencode/plugin": "catalog:",
+    "@opencode/theme": "catalog:",
+    "@opentui/solid": "catalog:",
+    "@types/chrome": "catalog:",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "esbuild": "catalog:",
+    "solid-js": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@opentui/solid": ">=0.5.17",
+    "effect": "^4.0.0-rc.112",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}

@@ -287,11 +287,11 @@
   },
   "overrides": [
     {
-      // Environment: oBrowse's extension runs in Chrome, not Node. Its
+      // Environment: oc-browser's extension runs in Chrome, not Node. Its
       // service worker starts its program with one top-level
       // `Effect.runFork` call, which these rules otherwise require to sit in
       // a test hook.
-      "files": ["packages/obrowse/extension/**"],
+      "files": ["packages/oc-browser/extension/**"],
       "env": { "browser": true, "node": false, "webextensions": true },
       "rules": {
         "jest/require-hook": [

@@ -1,5 +1,5 @@
 {
-  "name": "oplugins",
+  "name": "oc-plugins",
   "private": true,
   "description": "OpenCode v2 plugins.",
   "type": "module",

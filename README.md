@@ -1,4 +1,4 @@
-# oPlugins
+# oc-plugins
 
 OpenCode v2 plugins, one package each.
 
@@ -14,33 +14,30 @@ pnpm run check
 `check` runs lint, format check, typecheck, Effect diagnostics, and tests
 for every package. See `AGENTS.md` for the policy behind them.
 
-## Packages
+## Plugins
 
-| Package                | npm name               | Published |
-| ---------------------- | ---------------------- | --------- |
-| `packages/claude-auth` | `oclaude`              | Planned   |
-| `packages/auto-review` | `opencode-auto-review` | Private   |
-| `packages/advisor`     | `opencode-advisor`     | Private   |
-| `packages/obrowse`     | `obrowse`              | Planned   |
+| Plugin       | npm name                      | Published |
+| ------------ | ----------------------------- | --------- |
+| `oc-advisor` | `@martinthommesen/oc-advisor` | Not yet   |
+| `oc-auth`    | `@martinthommesen/oc-auth`    | Not yet   |
+| `oc-auto`    | `@martinthommesen/oc-auto`    | Not yet   |
+| `oc-browser` | `@martinthommesen/oc-browser` | Not yet   |
+
+Each plugin lives in `packages/<plugin name>`.
 
 ## Releasing
 
 release-please runs in manifest mode (`release-please-config.json`,
-`.release-please-manifest.json`) and releases `oclaude` and `obrowse`, each
-with its own pull request and tagged `<package>-v<version>`.
+`.release-please-manifest.json`) and releases each plugin on its own, with
+its own pull request and tagged `<plugin name>-v<version>`. While a plugin
+is below 1.0, a breaking change bumps the minor version.
 
-- `oclaude`: tags from before the move are named
-  `opencode-claude-auth-v<version>`. The config pins the first release to
-  `3.0.0` with `release-as`; remove that line once 3.0.0 is out.
-- `obrowse`: never released. Its next version follows from `0.1.0` and the
-  commits since; pin one with `release-as` if it should start elsewhere.
-
-Publishing is not set up yet for either package. The plan is npm trusted
-publishing from `release.yml`, which needs no token but can only be
-configured once a package exists on npm, so each package's first version is
-published once by hand. Then add the trusted publisher on npmjs.com (user
-`martinthommesen`, repository `oPlugins`, workflow `release.yml`) and set
-the package's repository variable, `OCLAUDE_NPM_PUBLISH` or
-`OBROWSE_NPM_PUBLISH`, to `true`; until then that package's publish step is
-skipped. A new trusted publisher expires unless a publish uses it within 48
-hours, so add it shortly before a release.
+Publishing is not set up yet. npm trusted publishing from `release.yml`
+needs no token but can only be configured once a package exists on npm, so
+each plugin's first version, 0.1.0, is published once by hand and tagged
+`<plugin name>-v0.1.0`. Then add the trusted publisher on npmjs.com (user
+`martinthommesen`, repository `oc-plugins`, workflow `release.yml`) and set
+the plugin's repository variable, such as `OC_AUTH_NPM_PUBLISH`, to `true`;
+until then its publish step is skipped. A new trusted publisher expires
+unless a publish uses it within 48 hours, so add it shortly before a
+release.

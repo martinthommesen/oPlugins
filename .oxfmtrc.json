@@ -15,7 +15,7 @@
     "pnpm-lock.yaml",
     "**/CHANGELOG.md",
     "**/dist/**",
-    "packages/auto-review/src/vendor/codex/*.md",
+    "packages/oc-auto/src/vendor/codex/*.md",
     "**/.agent/**",
     "**/.agents/**",
     "**/.claude/**",

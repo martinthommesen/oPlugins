@@ -2,7 +2,7 @@
 
 How to write code that passes the root `.oxlintrc.json` the first time. It
 applies to every package. Each entry is a rule pressure and the shape that
-satisfies it. The model files are in `packages/claude-auth/src/`:
+satisfies it. The model files are in `packages/oc-auth/src/`:
 `debug-log.ts`, `debug-log-file.ts`, `environment.ts`, and
 `debug-log.test.ts`; copy their shapes.
 
@@ -11,10 +11,10 @@ satisfies it. The model files are in `packages/claude-auth/src/`:
 - One default export; nothing else is exported, types included. Export a
   frozen object of functions directly: `export default Object.freeze({ a, b })`.
 - One class per file. Errors each get a file, written exactly like
-  `packages/claude-auth/src/claude-auth-terminal-error.ts`.
+  `packages/oc-auth/src/claude-auth-terminal-error.ts`.
 - Imports never climb (`../`). Every module lives directly in its package's
-  `src/` (or oBrowse's `extension/`); test-only helpers are
-  `*.test-support.ts`. oBrowse's extension code reaches a shared module in
+  `src/` (or oc-browser's `extension/`); test-only helpers are
+  `*.test-support.ts`. oc-browser's extension code reaches a shared module in
   `src/` as `#src/<file>.ts`.
 - `import * as` is banned; Effect platform modules come from the package
   index: `import { NodeFileSystem } from "@effect/platform-node-shared"`.
@@ -91,11 +91,11 @@ satisfies it. The model files are in `packages/claude-auth/src/`:
   as returning `PromiseLike`, which is what `tryPromise` asks for and which
   `promise-function-async` does not treat as a Promise:
   `try: (signal): PromiseLike<Response> => fetch(request, { signal })`.
-  oBrowse's extension calls `chrome.*` APIs, which return Promises; wrap
+  oc-browser's extension calls `chrome.*` APIs, which return Promises; wrap
   them the same way:
   `try: (): PromiseLike<chrome.tabs.Tab[]> => chrome.tabs.query({})`.
-- oBrowse's service worker is the one module with a top-level call:
-  `Effect.runFork(program)`, which the `packages/obrowse/extension/**`
+- oc-browser's service worker is the one module with a top-level call:
+  `Effect.runFork(program)`, which the `packages/oc-browser/extension/**`
   override allows.
 - An explicit annotation that widens a known value fails
   `no-known-value-widening`; let inference work, or use `satisfies`.

@@ -25,7 +25,7 @@ jobs:
       - run: pnpm run lint:effect
       - run: pnpm run test
 
-  oclaude:
+  oc-auth:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: packages/claude-auth
+        working-directory: packages/oc-auth
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +67,7 @@ jobs:
           CLAUDE_AUTH_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run
 
-  obrowse:
+  oc-browser:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -75,7 +75,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: packages/obrowse
+        working-directory: packages/oc-browser
     steps:
       - uses: actions/checkout@v4
 

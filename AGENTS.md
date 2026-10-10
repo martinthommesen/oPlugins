@@ -1,4 +1,4 @@
-# oPlugins
+# oc-plugins
 
 A pnpm monorepo of OpenCode v2 plugins, each an Effect plugin in its own
 package under `packages/`. Each package's `AGENTS.md` and `README.md`
@@ -49,11 +49,11 @@ named:
 
 - `unicorn/throw-new-error` on a `Schema.TaggedError` class line: the rule
   mistakes the class factory for a throw
-  (`packages/claude-auth/src/claude-auth-terminal-error.ts`).
+  (`packages/oc-auth/src/claude-auth-terminal-error.ts`).
 - `typescript/prefer-readonly-parameter-types` on the draft parameter of a
   host editor's `update` callback: the host's contract is a draft edited in
   place, which a readonly type cannot express
-  (`packages/claude-auth/src/model-pricing.ts`).
+  (`packages/oc-auth/src/model-pricing.ts`).
 
 Adding any other suppression, option, or `off` is a policy change for the
 maintainer, not a fix.
@@ -74,7 +74,7 @@ The lint policy forces a shape that is unusual but uniform:
   export it imported: `typeof ClaudeCredentials.Type`, `Credentials["Service"]`,
   `ReturnType<typeof helpers.parse>`. Declare such aliases locally, unexported.
 - **One class per file, all files flat in the package's `src/`** (`../`
-  imports are banned; oBrowse's Chrome extension is flat in its own
+  imports are banned; oc-browser's Chrome extension is flat in its own
   `extension/`). Each error class gets its own `*-error.ts` file.
 - **Services** are `Context.Service` classes with `static readonly layer`
   (and `layerTest` when tests need a fake), built per the Effect guide:

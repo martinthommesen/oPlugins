@@ -3,16 +3,23 @@
   "release-type": "node",
   "include-component-in-tag": true,
   "separate-pull-requests": true,
-  "bootstrap-sha": "03e622ebe712c2c94e95712ebcab9a1dacdc80a8",
+  "bump-minor-pre-major": true,
   "packages": {
-    "packages/claude-auth": {
-      "component": "oclaude",
-      "package-name": "oclaude",
-      "release-as": "3.0.0"
+    "packages/oc-advisor": {
+      "component": "oc-advisor",
+      "package-name": "@martinthommesen/oc-advisor"
     },
-    "packages/obrowse": {
-      "component": "obrowse",
-      "package-name": "obrowse"
+    "packages/oc-auth": {
+      "component": "oc-auth",
+      "package-name": "@martinthommesen/oc-auth"
+    },
+    "packages/oc-auto": {
+      "component": "oc-auto",
+      "package-name": "@martinthommesen/oc-auto"
+    },
+    "packages/oc-browser": {
+      "component": "oc-browser",
+      "package-name": "@martinthommesen/oc-browser"
     }
   }
 }

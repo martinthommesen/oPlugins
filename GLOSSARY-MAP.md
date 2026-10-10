@@ -3,7 +3,7 @@
 ## Contexts
 
 - [oc-plugins](./docs/GLOSSARY.md): terms shared by every plugin
-- [oc-browser](./packages/obrowse/GLOSSARY.md): letting an OpenCode agent
+- [oc-browser](./packages/oc-browser/GLOSSARY.md): letting an OpenCode agent
   work in the user's own Chrome profile
 
 ## Relationships

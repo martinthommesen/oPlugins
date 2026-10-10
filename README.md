@@ -28,7 +28,10 @@ release-please runs in manifest mode (`release-please-config.json`,
 `.release-please-manifest.json`) and releases only `oclaude`, tagged
 `oclaude-v<version>`. Tags from before the move are named
 `opencode-claude-auth-v<version>`. The config pins the first release to
-`3.0.0` with `release-as`; remove that line once 3.0.0 is out. Publishing
-needs an `NPM_TOKEN` secret, and npm provenance requires the
-`repository` field in `packages/claude-auth/package.json` to name this
-repository.
+`3.0.0` with `release-as`; remove that line once 3.0.0 is out.
+
+Publishing is not set up yet. The plan is npm trusted publishing from
+`release.yml`, which needs no token but can only be configured once the
+package exists on npm, so the first version is published once by hand.
+npm also requires the `repository` field in
+`packages/claude-auth/package.json` to name this repository.

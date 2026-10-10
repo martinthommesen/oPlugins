@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Target OpenCode 2.0.26 while retaining compatible V2 hosts back to 2.0.7.
+- Target OpenCode 2.0.26. OpenCode 2.0.25 is the oldest supported host.
 - Update Claude Code wire defaults to 2.1.295 and its bundled SDK 0.128.0,
   including the current billing checksum placeholder.
 - Apply subscription context transforms to title, compaction, and transient

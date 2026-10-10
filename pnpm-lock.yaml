@@ -95,6 +95,9 @@ importers:
 
   packages/auto-review:
     devDependencies:
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.3.0(@opentelemetry/api@1.9.0))
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)))
@@ -4647,7 +4650,7 @@ snapshots:
     dependencies:
       emoji-regex: 10.6.0
       get-east-asian-width: 1.7.0
-      strip-ansi: 7.1.2
+      strip-ansi: 7.2.0
 
   strip-ansi@6.0.1:
     dependencies:

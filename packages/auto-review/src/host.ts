@@ -1,15 +1,15 @@
 import { Context, Effect, Layer, Option, Predicate } from "effect"
 import type { Credential, Plugin } from "@opencode/plugin/effect"
-import type { ConversationItem } from "./conversation.ts"
-import type { HostError } from "./errors/host-error.ts"
+import HostError from "./host-error.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
-import { fromSessionMessages } from "./conversation.ts"
-import { hostError } from "./errors/host-error.ts"
+import type { Session } from "@opencode/schema/session"
+import type { SessionMessage } from "@opencode/schema/session-message"
+import conversation from "./conversation.ts"
 
 type SessionId = PermissionEvaluation["sessionID"]
 
 interface SessionSnapshot {
-  readonly items: readonly ConversationItem[]
+  readonly items: ReturnType<typeof conversation.fromSessionMessages>
   readonly parentId: Option.Option<SessionId>
 }
 
@@ -25,58 +25,66 @@ interface Interface {
   ) => Effect.Effect<SessionSnapshot, HostError>
 }
 
-const OPENAI_INTEGRATION = "openai"
-
-/** OpenCode server capabilities the reviewer reads, behind a service tag. */
-class Host extends Context.Service<Host, Interface>()(
-  "opencode-auto-review/Host",
-) {
-  public static readonly fromPlugin = (
-    context: Plugin.Context,
-  ): Layer.Layer<Host> => {
-    const { integration } = context
-    const sessions = context.session
-
-    const openAiCredential = Effect.gen(function* openAiCredential() {
-      const connection =
-        yield* integration.connection.active(OPENAI_INTEGRATION)
-
-      if (Predicate.isUndefined(connection)) {
-        return Option.none<Credential.Value>()
-      }
-
-      const credential = yield* integration.connection
-        .resolve(connection)
-        .pipe(hostError("integration.connection.resolve"))
-
-      return Option.fromUndefinedOr(credential)
-    })
-
-    const session = Effect.fn("Host.session")(function* session(
-      sessionId: SessionId,
-    ) {
-      const info = sessions
-        .get({ sessionID: sessionId })
-        .pipe(hostError("session.get"))
-
-      const messages = sessions
-        .context({ sessionID: sessionId })
-        .pipe(hostError("session.context"))
-
-      const [{ parentID }, transcript] = yield* Effect.all([info, messages], {
-        concurrency: "unbounded",
-      })
+const OPENAI_INTEGRATION = "openai",
+  /*
+   * Reads a session through the plugin context. The host's calls fail with
+   * `unknown`; each is mapped to a `HostError` naming the call.
+   */
+  sessionReader = (context: Plugin.Context): Interface["session"] =>
+    Effect.fn("Host.session")(function* session(sessionId: SessionId) {
+      const reads: Effect.Effect<
+          readonly [Session.Info, readonly SessionMessage.Info[]],
+          HostError
+        > = Effect.all(
+          [
+            context.session
+              .get({ sessionID: sessionId })
+              .pipe(HostError.during("session.get")),
+            context.session
+              .context({ sessionID: sessionId })
+              .pipe(HostError.during("session.context")),
+          ],
+          { concurrency: "unbounded" },
+        ),
+        [{ parentID }, transcript] = yield* reads
 
       return {
-        items: fromSessionMessages(transcript),
+        items: conversation.fromSessionMessages(transcript),
         parentId: Option.fromUndefinedOr(parentID),
       }
     })
 
-    return Layer.succeed(Host, Host.of({ openAiCredential, session }))
+/** OpenCode server capabilities the reviewer reads, behind a service tag. */
+class Host extends Context.Service<Host, Interface>()(
+  "opencode-auto-review/host",
+) {
+  public static readonly fromPlugin = (
+    context: Plugin.Context,
+  ): Layer.Layer<Host> => {
+    const { integration } = context,
+      openAiCredential = Effect.gen(function* openAiCredential() {
+        const connection =
+          yield* integration.connection.active(OPENAI_INTEGRATION)
+
+        if (Predicate.isNotUndefined(connection)) {
+          const credential: Effect.Effect<
+            Credential.Value | undefined,
+            HostError
+          > = integration.connection
+            .resolve(connection)
+            .pipe(HostError.during("integration.connection.resolve"))
+
+          return Option.fromUndefinedOr(yield* credential)
+        }
+
+        return Option.none<Credential.Value>()
+      })
+
+    return Layer.succeed(
+      Host,
+      Host.of({ openAiCredential, session: sessionReader(context) }),
+    )
   }
 }
 
-export { Host }
-
-export type { Interface as HostInterface, SessionId, SessionSnapshot }
+export default Host

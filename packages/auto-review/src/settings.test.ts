@@ -1,20 +1,34 @@
-import { Array as Arr, Duration, Effect, Exit, pipe } from "effect"
+import {
+  Array as Arr,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  pipe,
+} from "effect"
+import type { Config, Scope } from "effect"
 import { describe, expect, it } from "@effect/vitest"
-import { Settings } from "./settings.ts"
-import { settingsFrom } from "./testing.ts"
+import Settings from "./settings.ts"
+import support from "./testing.test-support.ts"
 
-const TWENTY_SECONDS = 20
-
-const NINETY_SECONDS = 90
-
-const readSettings = Effect.gen(function* readSettings() {
-  return yield* Settings
-})
+const FIRST = 0,
+  NINETY_SECONDS = 90,
+  TWENTY_SECONDS = 20,
+  /* The settings the plugin reads from `options`. */
+  settingsOf = (
+    options: Parameters<typeof support.settingsFrom>[typeof FIRST],
+  ): Effect.Effect<Settings["Service"], Config.ConfigError, Scope.Scope> =>
+    Layer.build(support.settingsFrom(options)).pipe(
+      Effect.map((built) => Context.get(built, Settings)),
+    )
 
 describe("settings", () => {
   it.effect("defaults to Codex auto-review with a GPT-5.5 fallback", () =>
     Effect.gen(function* defaults() {
-      const settings = yield* Effect.provide(readSettings, settingsFrom({}))
+      expect.hasAssertions()
+
+      const settings = yield* settingsOf({})
 
       expect(settings).toStrictEqual({
         baseUrl: "https://chatgpt.com/backend-api/codex",
@@ -31,14 +45,13 @@ describe("settings", () => {
 
   it.effect("reads overrides from the plugin options", () =>
     Effect.gen(function* overrides() {
-      const settings = yield* Effect.provide(
-        readSettings,
-        settingsFrom({
-          fallbackModel: "gpt-6-luna",
-          reasoningEffort: "medium",
-          timeout: "20 seconds",
-        }),
-      )
+      expect.hasAssertions()
+
+      const settings = yield* settingsOf({
+        fallbackModel: "gpt-6-luna",
+        reasoningEffort: "medium",
+        timeout: "20 seconds",
+      })
 
       expect(settings.fallbackModel).toBe("gpt-6-luna")
       expect(settings.reasoningEffort).toBe("medium")
@@ -48,10 +61,11 @@ describe("settings", () => {
 
   it.effect("rejects an unknown reasoning effort", () =>
     Effect.gen(function* invalidEffort() {
-      const exit = yield* Effect.provide(
-        readSettings,
-        settingsFrom({ reasoningEffort: "extreme" }),
-      ).pipe(Effect.exit)
+      expect.hasAssertions()
+
+      const exit = yield* settingsOf({ reasoningEffort: "extreme" }).pipe(
+        Effect.exit,
+      )
 
       expect(Exit.isFailure(exit)).toBe(true)
     }),
@@ -61,15 +75,11 @@ describe("settings", () => {
 describe("denial limit and timeout validation", () => {
   it.effect("rejects zero and negative denial limits", () =>
     Effect.gen(function* invalidLimits() {
+      expect.hasAssertions()
+
       const exits = yield* Effect.all([
-        Effect.provide(
-          readSettings,
-          settingsFrom({ maxConsecutiveDenials: "-1" }),
-        ).pipe(Effect.exit),
-        Effect.provide(
-          readSettings,
-          settingsFrom({ maxTotalDenials: "0" }),
-        ).pipe(Effect.exit),
+        settingsOf({ maxConsecutiveDenials: "-1" }).pipe(Effect.exit),
+        settingsOf({ maxTotalDenials: "0" }).pipe(Effect.exit),
       ])
 
       expect(pipe(exits, Arr.every(Exit.isFailure))).toBe(true)
@@ -78,19 +88,12 @@ describe("denial limit and timeout validation", () => {
 
   it.effect("rejects nonpositive and infinite review deadlines", () =>
     Effect.gen(function* invalidDeadlines() {
+      expect.hasAssertions()
+
       const exits = yield* Effect.all([
-        Effect.provide(
-          readSettings,
-          settingsFrom({ timeout: "0 seconds" }),
-        ).pipe(Effect.exit),
-        Effect.provide(
-          readSettings,
-          settingsFrom({ timeout: "-1 second" }),
-        ).pipe(Effect.exit),
-        Effect.provide(
-          readSettings,
-          settingsFrom({ timeout: "Infinity" }),
-        ).pipe(Effect.exit),
+        settingsOf({ timeout: "0 seconds" }).pipe(Effect.exit),
+        settingsOf({ timeout: "-1 second" }).pipe(Effect.exit),
+        settingsOf({ timeout: "Infinity" }).pipe(Effect.exit),
       ])
 
       expect(pipe(exits, Arr.every(Exit.isFailure))).toBe(true)
@@ -101,22 +104,21 @@ describe("denial limit and timeout validation", () => {
 describe("backend URL validation", () => {
   it.effect("rejects unsupported backend URLs", () =>
     Effect.gen(function* invalidUrls() {
-      const urls = [
-        "file:///etc/passwd",
-        "ftp://example.com/codex",
-        "https://user:password@example.com/codex",
-        "https://example.com/codex?secret=value",
-        "https://example.com/codex#fragment",
-      ]
+      expect.hasAssertions()
 
-      const exits = yield* pipe(
-        urls,
-        Effect.forEach((baseUrl) =>
-          Effect.provide(readSettings, settingsFrom({ baseUrl })).pipe(
-            Effect.exit,
+      const candidates = [
+          "file:///etc/passwd",
+          "ftp://example.com/codex",
+          "https://user:password@example.com/codex",
+          "https://example.com/codex?secret=value",
+          "https://example.com/codex#fragment",
+        ],
+        exits = yield* pipe(
+          candidates,
+          Effect.forEach((baseUrl) =>
+            settingsOf({ baseUrl }).pipe(Effect.exit),
           ),
-        ),
-      )
+        )
 
       expect(pipe(exits, Arr.every(Exit.isFailure))).toBe(true)
     }),

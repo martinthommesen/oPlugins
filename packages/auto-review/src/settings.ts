@@ -1,46 +1,5 @@
 import { Config, Context, Duration, Effect, Layer, Schema } from "effect"
 
-const ReasoningEffort = ["minimal", "low", "medium", "high"] as const
-
-type ReasoningEffort = (typeof ReasoningEffort)[number]
-
-const DEFAULT_TIMEOUT_SECONDS = 90
-
-const DEFAULT_MAX_CONSECUTIVE_DENIALS = 3
-
-const DEFAULT_MAX_TOTAL_DENIALS = 10
-
-const DenialLimit = Schema.Int.check(
-  Schema.isBetween({
-    maximum: Number.MAX_SAFE_INTEGER,
-    minimum: 1,
-  }),
-)
-
-const ReviewTimeout = Schema.DurationFromString.check(
-  Schema.makeFilter(
-    (duration: Duration.Duration) =>
-      (Duration.isFinite(duration) && Duration.isPositive(duration)) ||
-      "Expected a positive, finite review timeout.",
-  ),
-)
-
-const BackendUrl = Schema.URLFromString.check(
-  Schema.makeFilter(
-    (
-      url: Readonly<
-        Pick<URL, "protocol" | "username" | "password" | "search" | "hash">
-      >,
-    ) =>
-      ((url.protocol === "https:" || url.protocol === "http:") &&
-        url.username === "" &&
-        url.password === "" &&
-        url.search === "" &&
-        url.hash === "") ||
-      "Expected an HTTP(S) backend URL without credentials, a query, or a fragment.",
-  ),
-)
-
 interface Interface {
   /** Base URL of the Codex Responses backend. */
   readonly baseUrl: string
@@ -54,52 +13,82 @@ interface Interface {
   readonly maxTotalDenials: number
   /** Reviewer model requested first. */
   readonly model: string
-  readonly reasoningEffort: ReasoningEffort
+  readonly reasoningEffort: (typeof REASONING_EFFORTS)[number]
   /** Deadline for one review, including the fallback attempt. */
   readonly timeout: Duration.Duration
 }
 
+const BackendUrl = Schema.URLFromString.check(
+    Schema.makeFilter(
+      (
+        url: Readonly<
+          Pick<URL, "protocol" | "username" | "password" | "search" | "hash">
+        >,
+      ) =>
+        ((url.protocol === "https:" || url.protocol === "http:") &&
+          url.username === "" &&
+          url.password === "" &&
+          url.search === "" &&
+          url.hash === "") ||
+        "Expected an HTTP(S) backend URL without credentials, a query, or a fragment.",
+    ),
+  ),
+  DEFAULT_MAX_CONSECUTIVE_DENIALS = 3,
+  DEFAULT_MAX_TOTAL_DENIALS = 10,
+  DEFAULT_TIMEOUT_SECONDS = 90,
+  DenialLimit = Schema.Int.check(
+    Schema.isBetween({
+      maximum: Number.MAX_SAFE_INTEGER,
+      minimum: 1,
+    }),
+  ),
+  REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const,
+  ReviewTimeout = Schema.DurationFromString.check(
+    Schema.makeFilter(
+      (duration: Duration.Duration) =>
+        (Duration.isFinite(duration) && Duration.isPositive(duration)) ||
+        "Expected a positive, finite review timeout.",
+    ),
+  )
+
+/** The plugin's options, validated, with their defaults. */
 class Settings extends Context.Service<Settings, Interface>()(
-  "opencode-auto-review/Settings",
+  "opencode-auto-review/settings",
 ) {
+  /** The reasoning efforts the backend accepts. */
+  public static readonly reasoningEfforts = REASONING_EFFORTS
+
   /** Reads the plugin options through the current `ConfigProvider`. */
   public static readonly layer = Layer.effect(
     Settings,
     Effect.gen(function* readSettings() {
       const baseUrl = yield* Config.schema(BackendUrl, "baseUrl").pipe(
-        Config.withDefault(new URL("https://chatgpt.com/backend-api/codex")),
-      )
-
-      const extraPolicy = yield* Config.string("extraPolicy").pipe(
-        Config.withDefault(""),
-      )
-
-      const fallbackModel = yield* Config.nonEmptyString("fallbackModel").pipe(
-        Config.withDefault("gpt-5.5"),
-      )
-
-      const maxConsecutiveDenials = yield* Config.schema(
-        DenialLimit,
-        "maxConsecutiveDenials",
-      ).pipe(Config.withDefault(DEFAULT_MAX_CONSECUTIVE_DENIALS))
-
-      const maxTotalDenials = yield* Config.schema(
-        DenialLimit,
-        "maxTotalDenials",
-      ).pipe(Config.withDefault(DEFAULT_MAX_TOTAL_DENIALS))
-
-      const model = yield* Config.nonEmptyString("model").pipe(
-        Config.withDefault("codex-auto-review"),
-      )
-
-      const reasoningEffort = yield* Config.literals(
-        ReasoningEffort,
-        "reasoningEffort",
-      ).pipe(Config.withDefault("low"))
-
-      const timeout = yield* Config.schema(ReviewTimeout, "timeout").pipe(
-        Config.withDefault(Duration.seconds(DEFAULT_TIMEOUT_SECONDS)),
-      )
+          Config.withDefault(new URL("https://chatgpt.com/backend-api/codex")),
+        ),
+        extraPolicy = yield* Config.string("extraPolicy").pipe(
+          Config.withDefault(""),
+        ),
+        fallbackModel = yield* Config.nonEmptyString("fallbackModel").pipe(
+          Config.withDefault("gpt-5.5"),
+        ),
+        maxConsecutiveDenials = yield* Config.schema(
+          DenialLimit,
+          "maxConsecutiveDenials",
+        ).pipe(Config.withDefault(DEFAULT_MAX_CONSECUTIVE_DENIALS)),
+        maxTotalDenials = yield* Config.schema(
+          DenialLimit,
+          "maxTotalDenials",
+        ).pipe(Config.withDefault(DEFAULT_MAX_TOTAL_DENIALS)),
+        model = yield* Config.nonEmptyString("model").pipe(
+          Config.withDefault("codex-auto-review"),
+        ),
+        reasoningEffort = yield* Config.literals(
+          REASONING_EFFORTS,
+          "reasoningEffort",
+        ).pipe(Config.withDefault("low")),
+        timeout = yield* Config.schema(ReviewTimeout, "timeout").pipe(
+          Config.withDefault(Duration.seconds(DEFAULT_TIMEOUT_SECONDS)),
+        )
 
       return Settings.of({
         baseUrl: baseUrl.href,
@@ -115,6 +104,4 @@ class Settings extends Context.Service<Settings, Interface>()(
   )
 }
 
-export { ReasoningEffort, Settings }
-
-export type { Interface as SettingsInterface }
+export default Settings

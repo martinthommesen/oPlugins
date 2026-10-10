@@ -1,15 +1,11 @@
-import type { Assessment, MalformedAssessment } from "./assessment.ts"
 import { Context, Duration, Effect, Layer, Ref } from "effect"
-import { reviewRequest, reviewerInstructions } from "./prompt.ts"
-import type { AuthUnavailable } from "./errors/auth-unavailable.ts"
-import { CodexResponses } from "./codex-client.ts"
-import type { HostError } from "./errors/host-error.ts"
-import type { ModelUnavailable } from "./errors/model-unavailable.ts"
-import type { RequestFailed } from "./errors/request-failed.ts"
-import { ReviewTimedOut } from "./errors/review-timed-out.ts"
-import { Settings } from "./settings.ts"
-import type { SettingsInterface } from "./settings.ts"
-import { parseAssessment } from "./assessment.ts"
+import CodexResponses from "./codex-client.ts"
+import ReviewTimedOut from "./review-timed-out-error.ts"
+import Settings from "./settings.ts"
+import assessment from "./assessment.ts"
+import prompt from "./prompt.ts"
+
+type Complete = CodexResponses["Service"]["complete"]
 
 interface ReviewRequest {
   /** Groups one session's reviews for the backend's prompt cache. */
@@ -21,24 +17,20 @@ interface ReviewRequest {
 }
 
 interface Review {
-  readonly assessment: Assessment
+  readonly assessment: typeof assessment.Assessment.Type
   /** The model that produced the assessment. */
   readonly model: string
 }
 
-type ReviewError =
-  | AuthUnavailable
-  | HostError
-  | MalformedAssessment
-  | ModelUnavailable
-  | RequestFailed
-  | ReviewTimedOut
+type AssessError =
+  | Effect.Error<ReturnType<Complete>>
+  | Effect.Error<ReturnType<typeof assessment.parse>>
 
 interface Interface {
   /** Asks the reviewer model for an assessment of one planned action. */
   readonly review: (
     request: ReviewRequest,
-  ) => Effect.Effect<Review, ReviewError>
+  ) => Effect.Effect<Review, AssessError | ReviewTimedOut>
 }
 
 interface Dependencies {
@@ -46,101 +38,101 @@ interface Dependencies {
   readonly instructions: string
   /** Avoids retrying a rejected primary model until the plugin reloads. */
   readonly primaryUnavailable: Ref.Ref<boolean>
-  readonly settings: SettingsInterface
+  readonly settings: Settings["Service"]
 }
 
+/* Asks `model` for an assessment of `request`. */
 const assessWith = (
-  dependencies: Dependencies,
-): ((
-  model: string,
-  request: ReviewRequest,
-) => Effect.Effect<Review, Exclude<ReviewError, ReviewTimedOut>>) =>
-  Effect.fn("Reviewer.assess")(function* assess(
+    dependencies: Dependencies,
+  ): ((
     model: string,
     request: ReviewRequest,
-  ) {
-    const text = yield* dependencies.codex.complete({
-      cacheKey: request.cacheKey,
-      input: reviewRequest(request.transcript, request.plannedAction),
-      instructions: dependencies.instructions,
-      model,
-    })
+  ) => Effect.Effect<Review, AssessError>) =>
+    Effect.fn("Reviewer.assess")(function* assess(
+      model: string,
+      request: ReviewRequest,
+    ) {
+      const text = yield* dependencies.codex.complete({
+        cacheKey: request.cacheKey,
+        input: prompt.reviewRequest(request.transcript, request.plannedAction),
+        instructions: dependencies.instructions,
+        model,
+      })
 
-    const assessment = yield* parseAssessment(text)
+      return { assessment: yield* assessment.parse(text), model }
+    }),
+  /*
+   * Reviews with the primary model, falling back for good once the backend
+   * rejects it, all within the review deadline.
+   */
+  reviewWith = (dependencies: Dependencies): Interface["review"] => {
+    const { primaryUnavailable, settings } = dependencies,
+      assess = assessWith(dependencies),
+      fallBack = Effect.fn("Reviewer.fallBack")(function* fallBack(
+        request: ReviewRequest,
+      ) {
+        yield* Ref.set(primaryUnavailable, true)
 
-    return { assessment, model }
-  })
+        yield* Effect.logWarning(
+          `Reviewer model ${settings.model} is unavailable; using ${settings.fallbackModel}.`,
+        )
 
-const reviewWith = (dependencies: Dependencies): Interface["review"] => {
-  const { primaryUnavailable, settings } = dependencies
-  const assess = assessWith(dependencies)
-
-  const fallBack = Effect.fn("Reviewer.fallBack")(function* fallBack(
-    request: ReviewRequest,
-  ) {
-    yield* Ref.set(primaryUnavailable, true)
-
-    yield* Effect.logWarning(
-      `Reviewer model ${settings.model} is unavailable; using ${settings.fallbackModel}.`,
-    )
-
-    return yield* assess(settings.fallbackModel, request)
-  })
-
-  const firstChoice = Effect.fn("Reviewer.firstChoice")(function* firstChoice(
-    request: ReviewRequest,
-  ) {
-    if (settings.fallbackModel === settings.model) {
-      return yield* assess(settings.model, request)
-    }
-
-    if (yield* Ref.get(primaryUnavailable)) {
-      return yield* assess(settings.fallbackModel, request)
-    }
-
-    return yield* assess(settings.model, request).pipe(
-      Effect.catchTag("ModelUnavailable", () => fallBack(request)),
-    )
-  })
-
-  return Effect.fn("Reviewer.review")(function* review(request: ReviewRequest) {
-    return yield* firstChoice(request).pipe(
-      Effect.timeoutOrElse({
-        duration: settings.timeout,
-        orElse: () =>
-          Effect.fail(
-            new ReviewTimedOut({ timeout: Duration.format(settings.timeout) }),
-          ),
+        return yield* assess(settings.fallbackModel, request)
       }),
-    )
-  })
-}
+      firstChoice = Effect.fn("Reviewer.firstChoice")(function* firstChoice(
+        request: ReviewRequest,
+      ) {
+        if (settings.fallbackModel === settings.model) {
+          return yield* assess(settings.model, request)
+        }
+
+        if (yield* Ref.get(primaryUnavailable)) {
+          return yield* assess(settings.fallbackModel, request)
+        }
+
+        return yield* assess(settings.model, request).pipe(
+          Effect.catchTag("ModelUnavailable", () => fallBack(request)),
+        )
+      })
+
+    return Effect.fn("Reviewer.review")(function* review(
+      request: ReviewRequest,
+    ) {
+      return yield* firstChoice(request).pipe(
+        Effect.timeoutOrElse({
+          duration: settings.timeout,
+          orElse: () =>
+            Effect.fail(
+              new ReviewTimedOut({
+                timeout: Duration.format(settings.timeout),
+              }),
+            ),
+        }),
+      )
+    })
+  }
 
 /** Sends permission requests to the reviewer model and parses its verdict. */
 class Reviewer extends Context.Service<Reviewer, Interface>()(
-  "opencode-auto-review/Reviewer",
+  "opencode-auto-review/reviewer",
 ) {
   public static readonly layer = Layer.effect(
     Reviewer,
     Effect.gen(function* makeReviewer() {
-      const codex = yield* CodexResponses
-      const settings = yield* Settings
-      const primaryUnavailable = yield* Ref.make(false)
+      const codex = yield* CodexResponses,
+        primaryUnavailable = yield* Ref.make(false),
+        settings = yield* Settings
 
-      const review = reviewWith({
-        codex,
-        instructions: reviewerInstructions(settings.extraPolicy),
-        primaryUnavailable,
-        settings,
+      return Reviewer.of({
+        review: reviewWith({
+          codex,
+          instructions: prompt.reviewerInstructions(settings.extraPolicy),
+          primaryUnavailable,
+          settings,
+        }),
       })
-
-      return Reviewer.of({ review })
     }),
   )
 }
 
-export { Reviewer }
-
-export { ReviewTimedOut } from "./errors/review-timed-out.ts"
-
-export type { Review, ReviewError, ReviewRequest }
+export default Reviewer

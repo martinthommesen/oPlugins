@@ -12,10 +12,10 @@ import {
   Schema,
   pipe,
 } from "effect"
-import { AuthUnavailable } from "./errors/auth-unavailable.ts"
+import AuthUnavailable from "./auth-unavailable-error.ts"
 import type { Credential } from "@opencode/plugin/effect"
-import { Host } from "./host.ts"
-import type { HostError } from "./errors/host-error.ts"
+import Host from "./host.ts"
+import type HostError from "./host-error.ts"
 
 /** What a request to the ChatGPT Codex backend authenticates with. */
 interface ChatGptToken {
@@ -28,124 +28,114 @@ interface Interface {
   readonly current: Effect.Effect<ChatGptToken, AuthUnavailable | HostError>
 }
 
-const JWT_PAYLOAD_SEGMENT = 1
-
 const AuthClaim = Schema.Struct({
-  chatgpt_account_id: Schema.optionalKey(Schema.String),
-})
-
-/**
- * Codex reads the account from either claim. OpenCode's legacy Codex sign-in
- * also stores it in the credential metadata.
- */
-const Claims = Schema.Struct({
-  chatgpt_account_id: Schema.optionalKey(Schema.String),
-  "https://api.openai.com/auth": Schema.optionalKey(AuthClaim),
-})
-
-const decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Claims))
-
-const decodeMetadata = Schema.decodeUnknownOption(
-  Schema.Struct({ accountID: Schema.String }),
-)
-
-const accountIdFromToken = (token: string): Option.Option<string> =>
-  pipe(
-    token.split("."),
-    Arr.get(JWT_PAYLOAD_SEGMENT),
-    Option.flatMap((segment) =>
-      Result.getSuccess(Encoding.decodeBase64UrlString(segment)),
-    ),
-    Option.flatMap(decodeClaims),
-    Option.flatMap((claims) =>
-      Option.firstSomeOf([
-        Option.fromUndefinedOr(claims.chatgpt_account_id),
-        pipe(
-          Option.fromUndefinedOr(claims["https://api.openai.com/auth"]),
-          Option.flatMap((auth) =>
-            Option.fromUndefinedOr(auth.chatgpt_account_id),
+    chatgpt_account_id: Schema.optionalKey(Schema.String),
+  }),
+  /**
+   * Codex reads the account from either claim. OpenCode's legacy Codex sign-in
+   * also stores it in the credential metadata.
+   */
+  Claims = Schema.Struct({
+    chatgpt_account_id: Schema.optionalKey(Schema.String),
+    "https://api.openai.com/auth": Schema.optionalKey(AuthClaim),
+  }),
+  JWT_PAYLOAD_SEGMENT = 1,
+  decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Claims)),
+  decodeMetadata = Schema.decodeUnknownOption(
+    Schema.Struct({ accountID: Schema.String }),
+  ),
+  /* The ChatGPT account a JWT access token names, if any. */
+  jwtAccountId = (token: string): Option.Option<string> =>
+    pipe(
+      token.split("."),
+      Arr.get(JWT_PAYLOAD_SEGMENT),
+      Option.flatMap((segment) =>
+        Result.getSuccess(Encoding.decodeBase64UrlString(segment)),
+      ),
+      Option.flatMap(decodeClaims),
+      Option.flatMap((claims) =>
+        Option.firstSomeOf([
+          Option.fromUndefinedOr(claims.chatgpt_account_id),
+          pipe(
+            Option.fromUndefinedOr(claims["https://api.openai.com/auth"]),
+            Option.flatMap((auth) =>
+              Option.fromUndefinedOr(auth.chatgpt_account_id),
+            ),
           ),
-        ),
-      ]),
+        ]),
+      ),
     ),
-  )
-
-const noAccount = (): AuthUnavailable =>
-  new AuthUnavailable({
-    reason: "The ChatGPT sign-in does not name a ChatGPT account.",
-  })
-
-const notConnected = (): AuthUnavailable =>
-  new AuthUnavailable({
-    reason: "OpenAI is not connected. Run /connect and choose OpenAI.",
-  })
-
-const notOAuth = (): Effect.Effect<never, AuthUnavailable> =>
-  Effect.fail(
+  noAccount = (): AuthUnavailable =>
     new AuthUnavailable({
-      reason:
-        'OpenAI is connected with an API key. Auto-review needs "Sign in with ChatGPT".',
+      reason: "The ChatGPT sign-in does not name a ChatGPT account.",
     }),
-  )
-
-const fromOAuth = Effect.fn("ChatGptAuth.fromOAuth")(function* fromOAuth(
-  oauth: Credential.OAuth,
-) {
-  const now = yield* Clock.currentTimeMillis
-
-  if (oauth.expires <= now) {
-    return yield* new AuthUnavailable({
-      reason:
-        "The ChatGPT sign-in has expired. OpenCode renews it the next time it sends a request to an OpenAI model.",
-    })
-  }
-
-  const accountId = Option.firstSomeOf([
-    Option.map(
-      decodeMetadata(oauth.metadata),
-      (metadata) => metadata.accountID,
+  notConnected = (): AuthUnavailable =>
+    new AuthUnavailable({
+      reason: "OpenAI is not connected. Run /connect and choose OpenAI.",
+    }),
+  notOAuth = (): Effect.Effect<never, AuthUnavailable> =>
+    Effect.fail(
+      new AuthUnavailable({
+        reason:
+          'OpenAI is connected with an API key. Auto-review needs "Sign in with ChatGPT".',
+      }),
     ),
-    accountIdFromToken(oauth.access),
-  ])
+  /* The token an unexpired ChatGPT sign-in authenticates with. */
+  oauthToken = Effect.fn("ChatGptAuth.fromOAuth")(function* fromOAuth(
+    oauth: Credential.OAuth,
+  ) {
+    const accountId = Option.firstSomeOf([
+        Option.map(
+          decodeMetadata(oauth.metadata),
+          (metadata) => metadata.accountID,
+        ),
+        jwtAccountId(oauth.access),
+      ]),
+      now = yield* Clock.currentTimeMillis
 
-  const account = yield* Effect.fromOption(accountId).pipe(
-    Effect.mapError(noAccount),
-  )
+    if (oauth.expires <= now) {
+      return yield* new AuthUnavailable({
+        reason:
+          "The ChatGPT sign-in has expired. OpenCode renews it the next time it sends a request to an OpenAI model.",
+      })
+    }
 
-  return { accessToken: Redacted.make(oauth.access), accountId: account }
-})
+    return {
+      accessToken: Redacted.make(oauth.access),
+      accountId: yield* Effect.fromOption(accountId).pipe(
+        Effect.mapError(noAccount),
+      ),
+    }
+  })
 
 /** Resolves the ChatGPT token the reviewer sends with each request. */
 class ChatGptAuth extends Context.Service<ChatGptAuth, Interface>()(
-  "opencode-auto-review/ChatGptAuth",
+  "opencode-auto-review/chatgpt-auth/ChatGptAuth",
 ) {
   public static readonly layer = Layer.effect(
     ChatGptAuth,
     Effect.gen(function* makeChatGptAuth() {
       const host = yield* Host
 
-      const current = Effect.gen(function* currentToken() {
-        const connected = yield* host.openAiCredential
+      return ChatGptAuth.of({
+        current: Effect.gen(function* currentToken() {
+          const connected = yield* host.openAiCredential,
+            credential = yield* Effect.fromOption(connected).pipe(
+              Effect.mapError(notConnected),
+            )
 
-        const credential = yield* Effect.fromOption(connected).pipe(
-          Effect.mapError(notConnected),
-        )
-
-        return yield* Match.value(credential).pipe(
-          Match.discriminators("type")({
-            external: notOAuth,
-            key: notOAuth,
-            oauth: (oauth: Credential.OAuth) => fromOAuth(oauth),
-          }),
-          Match.exhaustive,
-        )
+          return yield* Match.value(credential).pipe(
+            Match.discriminators("type")({
+              external: notOAuth,
+              key: notOAuth,
+              oauth: (oauth: Credential.OAuth) => oauthToken(oauth),
+            }),
+            Match.exhaustive,
+          )
+        }),
       })
-
-      return ChatGptAuth.of({ current })
     }),
   )
 }
 
-export { ChatGptAuth }
-
-export type { ChatGptToken }
+export default ChatGptAuth

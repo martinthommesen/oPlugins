@@ -1,5 +1,6 @@
 import {
   Array as Arr,
+  Context,
   Effect,
   Fiber,
   Layer,
@@ -14,49 +15,17 @@ import {
   HttpClientResponse,
 } from "effect/unstable/http"
 import { describe, expect, it } from "@effect/vitest"
-import { AuthUnavailable } from "./errors/auth-unavailable.ts"
-import { ChatGptAuth } from "./chatgpt-auth.ts"
-import { CodexResponses } from "./codex-client.ts"
+import AuthUnavailable from "./auth-unavailable-error.ts"
+import ChatGptAuth from "./chatgpt-auth.ts"
+import CodexResponses from "./codex-client.ts"
+import type { Config } from "effect"
 import type { HttpClientRequest } from "effect/unstable/http"
-import { ModelUnavailable } from "./errors/model-unavailable.ts"
-import { RequestFailed } from "./errors/request-failed.ts"
+import ModelUnavailable from "./model-unavailable-error.ts"
+import RequestFailed from "./request-failed-error.ts"
 import { TestClock } from "effect/testing"
-import { settingsFrom } from "./testing.ts"
+import support from "./testing.test-support.ts"
 
 type Responder = (request: HttpClientRequest.HttpClientRequest) => Response
-
-const HTTP_OK = 200
-
-const HTTP_BAD_REQUEST = 400
-
-const HTTP_UNAUTHORIZED = 401
-
-const HTTP_FORBIDDEN = 403
-
-const HTTP_NOT_FOUND = 404
-
-const HTTP_UNAVAILABLE = 503
-
-const TOTAL_ATTEMPTS = 3
-
-const ONE_REQUEST = 1
-
-const token = {
-  accessToken: Redacted.make("access-token"),
-  accountId: "acct-1",
-}
-
-const signedIn = Layer.succeed(
-  ChatGptAuth,
-  ChatGptAuth.of({ current: Effect.succeed(token) }),
-)
-
-const completion = {
-  cacheKey: "ses_1",
-  input: "Review this.",
-  instructions: "Be careful.",
-  model: "codex-auto-review",
-}
 
 interface TestEvent {
   readonly delta?: string
@@ -64,54 +33,90 @@ interface TestEvent {
   readonly type: string
 }
 
-const streamOf = (events: readonly TestEvent[]): Response =>
-  new Response(
-    events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
-    { headers: { "content-type": "text/event-stream" }, status: HTTP_OK },
-  )
+type Execute = (
+  request: HttpClientRequest.HttpClientRequest,
+) => Effect.Effect<HttpClientResponse.HttpClientResponse>
 
-const completeWith = Effect.fn("test.completeWith")(function* completeWith(
-  respond: Responder,
-) {
-  const sent = yield* Ref.make<readonly HttpClientRequest.HttpClientRequest[]>(
-    [],
-  )
+const COMPLETION = {
+    cacheKey: "ses_1",
+    input: "Review this.",
+    instructions: "Be careful.",
+    model: "codex-auto-review",
+  },
+  HTTP_BAD_REQUEST = 400,
+  HTTP_FORBIDDEN = 403,
+  HTTP_NOT_FOUND = 404,
+  HTTP_OK = 200,
+  HTTP_UNAUTHORIZED = 401,
+  HTTP_UNAVAILABLE = 503,
+  ONE_REQUEST = 1,
+  TOKEN = {
+    accessToken: Redacted.make("access-token"),
+    accountId: "acct-1",
+  },
+  TOTAL_ATTEMPTS = 3,
+  chatGptSignIn = Layer.succeed(
+    ChatGptAuth,
+    ChatGptAuth.of({ current: Effect.succeed(TOKEN) }),
+  ),
+  /* The Codex client over a backend that runs `execute`, signed in, with the default settings. */
+  codexWith = (
+    execute: Execute,
+  ): Layer.Layer<CodexResponses, Config.ConfigError> => {
+    const backend = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(execute),
+    )
 
-  const http = HttpClient.make((request) => {
-    const response = HttpClientResponse.fromWeb(request, respond(request))
+    return CodexResponses.layer.pipe(
+      Layer.provide([chatGptSignIn, support.settingsFrom({}), backend]),
+    )
+  },
+  /*
+   * Completes one request against a backend that answers with `respond`,
+   * and returns the outcome with the requests the backend received.
+   */
+  completeWith = Effect.fn("test.completeWith")(function* completeWith(
+    respond: Responder,
+  ) {
+    const calls = yield* Ref.make<
+        readonly HttpClientRequest.HttpClientRequest[]
+      >([]),
+      codex = yield* Layer.build(
+        codexWith((request) => {
+          const response = HttpClientResponse.fromWeb(request, respond(request))
 
-    return Ref.update(sent, Arr.append(request)).pipe(Effect.as(response))
-  })
+          return Ref.update(calls, Arr.append(request)).pipe(
+            Effect.as(response),
+          )
+        }),
+      ),
+      outcome = yield* Context.get(codex, CodexResponses)
+        .complete(COMPLETION)
+        .pipe(Effect.result)
 
-  const codex = CodexResponses.layer.pipe(
-    Layer.provide([
-      signedIn,
-      settingsFrom({}),
-      Layer.succeed(HttpClient.HttpClient, http),
-    ]),
-  )
-
-  const outcome = yield* Effect.gen(function* complete() {
-    const client = yield* CodexResponses
-
-    return yield* client.complete(completion)
-  }).pipe(Effect.provide(codex), Effect.result)
-
-  return { outcome, requests: yield* Ref.get(sent) }
-})
+    return { outcome, requests: yield* Ref.get(calls) }
+  }, Effect.scoped),
+  /* A server-sent event stream of `events`. */
+  streamOf = (events: readonly TestEvent[]): Response =>
+    new Response(
+      events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      { headers: { "content-type": "text/event-stream" }, status: HTTP_OK },
+    )
 
 describe("codex responses", () => {
   it.effect("streams the reviewer's text from the Codex backend", () =>
     Effect.gen(function* streamsText() {
-      const { outcome, requests } = yield* completeWith(() =>
-        streamOf([
-          { delta: '{"outcome":', type: "response.output_text.delta" },
-          { delta: '"allow"}', type: "response.output_text.delta" },
-          { response: { status: "completed" }, type: "response.completed" },
-        ]),
-      )
+      expect.hasAssertions()
 
-      const request = yield* Effect.fromOption(Arr.head(requests))
+      const { outcome, requests } = yield* completeWith(() =>
+          streamOf([
+            { delta: '{"outcome":', type: "response.output_text.delta" },
+            { delta: '"allow"}', type: "response.output_text.delta" },
+            { response: { status: "completed" }, type: "response.completed" },
+          ]),
+        ),
+        request = yield* Effect.fromOption(Arr.head(requests))
 
       expect(outcome).toStrictEqual(Result.succeed('{"outcome":"allow"}'))
       expect(requests).toHaveLength(ONE_REQUEST)
@@ -125,6 +130,8 @@ describe("codex responses", () => {
 describe("codex responses failures", () => {
   it.effect("reports a rejected model as unavailable", () =>
     Effect.gen(function* rejectedModel() {
+      expect.hasAssertions()
+
       const { outcome } = yield* completeWith(
         () =>
           new Response('{"detail":"Unsupported model"}', {
@@ -140,6 +147,8 @@ describe("codex responses failures", () => {
 
   it.effect("reports a rejected sign-in", () =>
     Effect.gen(function* rejectedSignIn() {
+      expect.hasAssertions()
+
       const { outcome } = yield* completeWith(
         () => new Response("", { status: HTTP_UNAUTHORIZED }),
       )
@@ -152,6 +161,8 @@ describe("codex responses failures", () => {
 
   it.effect("fails on a failed response event", () =>
     Effect.gen(function* failedEvent() {
+      expect.hasAssertions()
+
       const { outcome } = yield* completeWith(() =>
         streamOf([{ type: "response.failed" }]),
       )
@@ -168,6 +179,8 @@ describe("codex request rejection", () => {
     "does not classify invalid request parameters as model rejection",
     () =>
       Effect.gen(function* invalidParameter() {
+        expect.hasAssertions()
+
         const { outcome } = yield* completeWith(
           () =>
             new Response(
@@ -181,9 +194,13 @@ describe("codex request rejection", () => {
         ).toBeInstanceOf(RequestFailed)
       }),
   )
+})
 
+describe("codex request rejection by status", () => {
   it.effect("does not switch models for an unknown endpoint", () =>
     Effect.gen(function* missingEndpoint() {
+      expect.hasAssertions()
+
       const { outcome } = yield* completeWith(
         () =>
           new Response('{"detail":"Not Found"}', { status: HTTP_NOT_FOUND }),
@@ -197,6 +214,8 @@ describe("codex request rejection", () => {
 
   it.effect("recognizes a structured model-access rejection", () =>
     Effect.gen(function* modelAccess() {
+      expect.hasAssertions()
+
       const { outcome } = yield* completeWith(
         () =>
           new Response(
@@ -215,12 +234,14 @@ describe("codex request rejection", () => {
 describe("codex transport policy", () => {
   it.effect("bounds transient retries", () =>
     Effect.gen(function* boundedRetries() {
-      const fiber = yield* completeWith(
-        () => new Response("Busy", { status: HTTP_UNAVAILABLE }),
-      ).pipe(Effect.forkChild)
+      expect.hasAssertions()
 
-      yield* TestClock.adjust("1 second")
-      const { outcome, requests } = yield* Fiber.join(fiber)
+      const retrying = yield* completeWith(
+          () => new Response("Busy", { status: HTTP_UNAVAILABLE }),
+        ).pipe(Effect.forkChild),
+        { outcome, requests } = yield* TestClock.adjust("1 second").pipe(
+          Effect.andThen(Fiber.join(retrying)),
+        )
 
       expect(requests).toHaveLength(TOTAL_ATTEMPTS)
       expect(Option.getOrUndefined(Result.getFailure(outcome))).toBeInstanceOf(
@@ -233,50 +254,40 @@ describe("codex transport policy", () => {
 describe("codex authenticated requests", () => {
   it.effect("does not follow redirects with the ChatGPT credential", () =>
     Effect.gen(function* noRedirects() {
-      const redirectsDisabled = yield* Ref.make(false)
+      expect.hasAssertions()
 
-      const http = HttpClient.make((request) =>
-        Effect.gen(function* execute() {
-          const options = yield* Effect.serviceOption(
-            FetchHttpClient.RequestInit,
-          )
+      const errorRedirects = yield* Ref.make(false),
+        services = yield* Layer.build(
+          codexWith((request) =>
+            Effect.gen(function* execute() {
+              const disabled = Option.exists(
+                yield* Effect.serviceOption(FetchHttpClient.RequestInit),
+                (init: Readonly<Pick<RequestInit, "redirect">>) =>
+                  init.redirect === "error",
+              )
 
-          const disabled = Option.exists(
-            options,
-            (init: Readonly<Pick<RequestInit, "redirect">>) =>
-              init.redirect === "error",
-          )
+              yield* Ref.set(errorRedirects, disabled)
 
-          yield* Ref.set(redirectsDisabled, disabled)
+              return HttpClientResponse.fromWeb(
+                request,
+                streamOf([
+                  {
+                    delta: '{"outcome":"allow"}',
+                    type: "response.output_text.delta",
+                  },
+                  {
+                    response: { status: "completed" },
+                    type: "response.completed",
+                  },
+                ]),
+              )
+            }),
+          ),
+        )
 
-          return HttpClientResponse.fromWeb(
-            request,
-            streamOf([
-              {
-                delta: '{"outcome":"allow"}',
-                type: "response.output_text.delta",
-              },
-              { response: { status: "completed" }, type: "response.completed" },
-            ]),
-          )
-        }),
-      )
+      yield* Context.get(services, CodexResponses).complete(COMPLETION)
 
-      const codex = CodexResponses.layer.pipe(
-        Layer.provide([
-          signedIn,
-          settingsFrom({}),
-          Layer.succeed(HttpClient.HttpClient, http),
-        ]),
-      )
-
-      yield* Effect.gen(function* complete() {
-        const client = yield* CodexResponses
-
-        yield* client.complete(completion)
-      }).pipe(Effect.provide(codex))
-
-      expect(yield* Ref.get(redirectsDisabled)).toBe(true)
+      expect(yield* Ref.get(errorRedirects)).toBe(true)
     }),
   )
 })

@@ -1,100 +1,102 @@
-import { Array as Arr, Effect, Fiber, Layer, Ref } from "effect"
-import type { Completion, CompletionError } from "./codex-client.ts"
+import { Array as Arr, Context, Effect, Fiber, Layer, Ref } from "effect"
+import type { Config, Scope } from "effect"
 import { describe, expect, it } from "@effect/vitest"
-import { CodexResponses } from "./codex-client.ts"
-import type { Config } from "effect"
-import { MalformedAssessment } from "./assessment.ts"
-import { ModelUnavailable } from "./errors/model-unavailable.ts"
-import { RequestFailed } from "./errors/request-failed.ts"
-import { ReviewTimedOut } from "./errors/review-timed-out.ts"
-import { Reviewer } from "./reviewer.ts"
+import CodexResponses from "./codex-client.ts"
+import MalformedAssessment from "./malformed-assessment-error.ts"
+import ModelUnavailable from "./model-unavailable-error.ts"
+import RequestFailed from "./request-failed-error.ts"
+import ReviewTimedOut from "./review-timed-out-error.ts"
+import Reviewer from "./reviewer.ts"
 import { TestClock } from "effect/testing"
-import { settingsFrom } from "./testing.ts"
+import support from "./testing.test-support.ts"
 
-type Script = (model: string) => Effect.Effect<string, CompletionError>
+type Complete = CodexResponses["Service"]["complete"]
 
-const ALLOW = '{"outcome":"allow"}'
+type Script = (model: string) => ReturnType<Complete>
 
-const HTTP_BAD_REQUEST = 400
-
-const TWO_REVIEWS = 2
-
-const invalidRequest: Script = (model) =>
-  Effect.fail(
-    new RequestFailed({
-      cause: "Invalid context length.",
-      model,
-      operation: "status",
-    }),
-  )
-
-const request = {
-  cacheKey: "ses_1",
-  plannedAction: '{"action":"bash"}',
-  transcript: "[1] user: Run the tests.",
-}
-
-const rejectPrimary: Script = (model) => {
-  if (model === "codex-auto-review") {
-    return Effect.fail(
-      new ModelUnavailable({
-        detail: "unsupported",
+const ALLOW = '{"outcome":"allow"}',
+  HTTP_BAD_REQUEST = 400,
+  REQUEST = {
+    cacheKey: "ses_1",
+    plannedAction: '{"action":"bash"}',
+    transcript: "[1] user: Run the tests.",
+  },
+  TWO_REVIEWS = 2,
+  invalidRequest: Script = (model) =>
+    Effect.fail(
+      new RequestFailed({
+        cause: "Invalid context length.",
         model,
-        status: HTTP_BAD_REQUEST,
+        operation: "status",
       }),
+    ),
+  rejectPrimary: Script = (model) => {
+    if (model === "codex-auto-review") {
+      return Effect.fail(
+        new ModelUnavailable({
+          detail: "unsupported",
+          model,
+          status: HTTP_BAD_REQUEST,
+        }),
+      )
+    }
+
+    return Effect.succeed(ALLOW)
+  },
+  /*
+   * One review of `REQUEST` with a reviewer of its own, whose backend
+   * records each model it is asked for in `models` and answers with
+   * `script`.
+   */
+  reviewOf = (
+    script: Script,
+    models: Ref.Ref<readonly string[]>,
+  ): Effect.Effect<
+    ReturnType<Reviewer["Service"]["review"]>,
+    Config.ConfigError,
+    Scope.Scope
+  > => {
+    const codex = CodexResponses.of({
+        complete: (completion) =>
+          Ref.update(models, Arr.append(completion.model)).pipe(
+            Effect.flatMap(() => script(completion.model)),
+          ),
+      }),
+      reviewer = Reviewer.layer.pipe(
+        Layer.provide([
+          Layer.succeed(CodexResponses, codex),
+          support.settingsFrom({}),
+        ]),
+      )
+
+    return Layer.build(reviewer).pipe(
+      Effect.map((built) => Context.get(built, Reviewer).review(REQUEST)),
     )
   }
-
-  return Effect.succeed(ALLOW)
-}
-
-const reviewerWith = (
-  script: Script,
-  models: Ref.Ref<readonly string[]>,
-): Layer.Layer<Reviewer, Config.ConfigError> => {
-  const complete = (
-    completion: Completion,
-  ): Effect.Effect<string, CompletionError> =>
-    Ref.update(models, Arr.append(completion.model)).pipe(
-      Effect.flatMap(() => script(completion.model)),
-    )
-
-  const codex = Layer.succeed(CodexResponses, CodexResponses.of({ complete }))
-
-  return Reviewer.layer.pipe(Layer.provide([codex, settingsFrom({})]))
-}
-
-const review = Effect.gen(function* review() {
-  const reviewer = yield* Reviewer
-
-  return yield* reviewer.review(request)
-})
 
 describe("reviewer models", () => {
   it.effect("asks the primary model first", () =>
     Effect.gen(function* primary() {
-      const models = yield* Ref.make<readonly string[]>([])
+      expect.hasAssertions()
 
-      const result = yield* Effect.provide(
-        review,
-        reviewerWith(() => Effect.succeed(ALLOW), models),
-      )
+      const models = yield* Ref.make<readonly string[]>([]),
+        review = yield* reviewOf(() => Effect.succeed(ALLOW), models),
+        reviewed = yield* review
 
-      expect(result.model).toBe("codex-auto-review")
-      expect(result.assessment.outcome).toBe("allow")
+      expect(reviewed.model).toBe("codex-auto-review")
+      expect(reviewed.assessment.outcome).toBe("allow")
     }),
   )
 
   it.effect("falls back once and then keeps using the fallback", () =>
     Effect.gen(function* fallback() {
-      const models = yield* Ref.make<readonly string[]>([])
+      expect.hasAssertions()
 
-      const results = yield* Effect.provide(
-        Effect.all([review, review]),
-        reviewerWith(rejectPrimary, models),
-      )
+      const models = yield* Ref.make<readonly string[]>([]),
+        review = yield* reviewOf(rejectPrimary, models),
+        reviews = yield* Effect.all([review, review])
 
-      expect(results.map((result) => result.model)).toStrictEqual([
+      expect(reviews.map((result) => result.model)).toStrictEqual([
         "gpt-5.5",
         "gpt-5.5",
       ])
@@ -112,14 +114,16 @@ describe("reviewer failures", () => {
     "does not remember a fallback for an ordinary request failure",
     () =>
       Effect.gen(function* ordinaryFailure() {
-        const models = yield* Ref.make<readonly string[]>([])
+        expect.hasAssertions()
 
-        const failures = yield* Effect.provide(
-          Effect.all([Effect.flip(review), Effect.flip(review)]),
-          reviewerWith(invalidRequest, models),
-        )
+        const models = yield* Ref.make<readonly string[]>([]),
+          review = yield* reviewOf(invalidRequest, models),
+          reviewFailures = yield* Effect.all([
+            Effect.flip(review),
+            Effect.flip(review),
+          ])
 
-        expect(failures).toHaveLength(TWO_REVIEWS)
+        expect(reviewFailures).toHaveLength(TWO_REVIEWS)
         expect(yield* Ref.get(models)).toStrictEqual([
           "codex-auto-review",
           "codex-auto-review",
@@ -129,29 +133,29 @@ describe("reviewer failures", () => {
 
   it.effect("fails when the answer is not an assessment", () =>
     Effect.gen(function* malformed() {
-      const models = yield* Ref.make<readonly string[]>([])
+      expect.hasAssertions()
 
-      const failure = yield* Effect.provide(
-        review,
-        reviewerWith(() => Effect.succeed("I think it is fine."), models),
-      ).pipe(Effect.flip)
+      const models = yield* Ref.make<readonly string[]>([]),
+        review = yield* reviewOf(
+          () => Effect.succeed("I think it is fine."),
+          models,
+        )
 
-      expect(failure).toBeInstanceOf(MalformedAssessment)
+      expect(yield* Effect.flip(review)).toBeInstanceOf(MalformedAssessment)
     }),
   )
 
   it.effect("fails when the review outlasts the deadline", () =>
     Effect.gen(function* deadline() {
-      const models = yield* Ref.make<readonly string[]>([])
+      expect.hasAssertions()
 
-      const fiber = yield* Effect.provide(
-        review,
-        reviewerWith(() => Effect.never, models),
-      ).pipe(Effect.flip, Effect.forkChild)
+      const models = yield* Ref.make<readonly string[]>([]),
+        review = yield* reviewOf(() => Effect.never, models),
+        waiting = yield* review.pipe(Effect.flip, Effect.forkChild)
 
       yield* TestClock.adjust("90 seconds")
 
-      expect(yield* Fiber.join(fiber)).toBeInstanceOf(ReviewTimedOut)
+      expect(yield* Fiber.join(waiting)).toBeInstanceOf(ReviewTimedOut)
     }),
   )
 })

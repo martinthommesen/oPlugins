@@ -5,16 +5,16 @@ import {
   HttpClientRequest,
   HttpClientResponse,
 } from "effect/unstable/http"
-import { AuthUnavailable } from "./errors/auth-unavailable.ts"
-import { ChatGptAuth } from "./chatgpt-auth.ts"
-import type { Completion } from "./responses-request.ts"
-import type { HostError } from "./errors/host-error.ts"
-import { ModelUnavailable } from "./errors/model-unavailable.ts"
-import type { RequestFailed } from "./errors/request-failed.ts"
-import { Settings } from "./settings.ts"
-import { buildRequest } from "./responses-request.ts"
-import { readOutputText } from "./responses-stream.ts"
-import { requestFailed } from "./errors/request-failed.ts"
+import AuthUnavailable from "./auth-unavailable-error.ts"
+import ChatGptAuth from "./chatgpt-auth.ts"
+import type HostError from "./host-error.ts"
+import ModelUnavailable from "./model-unavailable-error.ts"
+import RequestFailed from "./request-failed-error.ts"
+import Settings from "./settings.ts"
+import responsesRequest from "./responses-request.ts"
+import responsesStream from "./responses-stream.ts"
+
+type Completion = Parameters<typeof responsesRequest.build>[typeof FIRST]
 
 type CompletionError =
   | AuthUnavailable
@@ -29,66 +29,52 @@ interface Interface {
   ) => Effect.Effect<string, CompletionError>
 }
 
-const HTTP_BAD_REQUEST = 400
+const ErrorDetail = Schema.Struct({
+    code: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    message: Schema.optionalKey(Schema.String),
+  }),
+  ErrorPayload = Schema.Struct({
+    detail: Schema.optionalKey(Schema.String),
+    error: Schema.optionalKey(ErrorDetail),
+  }),
+  FIRST = 0,
+  HTTP_BAD_REQUEST = 400,
+  HTTP_FORBIDDEN = 403,
+  HTTP_NOT_FOUND = 404,
+  HTTP_UNAUTHORIZED = 401,
+  MODEL_ERROR_CODES = new Set([
+    "invalid_model",
+    "model_not_available",
+    "model_not_found",
+    "model_not_supported",
+    "unsupported_model",
+  ]),
+  MODEL_REJECTION =
+    /\b(?:unsupported|unknown|unavailable|invalid) model\b|\bmodel\b.{0,160}\b(?:not supported|not available|not found|does not exist)\b|\b(?:do not have access|don't have access)\b.{0,80}\bmodel\b/iu,
+  RETRY_BASE_DELAY = "250 millis",
+  TRANSIENT_RETRIES = 2,
+  decodeError = Schema.decodeUnknownOption(Schema.fromJsonString(ErrorPayload)),
+  /* Whether an error body says the backend rejected the requested model. */
+  modelRejected = (detail: string): boolean =>
+    Option.exists(decodeError(detail), (payload) => {
+      const apiError = Option.fromUndefinedOr(payload.error),
+        code = apiError.pipe(
+          Option.flatMap((value) => Option.fromNullishOr(value.code)),
+        ),
+        message = apiError.pipe(
+          Option.flatMap((value) => Option.fromUndefinedOr(value.message)),
+        )
 
-const HTTP_UNAUTHORIZED = 401
-
-const HTTP_FORBIDDEN = 403
-
-const HTTP_NOT_FOUND = 404
-
-const TRANSIENT_RETRIES = 2
-
-const RETRY_BASE_DELAY = "250 millis"
-
-const ResponseError = Schema.Struct({
-  code: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  message: Schema.optionalKey(Schema.String),
-})
-
-const ErrorPayload = Schema.Struct({
-  detail: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(ResponseError),
-})
-
-const decodeError = Schema.decodeUnknownOption(
-  Schema.fromJsonString(ErrorPayload),
-)
-
-const MODEL_ERROR_CODES = new Set([
-  "invalid_model",
-  "model_not_available",
-  "model_not_found",
-  "model_not_supported",
-  "unsupported_model",
-])
-
-const MODEL_REJECTION =
-  /\b(?:unsupported|unknown|unavailable|invalid) model\b|\bmodel\b.{0,160}\b(?:not supported|not available|not found|does not exist)\b|\b(?:do not have access|don't have access)\b.{0,80}\bmodel\b/iu
-
-const modelRejected = (detail: string): boolean =>
-  Option.exists(decodeError(detail), (payload) => {
-    const error = Option.fromUndefinedOr(payload.error)
-
-    const code = error.pipe(
-      Option.flatMap((value) => Option.fromNullishOr(value.code)),
-    )
-
-    const message = error.pipe(
-      Option.flatMap((value) => Option.fromUndefinedOr(value.message)),
-    )
-
-    return (
-      Option.exists(code, (value) => MODEL_ERROR_CODES.has(value)) ||
-      Option.exists(
-        Option.orElse(message, () => Option.fromUndefinedOr(payload.detail)),
-        (value) => MODEL_REJECTION.test(value),
+      return (
+        Option.exists(code, (value) => MODEL_ERROR_CODES.has(value)) ||
+        Option.exists(
+          Option.orElse(message, () => Option.fromUndefinedOr(payload.detail)),
+          (value) => MODEL_REJECTION.test(value),
+        )
       )
-    )
-  })
-
-const checkStatus = Effect.fn("CodexResponses.checkStatus")(
-  function* checkStatus(
+    }),
+  /* The response when its status is a success, or the failure it reports. */
+  verifyStatus = Effect.fn("CodexResponses.checkStatus")(function* checkStatus(
     model: string,
     response: HttpClientResponse.HttpClientResponse,
   ) {
@@ -106,7 +92,7 @@ const checkStatus = Effect.fn("CodexResponses.checkStatus")(
       status === HTTP_NOT_FOUND
     ) {
       const detail = yield* response.text.pipe(
-        requestFailed(model, "readErrorBody"),
+        RequestFailed.during(model, "readErrorBody"),
       )
 
       if (modelRejected(detail)) {
@@ -121,59 +107,53 @@ const checkStatus = Effect.fn("CodexResponses.checkStatus")(
     }
 
     return yield* HttpClientResponse.filterStatusOk(response).pipe(
-      requestFailed(model, "status"),
+      RequestFailed.during(model, "status"),
     )
-  },
-)
+  })
 
 /** Client for the ChatGPT Codex Responses backend. */
 class CodexResponses extends Context.Service<CodexResponses, Interface>()(
-  "opencode-auto-review/CodexResponses",
+  "opencode-auto-review/codex-client/CodexResponses",
 ) {
   public static readonly layer = Layer.effect(
     CodexResponses,
     Effect.gen(function* makeCodexResponses() {
-      const auth = yield* ChatGptAuth
-      const settings = yield* Settings
-
-      const client = (yield* HttpClient.HttpClient).pipe(
-        HttpClient.mapRequest(HttpClientRequest.prependUrl(settings.baseUrl)),
-        HttpClient.retryTransient({
-          schedule: Schedule.exponential(RETRY_BASE_DELAY),
-          times: TRANSIENT_RETRIES,
-        }),
-      )
-
-      const complete = Effect.fn("CodexResponses.complete")(function* complete(
-        completion: Completion,
-      ) {
-        const token = yield* auth.current
-
-        const request = yield* buildRequest(
-          completion,
-          token,
-          settings.reasoningEffort,
-        )
-
-        const response = yield* client.execute(request).pipe(
-          Effect.provideService(FetchHttpClient.RequestInit, {
-            redirect: "error",
+      const auth = yield* ChatGptAuth,
+        { baseUrl, reasoningEffort } = yield* Settings,
+        client = (yield* HttpClient.HttpClient).pipe(
+          HttpClient.mapRequest(HttpClientRequest.prependUrl(baseUrl)),
+          HttpClient.retryTransient({
+            schedule: Schedule.exponential(RETRY_BASE_DELAY),
+            times: TRANSIENT_RETRIES,
           }),
-          requestFailed(completion.model, "execute"),
         )
 
-        const ok = yield* checkStatus(completion.model, response)
+      return CodexResponses.of({
+        complete: Effect.fn("CodexResponses.complete")(function* complete(
+          completion: Completion,
+        ) {
+          const credential = yield* auth.current,
+            outgoing = yield* responsesRequest.build(
+              completion,
+              credential,
+              reasoningEffort,
+            ),
+            reply = yield* client.execute(outgoing).pipe(
+              Effect.provideService(FetchHttpClient.RequestInit, {
+                redirect: "error",
+              }),
+              RequestFailed.during(completion.model, "execute"),
+            ),
+            verified = yield* verifyStatus(completion.model, reply)
 
-        return yield* readOutputText(completion.model, ok)
+          return yield* responsesStream.readOutputText(
+            completion.model,
+            verified,
+          )
+        }),
       })
-
-      return CodexResponses.of({ complete })
     }),
   )
 }
 
-export { CodexResponses }
-
-export type { Completion } from "./responses-request.ts"
-
-export type { CompletionError }
+export default CodexResponses

@@ -29,7 +29,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        host: ["2.0.7", "target"]
+        host: ["2.0.25", "target"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

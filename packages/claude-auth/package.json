@@ -40,29 +40,23 @@
     "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-headless.ts",
     "test:host": "pnpm run test:headless --offline",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); if (!require('node:fs').existsSync('./dist/tui.js')) { throw new Error('dist/tui.js is missing') }\"",
-    "lint": "oxlint && oxfmt --check .",
-    "lint:fix": "oxlint --fix && oxfmt --write .",
-    "format": "oxfmt --write .",
-    "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run"
+    "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
+    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --strict"
   },
   "dependencies": {
-    "@effect/platform-node-shared": "4.0.0-rc.112"
+    "@effect/platform-node-shared": "catalog:"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-rc.112",
-    "@effect/vitest": "4.0.0-rc.112",
-    "@opencode/plugin": "2.0.26",
-    "@opencode/theme": "2.0.26",
-    "@opentui/solid": "0.5.17",
-    "@oxlint/plugins": "1.87.0",
-    "@types/node": "^25.5.0",
-    "effect": "4.0.0-rc.112",
-    "oxfmt": "0.41.0",
-    "oxlint": "1.87.0",
-    "oxlint-tsgolint": "7.0.2003",
-    "solid-js": "1.9.12",
-    "typescript": "^5.0.0",
-    "vitest": "4.1.11"
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@opencode/plugin": "catalog:",
+    "@opencode/theme": "catalog:",
+    "@opentui/solid": "catalog:",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "solid-js": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@opentui/solid": ">=0.5.17",
@@ -79,6 +73,5 @@
   },
   "engines": {
     "node": ">=22.6.0"
-  },
-  "packageManager": "pnpm@10.32.1"
+  }
 }

@@ -38,12 +38,72 @@ pnpm run check   # lint, typecheck, lint:effect, test for every package
   package, every diagnostic at error (configured in `tsconfig.base.json`).
 - `pnpm run test`: Vitest in every package.
 
-There is one lint and compiler policy for the whole repository. Packages do
-not carry their own lint, format, or compiler strictness settings. Satisfy a
-rule by changing the code. Do not weaken rule severity, add disable
-comments, or launder types with casts to make a check pass. Adding any
-suppression, option, or `off` is a policy change for the maintainer, not a
-fix.
+There is one lint and compiler policy for the whole repository; packages do
+not carry their own lint, format, or compiler strictness settings.
+`.oxlintrc.json` enables every Oxlint rule in every category at its default
+options, and its comments list the few deviations and why each exists.
+Satisfy a rule by changing the code. Do not weaken rule severity, add disable
+comments, or launder types with casts to make a check pass. Two suppressions
+are sanctioned, each a proven contradiction, written exactly as in the file
+named:
+
+- `unicorn/throw-new-error` on a `Schema.TaggedError` class line: the rule
+  mistakes the class factory for a throw
+  (`packages/claude-auth/src/claude-auth-terminal-error.ts`).
+- `typescript/prefer-readonly-parameter-types` on the draft parameter of a
+  host editor's `update` callback: the host's contract is a draft edited in
+  place, which a readonly type cannot express
+  (`packages/claude-auth/src/model-pricing.ts`).
+
+Adding any other suppression, option, or `off` is a policy change for the
+maintainer, not a fix.
+
+Before writing code, read `LINTING.md`: the rule set forces an unusual
+shape, and that guide is the shortest path to it. Run
+`pnpm exec oxlint --fix <files>` first; `require-readable-spacing` and a few
+others autofix. Then `pnpm run format`.
+
+# Module shape
+
+The lint policy forces a shape that is unusual but uniform:
+
+- **One default export per file, nothing else exported** (`import/no-named-export`
+  covers `export type` too). A file exports one value: a service class, a
+  schema, an error class, or a frozen object of pure functions.
+- **Types travel through values.** A consumer derives a type from the default
+  export it imported: `typeof ClaudeCredentials.Type`, `Credentials["Service"]`,
+  `ReturnType<typeof helpers.parse>`. Declare such aliases locally, unexported.
+- **One class per file, all files flat in the package's `src/`** (`../`
+  imports are banned). Each error class gets its own `*-error.ts` file.
+- **Services** are `Context.Service` classes with `static readonly layer`
+  (and `layerTest` when tests need a fake), built per the Effect guide:
+  `Layer.effect` + `Effect.gen` + `Service.of`, methods via
+  `Effect.fn("Service.method")`.
+- **Data** is `Schema.Struct`; untrusted input (JSON, files, process output,
+  host metadata) is decoded with `Schema`, never probed with `typeof`.
+  Internal variants are `Data.taggedEnum` and are branched with `$match` or
+  `Match`, never by reading `_tag`.
+
+# Platform
+
+Plugins run inside the OpenCode server, so blocking one stalls every
+session. All I/O goes through Effect services, never `node:` modules:
+`FileSystem`, `Path`, `ChildProcessSpawner` (`effect/unstable/process`),
+`HttpClient`, `Crypto`, `Encoding`, `Clock`/`DateTime` (time), `Random`.
+Environment variables and process facts come from a service that tests
+replace with `ConfigProvider` or a test layer.
+
+Long-lived state lives in `Ref`s owned by a service's layer, so it ends with
+the plugin's scope.
+
+# Tests
+
+Vitest with `@effect/vitest`: `it.effect`, explicit test layers, `TestClock`
+for time, and real `FileSystem` against scoped temp directories. Module
+mocking is banned; replace a dependency through its layer.
+
+The original behaviour each test pins is the specification. When porting a
+test, keep its scenario and assertion even when its mechanics change.
 
 # Vendored code
 

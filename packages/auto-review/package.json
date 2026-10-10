@@ -22,28 +22,20 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "lint": "oxlint && oxfmt --check .",
-    "lint:fix": "oxlint --fix && oxfmt --write .",
-    "format": "oxfmt --write .",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm test",
-    "vendor:codex": "node scripts/vendor-codex-policy.ts && oxfmt --write src/vendor/codex/policy.ts"
+    "vendor:codex": "node scripts/vendor-codex-policy.ts && oxfmt --write src/vendor/codex/policy.ts",
+    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --strict"
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.0-rc.112",
-    "@opencode/plugin": "2.0.26",
-    "@opencode/schema": "2.0.26",
-    "@oxlint/plugins": "1.87.0",
-    "@types/node": "^22.20.5",
-    "effect": "4.0.0-rc.112",
-    "oxfmt": "0.72.0",
-    "oxlint": "1.87.0",
-    "oxlint-tsgolint": "7.0.2003",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "@effect/vitest": "catalog:",
+    "@opencode/plugin": "catalog:",
+    "@opencode/schema": "catalog:",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.26",
     "effect": "^4.0.0-rc.112"
-  },
-  "packageManager": "pnpm@11.25.0"
+  }
 }

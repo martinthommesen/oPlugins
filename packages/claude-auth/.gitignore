@@ -1,8 +1,2 @@
-node_modules/
-.pnpm-store/
-dist/
-.env
-*.env.local
 .sisyphus/
-.opencode/
 docs/

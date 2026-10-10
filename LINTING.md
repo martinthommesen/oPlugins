@@ -1,18 +1,19 @@
 # Lint field guide
 
-How to write code that passes `.oxlintrc.json` the first time. Each entry is
-a rule pressure and the shape that satisfies it. The model files are
-`src/debug-log.ts`, `src/debug-log-file.ts`, `src/environment.ts`, and
-`src/debug-log.test.ts`; copy their shapes.
+How to write code that passes the root `.oxlintrc.json` the first time. It
+applies to every package. Each entry is a rule pressure and the shape that
+satisfies it. The model files are in `packages/claude-auth/src/`:
+`debug-log.ts`, `debug-log-file.ts`, `environment.ts`, and
+`debug-log.test.ts`; copy their shapes.
 
 ## Files and exports
 
 - One default export; nothing else is exported, types included. Export a
   frozen object of functions directly: `export default Object.freeze({ a, b })`.
 - One class per file. Errors each get a file, written exactly like
-  `src/claude-auth-terminal-error.ts`.
-- Imports never climb (`../`). Every module lives directly in `src/`;
-  test-only helpers are `*.test-support.ts`.
+  `packages/claude-auth/src/claude-auth-terminal-error.ts`.
+- Imports never climb (`../`). Every module lives directly in its package's
+  `src/`; test-only helpers are `*.test-support.ts`.
 - `import * as` is banned; Effect platform modules come from the package
   index: `import { NodeFileSystem } from "@effect/platform-node-shared"`.
 - Imports are sorted by the first local name, uppercase before lowercase,
@@ -55,7 +56,7 @@ a rule pressure and the shape that satisfies it. The model files are
 - `//` comments are one line each and start with a capital letter (every
   line is checked separately). Multi-line notes are `/* ... */` blocks.
 - JSDoc (`/** */`) on a function demands `@param {type}` and `@returns
-{type}` for everything, so document functions with `/* */` and keep
+  {type}` for everything, so document functions with `/* */` and keep
   `/** */` for values, classes, and fields. A `/** */` at the head of the
   one `const` statement counts for every function in it, so start that
   statement with a `/* */` or a plain constant.

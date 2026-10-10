@@ -59,9 +59,12 @@ const Lease = Schema.fromJsonString(
      * writes overwrite it in place at a fixed width, so it is never empty again.
      */
     return (yield* fallbackExpiry(path, ttlMs)).pipe(
-      Option.map(
-        (expiresAt): Claim => ({ cooldown: false, expiresAt, path, ticket }),
-      ),
+      Option.map((expiresAt): Claim => ({
+        cooldown: false,
+        expiresAt,
+        path,
+        ticket,
+      })),
     )
   }),
   /* The claim the file `name` in `dir` makes, or none when it is no ticket of `prefix`. */

@@ -21,11 +21,11 @@ missing ones. OpenCode v1 is not supported.
 
 ## Install
 
-oClaude is not published to npm yet. Build it from a checkout:
+oClaude is not published to npm yet. Build it from an oPlugins checkout:
 
 ```sh
 pnpm install
-pnpm run build
+pnpm --filter oclaude run build
 ```
 
 Then add the built plugin to the plural `plugins` field in
@@ -34,11 +34,11 @@ Then add the built plugin to the plural `plugins` field in
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/oclaude/dist"],
+  "plugins": ["/path/to/oPlugins/packages/claude-auth/dist"],
 }
 ```
 
-After pulling changes, run `pnpm run build` again; OpenCode picks the new
+After pulling changes, run the build again; OpenCode picks the new
 build up on its next start.
 
 See the [OpenCode v2 plugin guide](https://opencode.ai/v2/docs/build/plugins)
@@ -182,7 +182,7 @@ Pass options with the object form of the `plugins` entry:
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "/path/to/oclaude/dist",
+      "package": "/path/to/oPlugins/packages/claude-auth/dist",
       "options": { "cost": "zero" },
     },
   ],

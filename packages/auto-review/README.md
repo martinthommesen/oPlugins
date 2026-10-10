@@ -25,13 +25,13 @@ Rules that already resolve to **allow** are not reviewed, and configured
 
 ## Install
 
-Add the repository directory to `plugins` in `opencode.jsonc`, globally or per
-project:
+Run `pnpm install` at the root of the oPlugins checkout, then add this
+package's directory to `plugins` in `opencode.jsonc`, globally or per project:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/opencode-auto-review"],
+  "plugins": ["/path/to/oPlugins/packages/auto-review"],
 }
 ```
 
@@ -53,7 +53,7 @@ Pass options with the object form of the plugin entry:
 {
   "plugins": [
     {
-      "package": "/path/to/opencode-auto-review",
+      "package": "/path/to/oPlugins/packages/auto-review",
       "options": { "fallbackModel": "gpt-6-luna", "timeout": "60 seconds" },
     },
   ],
@@ -130,14 +130,14 @@ streams, and unreadable answers leave the prompt for you, with the reason.
 
 ## Development
 
+From the repository root:
+
 ```sh
 pnpm install
-pnpm run check   # lint, format check, typecheck, tests
+pnpm run check   # lint, format check, typecheck, Effect diagnostics, tests
 ```
 
-Lint runs every Oxlint plugin and category at error, plus the vendored
-anti-slop rules (`tools/oxlint/anti-slop/`). Each rule that is turned off or
-configured in `.oxlintrc.json` has its reason next to it.
+The root `AGENTS.md` describes the shared lint and compiler policy.
 
 `src/vendor/codex/` contains Apache-2.0 text from
 [openai/codex](https://github.com/openai/codex); its `LICENSE`, `NOTICE`, and

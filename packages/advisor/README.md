@@ -18,13 +18,13 @@ replies with advice and cannot run tools.
 
 ## Install
 
-Add the repository directory to `plugins` in `opencode.jsonc`, globally or per
-project:
+Run `pnpm install` at the root of the oPlugins checkout, then add this
+package's directory to `plugins` in `opencode.jsonc`, globally or per project:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/opencode-advisor"],
+  "plugins": ["/path/to/oPlugins/packages/advisor"],
 }
 ```
 
@@ -60,7 +60,7 @@ object form of a `plugins` entry in `opencode.json(c)`:
 {
   "plugins": [
     {
-      "package": "/path/to/opencode-advisor",
+      "package": "/path/to/oPlugins/packages/advisor",
       "options": { "model": "anthropic/claude-opus-5-5", "subagents": false },
     },
   ],
@@ -108,6 +108,8 @@ Invalid options are logged and replaced by the defaults.
   summary. Include important missing details in the consultation question.
 
 ## Development
+
+From the repository root:
 
 ```sh
 pnpm install

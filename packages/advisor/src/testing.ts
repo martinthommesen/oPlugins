@@ -12,7 +12,7 @@ import { Model, Provider } from "@opencode/plugin/effect"
 import { Advisor } from "./advisor.ts"
 import type { ConversationItem } from "./conversation.ts"
 import { Host } from "./host.ts"
-import type { HostError } from "./errors/host-error.ts"
+import { HostError } from "./errors/host-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
 import type { Schema } from "effect"
 import { Session } from "@opencode/schema/session"
@@ -33,6 +33,8 @@ interface HostScript {
 /** Script entries a test replaces; the rest come from the default script. */
 interface HostOverrides {
   readonly models?: readonly Model.Info[]
+  /** Replaces the parent lookup, for example with a failing one. */
+  readonly parentLookup?: Effect.Effect<Option.Option<SessionId>, HostError>
   /** Whether the consulting session belongs to a subagent. */
   readonly subagent?: boolean
   readonly reply?: Effect.Effect<string, HostError>
@@ -50,6 +52,12 @@ interface HostRecord {
 const SESSION_ID = Session.ID.make("ses_consulting")
 
 const PARENT_ID = Session.ID.make("ses_parent")
+
+/** A host call failing because the OpenCode server cannot be reached. */
+const SERVER_UNAVAILABLE = new HostError({
+  cause: "server unavailable",
+  operation: "session.get",
+})
 
 /**
  * A model the fake host offers, with the given variants.
@@ -110,7 +118,7 @@ const fakeHost = Effect.fn("fakeHost")(function* fakeHost(
     isConsultation: () => Effect.succeed(false),
     models: Effect.succeed(script.models),
     notify: (_sessionId, text) => Ref.update(notices, Arr.append(text)),
-    parent: () => Effect.succeed(script.parent),
+    parent: () => overrides.parentLookup ?? Effect.succeed(script.parent),
     transcript: () => Effect.succeed(script.transcript),
   })
 
@@ -142,22 +150,31 @@ const memoryStorage = (): StorageDomain => {
  * Builds the advisor around a scripted host.
  * @param {HostOverrides} script What the host answers with.
  * @param {PluginOptions} options The plugin options.
+ * @param {StorageDomain} storage The plugin's storage, empty by default.
  * @returns {Effect.Effect<readonly [Advisor["Service"], Ref.Ref<readonly string[]>]>}
  * The advisor and the prompts it sends.
  */
 const advisorWith = Effect.fn("advisorWith")(function* advisorWith(
   script: HostOverrides,
   options: PluginOptions,
+  storage: StorageDomain = memoryStorage(),
 ): Effect.fn.Return<readonly [Advisor["Service"], Ref.Ref<readonly string[]>]> {
   const [host, record] = yield* fakeHost(script)
 
-  const services = Layer.fresh(servicesLayer(host, options, memoryStorage()))
+  const services = Layer.fresh(servicesLayer(host, options, storage))
 
   const advisor = yield* Effect.service(Advisor).pipe(Effect.provide(services))
 
   return [advisor, record.prompts] as const
 })
 
-export { advisorWith, SESSION_ID, fakeHost, memoryStorage, modelInfo }
+export {
+  advisorWith,
+  SERVER_UNAVAILABLE,
+  SESSION_ID,
+  fakeHost,
+  memoryStorage,
+  modelInfo,
+}
 
 export type { HostOverrides, HostRecord, HostScript }

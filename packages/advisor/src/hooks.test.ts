@@ -1,11 +1,15 @@
 import { Boolean as Bool, Effect, Predicate } from "effect"
 import { CONSULTATION_POLICY, TOOL_DESCRIPTION } from "./prompt.ts"
-import { SESSION_ID, advisorWith } from "./testing.ts"
+import {
+  SERVER_UNAVAILABLE,
+  SESSION_ID,
+  advisorWith,
+  memoryStorage,
+} from "./testing.ts"
 import { assert, describe, it } from "@effect/vitest"
+import type { Advisor } from "./advisor.ts"
 import { Agent } from "@opencode/schema/agent"
-import type { HostOverrides } from "./testing.ts"
 import { Model } from "@opencode/plugin/effect"
-import type { PluginOptions } from "@opencode/plugin/options"
 import type { SessionContext } from "@opencode/plugin/effect/session"
 import { TOOL_NAME } from "./tool-name.ts"
 import { presentAdvisor } from "./hooks.ts"
@@ -34,18 +38,14 @@ const request = (offered: boolean): SessionContext => ({
 
 /**
  * Runs the hook on a request and returns the request as changed.
- * @param {HostOverrides} script What the host answers with.
- * @param {PluginOptions} options The plugin options.
+ * @param {Advisor["Service"]} advisor The advisor service.
  * @param {boolean} offered Whether the agent's tools include the advisor.
  * @returns {Effect.Effect<SessionContext>} The changed request.
  */
 const presented = Effect.fn("presented")(function* presented(
-  script: HostOverrides,
-  options: PluginOptions,
+  advisor: Advisor["Service"],
   offered: boolean,
 ): Effect.fn.Return<SessionContext> {
-  const [advisor] = yield* advisorWith(script, options)
-
   const event = request(offered)
 
   yield* presentAdvisor(advisor)(event)
@@ -58,31 +58,60 @@ const policyTexts = (event: SessionContext): readonly string[] =>
     .map((part) => part.text)
     .filter((text) => text === CONSULTATION_POLICY)
 
+/**
+ * Asserts that a request neither offers the advisor nor explains it.
+ * @param {SessionContext} event The request after the hook ran.
+ */
+const assertHidden = (event: SessionContext): void => {
+  assert.isFalse(Predicate.hasProperty(event.tools, TOOL_NAME))
+  assert.isEmpty(policyTexts(event))
+}
+
 const instructsMainAgent = Effect.gen(function* instructsMainAgent() {
-  const event = yield* presented({}, configured, true)
+  const [advisor] = yield* advisorWith({}, configured)
+
+  const event = yield* presented(advisor, true)
 
   assert.isTrue(Predicate.hasProperty(event.tools, TOOL_NAME))
   assert.deepStrictEqual(policyTexts(event), [CONSULTATION_POLICY])
 })
 
 const hidesFromSubagent = Effect.gen(function* hidesFromSubagent() {
-  const event = yield* presented({ subagent: true }, configured, true)
+  const [advisor] = yield* advisorWith({ subagent: true }, configured)
 
-  assert.isFalse(Predicate.hasProperty(event.tools, TOOL_NAME))
-  assert.isEmpty(policyTexts(event))
+  assertHidden(yield* presented(advisor, true))
 })
 
 const skipsAgentWithoutTool = Effect.gen(function* skipsAgentWithoutTool() {
-  const event = yield* presented({}, configured, false)
+  const [advisor] = yield* advisorWith({}, configured)
+
+  const event = yield* presented(advisor, false)
 
   assert.isEmpty(policyTexts(event))
 })
 
 const hidesWithoutModel = Effect.gen(function* hidesWithoutModel() {
-  const event = yield* presented({}, {}, true)
+  const [advisor] = yield* advisorWith({}, {})
 
-  assert.isFalse(Predicate.hasProperty(event.tools, TOOL_NAME))
-  assert.isEmpty(policyTexts(event))
+  assertHidden(yield* presented(advisor, true))
+})
+
+const hidesWhenOff = Effect.gen(function* hidesWhenOff() {
+  const storage = memoryStorage()
+
+  yield* storage.set("preferences.enabled", { enabled: false })
+
+  const [advisor] = yield* advisorWith({}, configured, storage)
+
+  assertHidden(yield* presented(advisor, true))
+})
+
+const hidesWhenCheckFails = Effect.gen(function* hidesWhenCheckFails() {
+  const parentLookup = Effect.fail(SERVER_UNAVAILABLE)
+
+  const [advisor] = yield* advisorWith({ parentLookup }, configured)
+
+  assertHidden(yield* presented(advisor, true))
 })
 
 describe(presentAdvisor, () => {
@@ -93,4 +122,9 @@ describe(presentAdvisor, () => {
     () => skipsAgentWithoutTool,
   )
   it.effect("hides the advisor when no model is set", () => hidesWithoutModel)
+  it.effect("hides the advisor when it is turned off", () => hidesWhenOff)
+  it.effect(
+    "hides the advisor when the availability check fails",
+    () => hidesWhenCheckFails,
+  )
 })

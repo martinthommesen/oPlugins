@@ -26,5 +26,5 @@
     "noUnusedParameters": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.config.ts"]
+  "include": ["index.ts", "src/**/*.ts", "scripts/**/*.ts", "*.config.ts"]
 }

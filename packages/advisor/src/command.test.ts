@@ -9,18 +9,19 @@ import { servicesLayer } from "./services.ts"
  * @param {readonly string[]} inputs The arguments of each invocation.
  * @returns {Effect.Effect<readonly string[]>} The replies.
  */
-const replies = (inputs: readonly string[]): Effect.Effect<readonly string[]> =>
-  Effect.gen(function* runReplies() {
-    const [host] = yield* fakeHost({})
+const replies = Effect.fn("replies")(function* replies(
+  inputs: readonly string[],
+): Effect.fn.Return<readonly string[]> {
+  const [host] = yield* fakeHost({})
 
-    const services = Layer.fresh(servicesLayer(host, {}, memoryStorage()))
+  const services = Layer.fresh(servicesLayer(host, {}, memoryStorage()))
 
-    return yield* pipe(
-      inputs,
-      Effect.forEach((input) => runCommand(parseCommand(input))),
-      Effect.provide(services),
-    )
-  })
+  return yield* pipe(
+    inputs,
+    Effect.forEach((input) => runCommand(parseCommand(input))),
+    Effect.provide(services),
+  )
+})
 
 const setsModel = Effect.gen(function* setsModel() {
   const [set, status] = yield* replies(["anthropic/claude-opus-5-5#high", ""])

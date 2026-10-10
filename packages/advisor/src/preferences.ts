@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Schema, Struct, pipe } from "effect"
+import { Context, Effect, Layer, Option, Record, Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Settings } from "./settings.ts"
 import type { SettingsInterface } from "./settings.ts"
@@ -7,9 +7,9 @@ const STORAGE_KEY = "preferences"
 
 /** Choices made with `/advisor`, which override the plugin options. */
 const Stored = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  model: Schema.optionalKey(Schema.NonEmptyString),
-  subagents: Schema.optionalKey(Schema.Boolean),
+  enabled: Schema.optional(Schema.Boolean),
+  model: Schema.optional(Schema.NonEmptyString),
+  subagents: Schema.optional(Schema.Boolean),
 })
 
 type Stored = typeof Stored.Type
@@ -59,19 +59,42 @@ const decodeStored = Option.match({
 /**
  * Reads the saved choices, ignoring a value this version cannot decode.
  * @param {Storage} storage The plugin's durable storage.
+ * @param {string} key The storage key to read.
  * @returns {Effect.Effect<Stored>} The saved choices.
  */
-const loadStored = (storage: Storage): Effect.Effect<Stored> =>
-  storage.get(STORAGE_KEY).pipe(
+const loadStored = (storage: Storage, key: string): Effect.Effect<Stored> =>
+  storage.get(key).pipe(
     Effect.map(Option.fromUndefinedOr),
     Effect.flatMap(decodeStored),
     Effect.catchTag("SchemaError", (failure) =>
       Effect.as(
-        Effect.logWarning("Ignoring unreadable advisor preferences", failure),
+        Effect.logWarning(
+          "Ignoring unreadable advisor preferences",
+          key,
+          failure,
+        ),
         {},
       ),
     ),
   )
+
+const loadChoices = Effect.fn("loadChoices")(function* loadChoices(
+  storage: Storage,
+) {
+  const legacy = yield* loadStored(storage, STORAGE_KEY)
+
+  const [enabled, model, subagents] = yield* Effect.all([
+    loadStored(storage, `${STORAGE_KEY}.enabled`),
+    loadStored(storage, `${STORAGE_KEY}.model`),
+    loadStored(storage, `${STORAGE_KEY}.subagents`),
+  ])
+
+  return {
+    enabled: enabled.enabled ?? legacy.enabled,
+    model: model.model ?? legacy.model,
+    subagents: subagents.subagents ?? legacy.subagents,
+  }
+})
 
 class PreferenceStore extends Context.Service<PreferenceStore, Interface>()(
   "opencode-advisor/PreferenceStore",
@@ -89,20 +112,33 @@ class PreferenceStore extends Context.Service<PreferenceStore, Interface>()(
       Effect.gen(function* makePreferenceStore() {
         const resolve = resolveWith(yield* Settings)
 
+        const current = loadChoices(storage).pipe(Effect.map(resolve))
+
         const update = Effect.fn("PreferenceStore.update")(function* update(
           changes: Stored,
         ) {
-          const stored = yield* loadStored(storage)
+          // Separate keys preserve unrelated choices from concurrent commands.
+          const values = {
+            enabled: changes.enabled,
+            model: changes.model,
+            subagents: changes.subagents,
+          }
 
-          const next: Stored = pipe(stored, Struct.assign(changes))
+          yield* Effect.all(
+            Record.collect(values, (key, value) =>
+              Option.match(Option.fromUndefinedOr(value), {
+                onNone: () => Effect.void,
+                onSome: (choice) =>
+                  storage.set(`${STORAGE_KEY}.${key}`, { [key]: choice }),
+              }),
+            ),
+          )
 
-          yield* storage.set(STORAGE_KEY, next)
-
-          return resolve(next)
+          return yield* current
         })
 
         return PreferenceStore.of({
-          current: loadStored(storage).pipe(Effect.map(resolve)),
+          current,
           update,
         })
       }),

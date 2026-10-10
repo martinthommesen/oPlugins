@@ -12,21 +12,21 @@ Agents are told to consult the advisor:
   contradict expectations;
 - before declaring a complex task complete.
 
-The advisor reads the consulting session's whole conversation, including tool
-calls and their results, plus an optional question from the agent. It replies
-with advice; it cannot run tools.
+The advisor receives a size-limited transcript of the session's current context,
+including tool calls and results, plus an optional question from the agent. It
+replies with advice and cannot run tools.
 
 ## Install
 
-Create a plugin file in your global plugins directory that re-exports this
-package:
+Add the repository directory to `plugins` in `opencode.jsonc`, globally or per
+project:
 
-```ts title="~/.config/opencode/plugins/advisor.ts"
-export { default } from "/path/to/opencode-advisor/src/index.ts"
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["/path/to/opencode-advisor"],
+}
 ```
-
-Use `.opencode/plugins/advisor.ts` in a project instead to enable it for that
-project only.
 
 ## Use
 
@@ -81,14 +81,15 @@ Invalid options are logged and replaced by the defaults.
 - The plugin registers an `advisor` tool. Before each model request it removes
   the tool from sessions that may not use it: when the advisor is off, has no
   model, or the session is a subagent's and subagents are not allowed.
-- A consultation renders the session's messages as a transcript. It always
-  keeps the first user message and as many of the newest entries as fit
-  `maxTranscriptChars`, and shortens long tool inputs and results.
-- The advisor model answers in a short-lived child session that is removed
-  afterwards. Running in a session means provider plugins that hook session
-  requests, such as subscription sign-ins, also work for the advisor. The
-  plugin replaces that session's system prompt with the advisor's instructions
-  and gives it no tools.
+- A consultation renders the available messages as a transcript within
+  `maxTranscriptChars`. It keeps the first available user message and the
+  newest entries. Long messages, tool inputs and results are shortened.
+- The advisor model answers in a temporary child session. The plugin deletes
+  it in the background so cleanup cannot hold up the consulting agent. Deletion
+  gets one retry and a five-second limit. If cleanup still fails, the plugin
+  logs a warning. Session generation supports provider plugins that hook
+  requests, such as subscription sign-ins. The plugin replaces the child
+  session's system prompt with the advisor's instructions and gives it no tools.
 - If the advisor cannot answer (no model, timeout, provider error), the agent
   is told why and continues without advice.
 
@@ -99,6 +100,9 @@ Invalid options are logged and replaced by the defaults.
   allows the `advisor` tool.
 - The advisor sees the conversation, not the agent's system prompt or the
   files on disk, unless their contents appear in tool results.
+- OpenCode 2.0.26 exposes only the active context after compaction to plugins.
+  Earlier details survive only if OpenCode includes them in its compaction
+  summary. Include important missing details in the consultation question.
 
 ## Development
 

@@ -1,14 +1,20 @@
 import { ConversationItem, fromSessionMessages } from "./conversation.ts"
 import { Effect, Schema } from "effect"
 import { assert, describe, expect, it } from "@effect/vitest"
+import { renderTranscript, truncate } from "./transcript.ts"
 import { SessionMessage } from "@opencode/schema/session-message"
-import { renderTranscript } from "./transcript.ts"
 
 const AMPLE_BUDGET = 10_000
 
 const TIGHT_BUDGET = 300
 
 const FILLER_CHARS = 400
+
+const SMALL_BUDGET = 1000
+
+const LARGE_TEXT_CHARS = 20_000
+
+const MANY_ENTRIES = 100
 
 const created = { created: 0 }
 
@@ -103,9 +109,66 @@ describe(renderTranscript, () => {
           "",
           "[1] user: The original task.",
           "",
-          "[2] assistant: The newest step.",
+          "[4] assistant: The newest step.",
         ].join("\n"),
       )
     },
   )
+})
+
+describe("transcript character limits", () => {
+  it(
+    "bounds an oversized task and keeps the latest step",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+
+      const longTask = ConversationItem.UserMessage({
+        text: "task ".repeat(LARGE_TEXT_CHARS),
+      })
+
+      const transcript = renderTranscript([longTask, latest], SMALL_BUDGET)
+
+      expect(transcript.length).toBeLessThanOrEqual(SMALL_BUDGET)
+      expect(transcript).toContain("user: task")
+      expect(transcript).toContain("The newest step.")
+    },
+  )
+
+  it("counts entry headers and omission markers", { timeout: 5000 }, () => {
+    expect.hasAssertions()
+
+    const entries = Array.from({ length: MANY_ENTRIES }, () => latest)
+
+    expect(renderTranscript(entries, SMALL_BUDGET).length).toBeLessThanOrEqual(
+      SMALL_BUDGET,
+    )
+  })
+
+  it(
+    "keeps a shortened latest entry if it exceeds the budget",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+
+      const longLatest = ConversationItem.AssistantText({
+        text: "latest ".repeat(LARGE_TEXT_CHARS),
+      })
+
+      const transcript = renderTranscript([task, longLatest], SMALL_BUDGET)
+
+      expect(transcript.length).toBeLessThanOrEqual(SMALL_BUDGET)
+      expect(transcript).toContain("assistant: latest")
+    },
+  )
+})
+
+describe(truncate, () => {
+  it("includes the marker in its character limit", { timeout: 5000 }, () => {
+    expect.hasAssertions()
+
+    expect(
+      truncate(SMALL_BUDGET, "x".repeat(LARGE_TEXT_CHARS)).length,
+    ).toBeLessThanOrEqual(SMALL_BUDGET)
+  })
 })

@@ -3,7 +3,7 @@ import { Option } from "effect"
 import { renderTranscript } from "./transcript.ts"
 
 /** What the consulting agent reads when deciding whether to call the tool. */
-const TOOL_DESCRIPTION = `Ask a stronger advisor model for a second opinion. The advisor reads this whole conversation, including every tool call and result, so you do not need to restate context.
+const TOOL_DESCRIPTION = `Ask the configured advisor model for a second opinion. It receives a size-limited transcript of this session's current context, including tool calls and results. Earlier messages may be unavailable after compaction. Include important missing context in your question.
 
 Call it:
 - Before committing to a plan or approach for non-trivial work, and before big or hard-to-reverse decisions (architecture, data models, public APIs, migrations, deleting or rewriting substantial code).

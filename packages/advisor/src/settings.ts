@@ -38,7 +38,7 @@ const defaults: typeof Options.Type = {
 }
 
 interface Interface {
-  /** Characters of conversation sent to the advisor, newest first. */
+  /** Character budget for the conversation sent to the advisor. */
   readonly maxTranscriptChars: number
   /** Advisor model used until `/advisor` picks one. */
   readonly model: Option.Option<string>

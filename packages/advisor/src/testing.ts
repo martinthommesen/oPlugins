@@ -86,37 +86,36 @@ const defaultScript: HostScript = {
  * @returns {Effect.Effect<readonly [Layer.Layer<Host>, HostRecord]>} The host
  * layer and its record.
  */
-const fakeHost = (
+const fakeHost = Effect.fn("fakeHost")(function* fakeHost(
   overrides: HostOverrides,
-): Effect.Effect<readonly [Layer.Layer<Host>, HostRecord]> =>
-  Effect.gen(function* makeFakeHost() {
-    const script: HostScript = {
-      models: overrides.models ?? defaultScript.models,
-      parent: Bool.match(overrides.subagent ?? false, {
-        onFalse: Option.none,
-        onTrue: () => Option.some(PARENT_ID),
-      }),
-      reply: overrides.reply ?? defaultScript.reply,
-      transcript: overrides.transcript ?? defaultScript.transcript,
-    }
+): Effect.fn.Return<readonly [Layer.Layer<Host>, HostRecord]> {
+  const script: HostScript = {
+    models: overrides.models ?? defaultScript.models,
+    parent: Bool.match(overrides.subagent ?? false, {
+      onFalse: Option.none,
+      onTrue: () => Option.some(PARENT_ID),
+    }),
+    reply: overrides.reply ?? defaultScript.reply,
+    transcript: overrides.transcript ?? defaultScript.transcript,
+  }
 
-    const prompts = yield* Ref.make<readonly string[]>([])
-    const notices = yield* Ref.make<readonly string[]>([])
+  const prompts = yield* Ref.make<readonly string[]>([])
+  const notices = yield* Ref.make<readonly string[]>([])
 
-    const host = Host.of({
-      consult: (_sessionId, prompt) =>
-        Ref.update(prompts, Arr.append(prompt)).pipe(
-          Effect.andThen(script.reply),
-        ),
-      isConsultation: () => Effect.succeed(false),
-      models: Effect.succeed(script.models),
-      notify: (_sessionId, text) => Ref.update(notices, Arr.append(text)),
-      parent: () => Effect.succeed(script.parent),
-      transcript: () => Effect.succeed(script.transcript),
-    })
-
-    return [Layer.succeed(Host, host), { notices, prompts }] as const
+  const host = Host.of({
+    consult: (_sessionId, prompt) =>
+      Ref.update(prompts, Arr.append(prompt)).pipe(
+        Effect.andThen(script.reply),
+      ),
+    isConsultation: () => Effect.succeed(false),
+    models: Effect.succeed(script.models),
+    notify: (_sessionId, text) => Ref.update(notices, Arr.append(text)),
+    parent: () => Effect.succeed(script.parent),
+    transcript: () => Effect.succeed(script.transcript),
   })
+
+  return [Layer.succeed(Host, host), { notices, prompts }] as const
+})
 
 /**
  * Plugin storage kept in memory.
@@ -146,21 +145,18 @@ const memoryStorage = (): StorageDomain => {
  * @returns {Effect.Effect<readonly [Advisor["Service"], Ref.Ref<readonly string[]>]>}
  * The advisor and the prompts it sends.
  */
-const advisorWith = (
+const advisorWith = Effect.fn("advisorWith")(function* advisorWith(
   script: HostOverrides,
   options: PluginOptions,
-): Effect.Effect<readonly [Advisor["Service"], Ref.Ref<readonly string[]>]> =>
-  Effect.gen(function* makeTestAdvisor() {
-    const [host, record] = yield* fakeHost(script)
+): Effect.fn.Return<readonly [Advisor["Service"], Ref.Ref<readonly string[]>]> {
+  const [host, record] = yield* fakeHost(script)
 
-    const services = Layer.fresh(servicesLayer(host, options, memoryStorage()))
+  const services = Layer.fresh(servicesLayer(host, options, memoryStorage()))
 
-    const advisor = yield* Effect.gen(function* readAdvisor() {
-      return yield* Advisor
-    }).pipe(Effect.provide(services))
+  const advisor = yield* Effect.service(Advisor).pipe(Effect.provide(services))
 
-    return [advisor, record.prompts] as const
-  })
+  return [advisor, record.prompts] as const
+})
 
 export { advisorWith, SESSION_ID, fakeHost, memoryStorage, modelInfo }
 

@@ -469,16 +469,20 @@ export async function setupClaudeAuth(
 
   await loadActiveCredential()
 
-  registrations.push(
-    await ctx.model.transform((editor) => {
-      if (!activeCredential) return
-      for (const model of editor.list(INTEGRATION_ID)) {
-        editor.update(INTEGRATION_ID, String(model.id), (draft) => {
-          draft.cost = []
-        })
-      }
-    }),
-  )
+  // Native pricing stays by default, so OpenCode reports what the traffic
+  // would cost at API rates. `cost: "zero"` restores the subscription view.
+  if (ctx.options?.cost === "zero") {
+    registrations.push(
+      await ctx.model.transform((editor) => {
+        if (!activeCredential) return
+        for (const model of editor.list(INTEGRATION_ID)) {
+          editor.update(INTEGRATION_ID, String(model.id), (draft) => {
+            draft.cost = []
+          })
+        }
+      }),
+    )
+  }
 
   const eventController = new AbortController()
   const { signal } = eventController

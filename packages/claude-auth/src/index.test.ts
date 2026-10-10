@@ -157,6 +157,7 @@ function waitFor(check: () => boolean): Promise<void> {
 function fakeContext(
   initial: Credential.Value | undefined,
   honorEventSignal = true,
+  pluginOptions: Record<string, unknown> = {},
 ) {
   let active = initial
   let integrationRegistration: MethodRegistration | undefined
@@ -216,6 +217,7 @@ function fakeContext(
   })
 
   const context = {
+    options: pluginOptions,
     integration: {
       transform: async (callback: (draft: unknown) => void) => {
         callback({
@@ -365,7 +367,7 @@ describe("v2 plugin contract", () => {
     const cleanup = await setupClaudeAuth(fake.context, dependencies([]))
     await cleanup?.()
     assert.equal(fake.events.returnCount, 1)
-    assert.equal(fake.disposeCount(), 8)
+    assert.equal(fake.disposeCount(), 7)
   })
 
   it("registers the exact auto authorization and persisted account label", async () => {
@@ -431,7 +433,7 @@ describe("v2 plugin contract", () => {
     await fake.hooks.get("http.request")!(request as never)
     assert.equal(fake.resolveCount(), 1)
     await cleanup?.()
-    assert.equal(fake.disposeCount(), 8)
+    assert.equal(fake.disposeCount(), 7)
   })
 
   it("applies subscription identity to every model request kind", async () => {
@@ -489,8 +491,19 @@ describe("v2 plugin contract", () => {
     }
   })
 
-  it("zeroes only active Anthropic model costs and restores pricing after a switch without a catalog API", async () => {
+  it("keeps native model pricing by default", async () => {
     const fake = fakeContext(oauth())
+    const cleanup = await setupClaudeAuth(
+      fake.context,
+      dependencies([account()]),
+    )
+    assert.equal(fake.model.cost.length, 1)
+    assert.equal(fake.otherModel.cost.length, 1)
+    await cleanup?.()
+  })
+
+  it("zeroes only active Anthropic model costs and restores pricing after a switch without a catalog API", async () => {
+    const fake = fakeContext(oauth(), true, { cost: "zero" })
     assert.equal("catalog" in fake.context, false)
     const cleanup = await setupClaudeAuth(
       fake.context,
@@ -514,7 +527,7 @@ describe("v2 plugin contract", () => {
   })
 
   it("fails a switch closed and continues processing later switches", async () => {
-    const fake = fakeContext(oauth())
+    const fake = fakeContext(oauth(), true, { cost: "zero" })
     const cleanup = await setupClaudeAuth(
       fake.context,
       dependencies([account()]),
@@ -699,7 +712,7 @@ describe("v2 plugin contract", () => {
   })
 
   it("finishes teardown when one registration fails to dispose", async () => {
-    const fake = fakeContext(oauth())
+    const fake = fakeContext(oauth(), true, { cost: "zero" })
     const cleanup = await setupClaudeAuth(
       fake.context,
       dependencies([account()]),

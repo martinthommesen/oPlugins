@@ -6,8 +6,8 @@
  * reading real credentials or contacting Anthropic.
  *
  * By default this copies one valid Claude Code account into an isolated source
- * and verifies package loading, automatic import, account labeling, zero-cost
- * catalog output, and one real read-tool round trip. It never refreshes the
+ * and verifies package loading, automatic import, account labeling, native
+ * catalog pricing, and one real read-tool round trip. It never refreshes the
  * copied token because doing so would invalidate its original source.
  *
  * To exercise near-expiry refresh and write-back, set
@@ -345,11 +345,9 @@ exit 44
     const modelsRaw = readFileSync(modelsPath, "utf8")
     const models: Array<{ cost: unknown[] }> = []
     collectAnthropicModels(JSON.parse(modelsRaw), models)
-    if (
-      models.length === 0 ||
-      models.some((model) => model.cost.length !== 0)
-    ) {
-      fail("Anthropic subscription models did not have zeroed costs")
+    // A custom model has no catalog price, so only an all-zero catalog fails.
+    if (models.every((model) => model.cost.length === 0)) {
+      fail("Anthropic subscription models did not keep native pricing")
     }
 
     const output = await run(

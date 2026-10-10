@@ -91,8 +91,12 @@ OpenCode owns connection persistence. The plugin does not write OpenCode
 ## Behavior
 
 - Uses OpenCode's native Anthropic provider and model catalog.
-- Reports zero dollar cost while a Claude Code subscription connection is
-  active. API-key and environment connections retain native API pricing.
+- Keeps OpenCode's native API pricing, so the sidebar and prompt footer show
+  what subscription traffic would cost at API rates. Anthropic does not bill
+  this amount to a subscription. Set the `cost` option to `"zero"` to report
+  zero dollar cost instead (see [Options](#options)).
+- Adds a **Cache** section to the session sidebar with the prompt cache hit
+  and miss rates (see [Prompt cache stats](#prompt-cache-stats)).
 - Adds the Claude Code billing identity, supported beta flags, and request
   headers required for subscription traffic, including title, compaction, and
   transient generation requests. The current wire defaults match Claude Code
@@ -162,6 +166,53 @@ Registering native HTTP hooks disables OpenCode's provider WebSocket transport
 for affected requests. The `anthropic` provider does not advertise that
 capability in the targeted OpenCode build; this coupling is rechecked when the
 host version is updated.
+
+## Options
+
+Pass options with the object form of the `plugins` entry:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "opencode-claude-auth",
+      "options": { "cost": "zero" },
+    },
+  ],
+}
+```
+
+| Option | Values                      | Effect                                                                                                              |
+| ------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `cost` | `"api"` (default), `"zero"` | `"api"` shows API-equivalent cost. `"zero"` reports zero cost while a Claude Code subscription connection is active |
+
+Restart the service after changing an option: `opencode service restart`.
+Costs are recorded per message when it completes, so a change applies to new
+messages only.
+
+## Prompt cache stats
+
+The package also ships a terminal plugin, loaded automatically with the
+server plugin, that adds a **Cache** section to the session sidebar:
+
+```text
+Cache
+94.1% hit · 5.9% miss
+1.2M read · 45.2K write · 30K uncached
+Last request 99.0% hit
+```
+
+- **hit** is the share of prompt tokens served from the cache (cache reads
+  divided by every prompt token). **miss** is the rest: tokens written to the
+  cache plus uncached input.
+- The first two lines cover every request in the session, including title
+  and compaction requests. **Last request** covers the newest response.
+- Run `/cache`, or **Show prompt cache stats** from the command palette, to
+  see the same numbers when the sidebar is hidden.
+
+The stats use the token counts OpenCode records for each message, so they work
+for any provider that reports cache usage.
 
 ## Refresh failures
 
@@ -258,7 +309,7 @@ it.
 
 Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
 The test installs the pinned CLI in a temporary directory and checks plugin
-activation, credential import, subscription pricing, billing headers, and a
+activation, credential import, catalog pricing, billing headers, and a
 streamed read-tool round trip against a local mock API with a fake credential.
 It does not read your credentials or send requests to Anthropic. Package
 installation and OpenCode startup may require network access. CI runs this test

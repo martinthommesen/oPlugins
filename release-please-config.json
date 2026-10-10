@@ -9,6 +9,10 @@
       "component": "oclaude",
       "package-name": "oclaude",
       "release-as": "3.0.0"
+    },
+    "packages/obrowse": {
+      "component": "obrowse",
+      "package-name": "obrowse"
     }
   }
 }

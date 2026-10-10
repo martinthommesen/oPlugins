@@ -1,3 +1,4 @@
 {
-  "packages/claude-auth": "2.1.6"
+  "packages/claude-auth": "2.1.6",
+  "packages/obrowse": "0.1.0"
 }

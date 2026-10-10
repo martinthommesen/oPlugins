@@ -13,10 +13,19 @@ permissions:
 
 # release-please runs in manifest mode: release-please-config.json lists the
 # released packages and .release-please-manifest.json their last versions.
-# Only oclaude (packages/claude-auth) is released.
+# oclaude (packages/claude-auth) and obrowse (packages/obrowse) are released,
+# each by its own job below.
+#
+# Publishing uses npm trusted publishing (OIDC through `id-token: write`), no
+# token. It can only be configured once a package exists on npm, so each
+# package's publish step stays off until its repository variable
+# (OCLAUDE_NPM_PUBLISH, OBROWSE_NPM_PUBLISH) is set to `true`.
 jobs:
-  release:
+  release-please:
     runs-on: ubuntu-latest
+    outputs:
+      oclaude_release_created: ${{ steps.release-please.outputs.oclaude_release_created }}
+      obrowse_release_created: ${{ steps.release-please.outputs.obrowse_release_created }}
     steps:
       - name: Run release-please (attempt 1)
         uses: googleapis/release-please-action@v5
@@ -47,38 +56,57 @@ jobs:
         id: release-please
         shell: bash
         run: |
-          created="${{ steps.release-please-1.outputs['packages/claude-auth--release_created'] }}"
+          oclaude="${{ steps.release-please-1.outputs['packages/claude-auth--release_created'] }}"
+          obrowse="${{ steps.release-please-1.outputs['packages/obrowse--release_created'] }}"
           if [[ "${{ steps.release-please-2.outcome }}" == "success" ]]; then
-            created="${{ steps.release-please-2.outputs['packages/claude-auth--release_created'] }}"
+            oclaude="${{ steps.release-please-2.outputs['packages/claude-auth--release_created'] }}"
+            obrowse="${{ steps.release-please-2.outputs['packages/obrowse--release_created'] }}"
           fi
           if [[ "${{ steps.release-please-3.outcome }}" == "success" ]]; then
-            created="${{ steps.release-please-3.outputs['packages/claude-auth--release_created'] }}"
+            oclaude="${{ steps.release-please-3.outputs['packages/claude-auth--release_created'] }}"
+            obrowse="${{ steps.release-please-3.outputs['packages/obrowse--release_created'] }}"
           fi
-          echo "oclaude_release_created=$created" >> "$GITHUB_OUTPUT"
+          echo "oclaude_release_created=$oclaude" >> "$GITHUB_OUTPUT"
+          echo "obrowse_release_created=$obrowse" >> "$GITHUB_OUTPUT"
 
+  oclaude:
+    needs: release-please
+    if: needs.release-please.outputs.oclaude_release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
 
       - uses: pnpm/action-setup@v4
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
 
       - uses: actions/setup-node@v4
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
         with:
           node-version: "22"
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
       - run: pnpm run check
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
       - run: pnpm --filter oclaude run build
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
       - run: pnpm --filter oclaude run verify:dist
-        if: steps.release-please.outputs.oclaude_release_created == 'true'
-        # npm trusted publishing (OIDC through `id-token: write`), no token.
-        # It can only be configured once the package exists on npm, so this
-        # step stays off until the repository variable OCLAUDE_NPM_PUBLISH is
-        # set to `true`.
       - run: pnpm --filter oclaude publish --access public --provenance --no-git-checks --ignore-scripts
-        if: steps.release-please.outputs.oclaude_release_created == 'true' && vars.OCLAUDE_NPM_PUBLISH == 'true'
+        if: vars.OCLAUDE_NPM_PUBLISH == 'true'
+
+  obrowse:
+    needs: release-please
+    if: needs.release-please.outputs.obrowse_release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm --filter obrowse run build
+      - run: pnpm --filter obrowse run verify:dist
+      - run: pnpm --filter obrowse publish --access public --provenance --no-git-checks --ignore-scripts
+        if: vars.OBROWSE_NPM_PUBLISH == 'true'

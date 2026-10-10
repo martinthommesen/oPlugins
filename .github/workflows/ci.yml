@@ -66,3 +66,32 @@ jobs:
         env:
           CLAUDE_AUTH_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run
+
+  obrowse:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        host: ["target"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/obrowse
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm test
+        # dist is what consumers get, and nothing else loads it before publish.
+      - run: pnpm run verify:dist
+      - run: pnpm run test:host
+        env:
+          OBROWSE_HEADLESS_HOST_VERSION: ${{ matrix.host }}
+      - run: pnpm pack --dry-run

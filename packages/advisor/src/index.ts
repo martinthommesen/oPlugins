@@ -1,50 +1,50 @@
-import {
-  COMMAND_DESCRIPTION,
-  COMMAND_NAME,
-  parseCommand,
-  runCommand,
-} from "./command.ts"
 import { Context, Effect, Layer } from "effect"
-import { instructConsultations, presentAdvisor } from "./hooks.ts"
-import { Advisor } from "./advisor.ts"
-import { Host } from "./host.ts"
+import Advisor from "./advisor.ts"
+import Host from "./host.ts"
 import { Plugin } from "@opencode/plugin/effect"
-import { advisorTool } from "./tool.ts"
-import { servicesLayer } from "./services.ts"
+import command from "./command.ts"
+import hooks from "./hooks.ts"
+import services from "./services.ts"
+import tool from "./tool.ts"
 
 export default Plugin.define({
   effect: (context) =>
     Effect.gen(function* advisorPlugin() {
       const built = yield* Layer.build(
-        servicesLayer(
+        services.layer(
           Host.fromPlugin(context),
           context.options,
           context.storage,
         ),
       )
 
-      const advisor = Context.get(built, Advisor)
-      const host = Context.get(built, Host)
-
       yield* context.tool.transform((editor) => {
-        editor.add(advisorTool(advisor))
+        editor.add(tool.advisorTool(Context.get(built, Advisor)))
       })
 
       yield* context.command.transform((editor) => {
         editor.add({
-          description: COMMAND_DESCRIPTION,
+          description: command.COMMAND_DESCRIPTION,
           execute: ({ prompt, sessionID }) =>
-            runCommand(parseCommand(prompt.text)).pipe(
-              Effect.flatMap((reply) => host.notify(sessionID, reply)),
+            command.runCommand(command.parseCommand(prompt.text)).pipe(
+              Effect.flatMap((reply) =>
+                Context.get(built, Host).notify(sessionID, reply),
+              ),
               Effect.provide(built),
             ),
-          name: COMMAND_NAME,
+          name: command.COMMAND_NAME,
         })
       })
 
-      yield* context.session.hook("context", presentAdvisor(advisor))
+      yield* context.session.hook(
+        "context",
+        hooks.presentAdvisor(Context.get(built, Advisor)),
+      )
 
-      yield* context.session.hook("generate", instructConsultations(host))
+      yield* context.session.hook(
+        "generate",
+        hooks.instructConsultations(Context.get(built, Host)),
+      )
     }),
   id: "opencode-advisor",
 })

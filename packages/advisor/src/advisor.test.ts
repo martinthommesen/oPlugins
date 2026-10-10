@@ -1,109 +1,137 @@
 import { Effect, Fiber, Option, Ref } from "effect"
-import { SESSION_ID, advisorWith } from "./testing.ts"
 import { assert, describe, it } from "@effect/vitest"
-import { AdvisorUnavailable } from "./errors/advisor-unavailable.ts"
-import { Availability } from "./availability.ts"
-import { ConsultationTimedOut } from "./errors/consultation-timed-out.ts"
-import { ConversationItem } from "./conversation.ts"
+import Advisor from "./advisor.ts"
+import AdvisorUnavailable from "./advisor-unavailable-error.ts"
+import ConsultationTimedOut from "./consultation-timed-out-error.ts"
+import FakeHost from "./fake-host.test-support.ts"
+import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
+import type { Vitest } from "@effect/vitest"
+import availability from "./availability.ts"
+import conversation from "./conversation.ts"
+import support from "./advisor.test-support.ts"
 
-const TIMEOUT_SECONDS = 30
+/** The tests in a block that provides the advisor around a scripted host. */
+interface Tests {
+  readonly effect: Vitest.Test<Advisor | FakeHost | Scope.Scope>
+}
 
-const configured = { model: "anthropic/claude-opus-5-5" }
+const { ConversationItem } = conversation,
+  TIMEOUT_SECONDS = 30,
+  allowsSubagents = Effect.gen(function* allowsSubagents() {
+    const advisor = yield* Advisor,
+      decision = yield* advisor.availability(support.SESSION_ID)
 
-const sendsConversation = Effect.gen(function* sendsConversation() {
-  const [advisor, prompts] = yield* advisorWith(
-    {
-      transcript: [ConversationItem.UserMessage({ text: "Add a login form." })],
-    },
-    configured,
-  )
+    assert.isTrue(availability.Availability.$is("Available")(decision))
+  }),
+  configured = { model: "anthropic/claude-opus-5-5" },
+  refusesSubagents = Effect.gen(function* refusesSubagents() {
+    const advisor = yield* Advisor,
+      error = yield* Effect.flip(
+        advisor.consult(support.SESSION_ID, Option.none()),
+      )
 
-  const advice = yield* advisor.consult(
-    SESSION_ID,
-    Option.some("Should I hash with SHA-256?"),
-  )
+    assert.instanceOf(error, AdvisorUnavailable)
+    assert.strictEqual(error.reason, "the advisor is turned off for subagents")
+  }),
+  refusesWithoutModel = Effect.gen(function* refusesWithoutModel() {
+    const advisor = yield* Advisor,
+      error = yield* Effect.flip(
+        advisor.consult(support.SESSION_ID, Option.none()),
+      ),
+      record = yield* FakeHost
 
-  const [prompt] = yield* Ref.get(prompts)
+    assert.instanceOf(error, AdvisorUnavailable)
+    assert.strictEqual(error.reason, "no advisor model is configured")
+    assert.deepStrictEqual(yield* Ref.get(record.prompts), [])
+  }),
+  sendsConversation = Effect.gen(function* sendsConversation() {
+    const advisor = yield* Advisor,
+      record = yield* FakeHost,
+      reply = yield* advisor.consult(
+        support.SESSION_ID,
+        Option.some("Should I hash with SHA-256?"),
+      ),
+      [prompt] = yield* Ref.get(record.prompts)
 
-  assert.deepStrictEqual(advice, {
-    model: "anthropic/claude-opus-5-5",
-    text: "Use a dedicated password hash.",
+    assert.deepStrictEqual(reply, {
+      model: "anthropic/claude-opus-5-5",
+      text: "Use a dedicated password hash.",
+    })
+    assert.include(prompt, "[1] user: Add a login form.")
+    assert.include(prompt, "Should I hash with SHA-256?")
+  }),
+  timesOut = Effect.gen(function* timesOut() {
+    const advisor = yield* Advisor,
+      fiber = yield* advisor
+        .consult(support.SESSION_ID, Option.none())
+        .pipe(Effect.flip, Effect.forkChild),
+      timedOut = yield* TestClock.adjust(`${TIMEOUT_SECONDS} seconds`).pipe(
+        Effect.andThen(Fiber.join(fiber)),
+      )
+
+    assert.instanceOf(timedOut, ConsultationTimedOut)
+    assert.strictEqual(timedOut.seconds, TIMEOUT_SECONDS)
   })
-  assert.include(prompt, "[1] user: Add a login form.")
-  assert.include(prompt, "Should I hash with SHA-256?")
-})
-
-const refusesWithoutModel = Effect.gen(function* refusesWithoutModel() {
-  const [advisor, prompts] = yield* advisorWith({}, {})
-
-  const error = yield* Effect.flip(advisor.consult(SESSION_ID, Option.none()))
-
-  assert.instanceOf(error, AdvisorUnavailable)
-  assert.strictEqual(error.reason, "no advisor model is configured")
-  assert.deepStrictEqual(yield* Ref.get(prompts), [])
-})
-
-const refusesSubagents = Effect.gen(function* refusesSubagents() {
-  const [advisor] = yield* advisorWith(
-    { subagent: true },
-    { model: configured.model, subagents: false },
-  )
-
-  const error = yield* Effect.flip(advisor.consult(SESSION_ID, Option.none()))
-
-  assert.instanceOf(error, AdvisorUnavailable)
-  assert.strictEqual(error.reason, "the advisor is turned off for subagents")
-})
-
-const timesOut = Effect.gen(function* timesOut() {
-  const [advisor] = yield* advisorWith(
-    { reply: Effect.never },
-    { model: configured.model, timeout: TIMEOUT_SECONDS },
-  )
-
-  const consultation = Effect.flip(advisor.consult(SESSION_ID, Option.none()))
-
-  const fiber = yield* Effect.forkChild(consultation)
-
-  yield* TestClock.adjust(`${TIMEOUT_SECONDS} seconds`)
-
-  const error = yield* Fiber.join(fiber)
-
-  assert.instanceOf(error, ConsultationTimedOut)
-  assert.strictEqual(error.seconds, TIMEOUT_SECONDS)
-})
-
-const allowsSubagents = Effect.gen(function* allowsSubagents() {
-  const [advisor] = yield* advisorWith({ subagent: true }, configured)
-
-  const availability = yield* advisor.availability(SESSION_ID)
-
-  assert.isTrue(Availability.$is("Available")(availability))
-})
 
 describe("advisor.consult", () => {
-  it.effect(
-    "sends the conversation and question to the advisor model",
-    () => sendsConversation,
-  )
+  it.layer(
+    support.scriptedServices(
+      {
+        transcript: [
+          ConversationItem.UserMessage({
+            text: "Add a login form.",
+          }),
+        ],
+      },
+      configured,
+    ),
+  )((tests: Tests) => {
+    tests.effect(
+      "sends the conversation and question to the advisor model",
+      () => sendsConversation,
+    )
+  })
 
-  it.effect("refuses when no model is configured", () => refusesWithoutModel)
+  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
+    tests.effect(
+      "refuses when no model is configured",
+      () => refusesWithoutModel,
+    )
+  })
 
-  it.effect(
-    "refuses subagents when they are not allowed",
-    () => refusesSubagents,
-  )
+  it.layer(
+    support.scriptedServices(
+      { subagent: true },
+      { model: configured.model, subagents: false },
+    ),
+  )((tests: Tests) => {
+    tests.effect(
+      "refuses subagents when they are not allowed",
+      () => refusesSubagents,
+    )
+  })
 
-  it.effect(
-    "gives up when the advisor model outlasts the timeout",
-    () => timesOut,
-  )
+  it.layer(
+    support.scriptedServices(
+      { reply: Effect.never },
+      { model: configured.model, timeout: TIMEOUT_SECONDS },
+    ),
+  )((tests: Tests) => {
+    tests.effect(
+      "gives up when the advisor model outlasts the timeout",
+      () => timesOut,
+    )
+  })
 })
 
 describe("advisor.availability", () => {
-  it.effect(
-    "lets subagents consult the advisor by default",
-    () => allowsSubagents,
+  it.layer(support.scriptedServices({ subagent: true }, configured))(
+    (tests: Tests) => {
+      tests.effect(
+        "lets subagents consult the advisor by default",
+        () => allowsSubagents,
+      )
+    },
   )
 })

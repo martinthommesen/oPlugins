@@ -1,96 +1,98 @@
-import { ConversationItem, fromSessionMessages } from "./conversation.ts"
 import { Effect, Schema } from "effect"
 import { assert, describe, expect, it } from "@effect/vitest"
-import { renderTranscript, truncate } from "./transcript.ts"
 import { SessionMessage } from "@opencode/schema/session-message"
+import conversation from "./conversation.ts"
+import transcript from "./transcript.ts"
 
-const AMPLE_BUDGET = 10_000
-
-const TIGHT_BUDGET = 300
-
-const FILLER_CHARS = 400
-
-const SMALL_BUDGET = 1000
-
-const LARGE_TEXT_CHARS = 20_000
-
-const MANY_ENTRIES = 100
-
-const created = { created: 0 }
-
-const recorded = [
-  {
-    id: "msg_1",
-    text: "Fix the failing login test.",
-    time: created,
-    type: "user",
-  },
-  {
-    agent: "build",
-    content: [
-      { text: "Running the tests.", type: "text" },
-      {
-        id: "call_1",
-        name: "shell",
-        state: {
-          content: [{ text: "1 failed", type: "text" }],
-          input: { command: "pnpm test" },
-          status: "completed",
+const { ConversationItem } = conversation,
+  AMPLE_BUDGET = 10_000,
+  CREATED = { created: 0 },
+  FILLER_CHARS = 400,
+  LARGE_TEXT_CHARS = 20_000,
+  MANY_ENTRIES = 100,
+  RECORDED = [
+    {
+      id: "msg_1",
+      text: "Fix the failing login test.",
+      time: CREATED,
+      type: "user",
+    },
+    {
+      agent: "build",
+      content: [
+        { text: "Running the tests.", type: "text" },
+        {
+          id: "call_1",
+          name: "shell",
+          state: {
+            content: [{ text: "1 failed", type: "text" }],
+            input: { command: "pnpm test" },
+            status: "completed",
+          },
+          time: CREATED,
+          type: "tool",
         },
-        time: created,
-        type: "tool",
-      },
-      {
-        id: "call_2",
-        name: "advisor",
-        state: { input: { question: "Why?" }, metadata: {}, status: "running" },
-        time: created,
-        type: "tool",
-      },
-    ],
-    id: "msg_2",
-    model: { id: "claude-haiku-5-5", providerID: "anthropic" },
-    time: created,
-    type: "assistant",
-  },
-]
+        {
+          id: "call_2",
+          name: "advisor",
+          state: {
+            input: { question: "Why?" },
+            metadata: {},
+            status: "running",
+          },
+          time: CREATED,
+          type: "tool",
+        },
+      ],
+      id: "msg_2",
+      model: { id: "claude-haiku-5-5", providerID: "anthropic" },
+      time: CREATED,
+      type: "assistant",
+    },
+  ],
+  SMALL_BUDGET = 1000,
+  TIGHT_BUDGET = 300,
+  dropsPendingConsultation = Effect.gen(function* dropsPending() {
+    const messages = yield* Schema.decodeUnknownEffect(
+      Schema.Array(SessionMessage.Info),
+    )(RECORDED)
 
-const dropsPendingConsultation = Effect.gen(function* dropsPending() {
-  const messages = yield* Schema.decodeUnknownEffect(
-    Schema.Array(SessionMessage.Info),
-  )(recorded)
+    assert.deepStrictEqual(conversation.fromSessionMessages(messages), [
+      ConversationItem.UserMessage({
+        text: "Fix the failing login test.",
+      }),
+      ConversationItem.AssistantText({
+        text: "Running the tests.",
+      }),
+      ConversationItem.ToolCall({
+        input: '{"command":"pnpm test"}',
+        name: "shell",
+        result: "1 failed",
+      }),
+    ])
+  }),
+  filler = ConversationItem.AssistantText({
+    text: "x".repeat(FILLER_CHARS),
+  }),
+  latest = ConversationItem.AssistantText({
+    text: "The newest step.",
+  }),
+  task = ConversationItem.UserMessage({
+    text: "The original task.",
+  })
 
-  assert.deepStrictEqual(fromSessionMessages(messages), [
-    ConversationItem.UserMessage({ text: "Fix the failing login test." }),
-    ConversationItem.AssistantText({ text: "Running the tests." }),
-    ConversationItem.ToolCall({
-      input: '{"command":"pnpm test"}',
-      name: "shell",
-      result: "1 failed",
-    }),
-  ])
-})
-
-const task = ConversationItem.UserMessage({ text: "The original task." })
-
-const filler = ConversationItem.AssistantText({
-  text: "x".repeat(FILLER_CHARS),
-})
-
-const latest = ConversationItem.AssistantText({ text: "The newest step." })
-
-describe(fromSessionMessages, () => {
+describe("fromSessionMessages", () => {
   it.effect(
     "keeps tool results and drops the pending consultation",
     () => dropsPendingConsultation,
   )
 })
 
-describe(renderTranscript, () => {
+describe("renderTranscript", () => {
   it("numbers entries oldest first", { timeout: 5000 }, () => {
     expect.hasAssertions()
 
-    expect(renderTranscript([task, latest], AMPLE_BUDGET)).toBe(
+    expect(transcript.renderTranscript([task, latest], AMPLE_BUDGET)).toBe(
       "[1] user: The original task.\n\n[2] assistant: The newest step.",
     )
   })
@@ -102,7 +104,10 @@ describe(renderTranscript, () => {
       expect.hasAssertions()
 
       expect(
-        renderTranscript([task, filler, filler, latest], TIGHT_BUDGET),
+        transcript.renderTranscript(
+          [task, filler, filler, latest],
+          TIGHT_BUDGET,
+        ),
       ).toBe(
         [
           '<truncated omitted_entries="2" />',
@@ -124,14 +129,13 @@ describe("transcript character limits", () => {
       expect.hasAssertions()
 
       const longTask = ConversationItem.UserMessage({
-        text: "task ".repeat(LARGE_TEXT_CHARS),
-      })
+          text: "task ".repeat(LARGE_TEXT_CHARS),
+        }),
+        rendered = transcript.renderTranscript([longTask, latest], SMALL_BUDGET)
 
-      const transcript = renderTranscript([longTask, latest], SMALL_BUDGET)
-
-      expect(transcript.length).toBeLessThanOrEqual(SMALL_BUDGET)
-      expect(transcript).toContain("user: task")
-      expect(transcript).toContain("The newest step.")
+      expect(rendered.length).toBeLessThanOrEqual(SMALL_BUDGET)
+      expect(rendered).toContain("user: task")
+      expect(rendered).toContain("The newest step.")
     },
   )
 
@@ -140,9 +144,9 @@ describe("transcript character limits", () => {
 
     const entries = Array.from({ length: MANY_ENTRIES }, () => latest)
 
-    expect(renderTranscript(entries, SMALL_BUDGET).length).toBeLessThanOrEqual(
-      SMALL_BUDGET,
-    )
+    expect(
+      transcript.renderTranscript(entries, SMALL_BUDGET).length,
+    ).toBeLessThanOrEqual(SMALL_BUDGET)
   })
 
   it(
@@ -152,23 +156,22 @@ describe("transcript character limits", () => {
       expect.hasAssertions()
 
       const longLatest = ConversationItem.AssistantText({
-        text: "latest ".repeat(LARGE_TEXT_CHARS),
-      })
+          text: "latest ".repeat(LARGE_TEXT_CHARS),
+        }),
+        rendered = transcript.renderTranscript([task, longLatest], SMALL_BUDGET)
 
-      const transcript = renderTranscript([task, longLatest], SMALL_BUDGET)
-
-      expect(transcript.length).toBeLessThanOrEqual(SMALL_BUDGET)
-      expect(transcript).toContain("assistant: latest")
+      expect(rendered.length).toBeLessThanOrEqual(SMALL_BUDGET)
+      expect(rendered).toContain("assistant: latest")
     },
   )
 })
 
-describe(truncate, () => {
+describe("truncate", () => {
   it("includes the marker in its character limit", { timeout: 5000 }, () => {
     expect.hasAssertions()
 
     expect(
-      truncate(SMALL_BUDGET, "x".repeat(LARGE_TEXT_CHARS)).length,
+      transcript.truncate(SMALL_BUDGET, "x".repeat(LARGE_TEXT_CHARS)).length,
     ).toBeLessThanOrEqual(SMALL_BUDGET)
   })
 })

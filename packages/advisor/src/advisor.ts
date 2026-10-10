@@ -1,120 +1,149 @@
 import { Context, Duration, Effect, Layer, Option } from "effect"
-import { decideAvailability, requireModel } from "./availability.ts"
-import type { Availability } from "./availability.ts"
-import type { ConsultationError } from "./errors/consultation-error.ts"
-import { ConsultationTimedOut } from "./errors/consultation-timed-out.ts"
-import { Host } from "./host.ts"
-import type { HostError } from "./errors/host-error.ts"
-import { PreferenceStore } from "./preferences.ts"
-import type { Preferences } from "./preferences.ts"
-import type { SessionId } from "./host.ts"
-import { Settings } from "./settings.ts"
-import { advisorPrompt } from "./prompt.ts"
-import { parseModelRef } from "./model-ref.ts"
+import ConsultationTimedOut from "./consultation-timed-out-error.ts"
+import Host from "./host.ts"
+import type HostError from "./host-error.ts"
+import PreferenceStore from "./preference-store.ts"
+import type { Session } from "@opencode/schema/session"
+import Settings from "./settings.ts"
+import availability from "./availability.ts"
+import modelRef from "./model-ref.ts"
+import prompt from "./prompt.ts"
 
+type Availability = Effect.Success<
+  ReturnType<typeof availability.decideAvailability>
+>
+
+type Preferences = Effect.Success<PreferenceStore["Service"]["current"]>
+
+/** What the advisor model answered, and which model it was. */
 interface Advice {
   readonly model: string
   readonly text: string
 }
 
+/*
+ * Every reason a consultation can end without advice: the session may not
+ * consult the advisor (`AdvisorUnavailable`), its model reference is invalid
+ * (`InvalidModel`), a host call failed, or the deadline passed.
+ */
+type ConsultationError =
+  | ConsultationTimedOut
+  | HostError
+  | Effect.Error<ReturnType<typeof availability.requireModel>>
+  | Effect.Error<ReturnType<typeof modelRef.parseModelRef>>
+
 interface Interface {
   readonly availability: (
-    sessionId: SessionId,
+    sessionId: Session.ID,
   ) => Effect.Effect<Availability, HostError>
   /** Asks the advisor model about a session's conversation. */
   readonly consult: (
-    sessionId: SessionId,
+    sessionId: Session.ID,
     question: Option.Option<string>,
   ) => Effect.Effect<Advice, ConsultationError>
 }
 
-/**
- * Fails a consultation that outlasts its deadline.
- * @param {Duration.Duration} timeout The deadline.
- * @param {string} model The advisor model, for the error.
- * @returns {Function} A pipeline step that applies the deadline.
- */
-const withDeadline =
-  (timeout: Duration.Duration, model: string) =>
-  <Value, Failure>(
-    self: Effect.Effect<Value, Failure>,
-  ): Effect.Effect<Value, Failure | ConsultationTimedOut> =>
-    Effect.timeoutOrElse(self, {
-      duration: timeout,
-      orElse: () =>
-        Effect.fail(
-          new ConsultationTimedOut({
-            model,
-            seconds: Duration.toSeconds(timeout),
-          }),
+/** The services a consultation draws on. */
+interface Consultants {
+  readonly host: Host["Service"]
+  readonly preferences: PreferenceStore["Service"]
+  readonly settings: Settings["Service"]
+}
+
+/* Whether `sessionId` may consult the advisor under `choices`. */
+const availabilityIn = (
+    host: Host["Service"],
+    sessionId: Session.ID,
+    choices: Preferences,
+  ): Effect.Effect<Availability, HostError> =>
+    availability.decideAvailability(
+      choices,
+      host.parent(sessionId).pipe(Effect.map(Option.isSome)),
+    ),
+  /* Fails a consultation of `model` that outlasts its deadline. */
+  byDeadline =
+    (timeout: Duration.Duration, model: string) =>
+    <Value, Failure>(
+      self: Effect.Effect<Value, Failure>,
+    ): Effect.Effect<Value, Failure | ConsultationTimedOut> =>
+      Effect.timeoutOrElse(self, {
+        duration: timeout,
+        orElse: () =>
+          Effect.fail(
+            new ConsultationTimedOut({
+              model,
+              seconds: Duration.toSeconds(timeout),
+            }),
+          ),
+      }),
+  /* Builds `consult` on the services it draws on. */
+  consultVia = ({
+    host,
+    preferences,
+    settings,
+  }: Consultants): Interface["consult"] =>
+    Effect.fn("Advisor.consult")(function* consult(
+      sessionId: Session.ID,
+      question: Option.Option<string>,
+    ) {
+      const choices = yield* preferences.current,
+        request = Effect.gen(function* requestAdvice() {
+          const advisorModel = yield* availabilityIn(
+              host,
+              sessionId,
+              choices,
+            ).pipe(Effect.flatMap(availability.requireModel)),
+            ref = yield* modelRef.parseModelRef(advisorModel),
+            transcript = yield* host.transcript(sessionId)
+
+          return {
+            model: advisorModel,
+            text: yield* host.consult(
+              sessionId,
+              prompt.advisorPrompt(
+                transcript,
+                settings.maxTranscriptChars,
+                question,
+              ),
+              ref,
+            ),
+          }
+        })
+
+      return yield* request.pipe(
+        byDeadline(
+          settings.timeout,
+          Option.getOrElse(choices.model, () => "not configured"),
         ),
+      )
     })
 
-const inSession = (
-  host: Host["Service"],
-  sessionId: SessionId,
-  choices: Preferences,
-): Effect.Effect<Availability, HostError> =>
-  decideAvailability(
-    choices,
-    host.parent(sessionId).pipe(Effect.map(Option.isSome)),
-  )
-
+/** Consults the configured advisor model about a session's conversation. */
 class Advisor extends Context.Service<Advisor, Interface>()(
-  "opencode-advisor/Advisor",
+  "opencode-advisor/advisor",
 ) {
+  /** The advisor, on the host, preferences, and settings in context. */
   public static readonly layer = Layer.effect(
     Advisor,
     Effect.gen(function* makeAdvisor() {
-      const host = yield* Host
-      const preferences = yield* PreferenceStore
-      const settings = yield* Settings
+      const host = yield* Host,
+        preferences = yield* PreferenceStore,
+        settings = yield* Settings
 
-      const availability = Effect.fn("Advisor.availability")(
-        function* availability(sessionId: SessionId) {
-          return yield* inSession(host, sessionId, yield* preferences.current)
-        },
-      )
-
-      const consult = Effect.fn("Advisor.consult")(function* consult(
-        sessionId: SessionId,
-        question: Option.Option<string>,
-      ) {
-        const choices = yield* preferences.current
-
-        const request = Effect.gen(function* requestAdvice() {
-          const model = yield* inSession(host, sessionId, choices).pipe(
-            Effect.flatMap(requireModel),
-          )
-
-          const ref = yield* parseModelRef(model)
-
-          const items = yield* host.transcript(sessionId)
-
-          const prompt = advisorPrompt(
-            items,
-            settings.maxTranscriptChars,
-            question,
-          )
-
-          const text = yield* host.consult(sessionId, prompt, ref)
-
-          return { model, text }
-        })
-
-        return yield* request.pipe(
-          withDeadline(
-            settings.timeout,
-            Option.getOrElse(choices.model, () => "not configured"),
-          ),
-        )
+      return Advisor.of({
+        availability: Effect.fn("Advisor.availability")(
+          function* checkAvailability(sessionId: Session.ID) {
+            return yield* availabilityIn(
+              host,
+              sessionId,
+              yield* preferences.current,
+            )
+          },
+        ),
+        consult: consultVia({ host, preferences, settings }),
       })
-
-      return Advisor.of({ availability, consult })
     }),
   )
 }
 
-export { Advisor }
-
-export type { Advice }
+export default Advisor

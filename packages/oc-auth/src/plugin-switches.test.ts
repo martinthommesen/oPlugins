@@ -1,6 +1,6 @@
 import { Effect, Exit, Scope } from "effect"
 import { expect, it as test } from "@effect/vitest"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import FakeCatalog from "./fake-catalog.test-support.ts"
 import FakeConnection from "./fake-connection.test-support.ts"
 import FakeEvents from "./fake-events.test-support.ts"

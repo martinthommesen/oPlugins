@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"
 import type { Vitest } from "@effect/vitest"
 import sources from "./claude-code-sources.ts"

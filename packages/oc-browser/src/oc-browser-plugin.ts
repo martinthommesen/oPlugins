@@ -1,6 +1,6 @@
-import { Effect, Record, Schema } from "effect"
-import InvalidOptions from "./invalid-options-error.ts"
+import { Effect, Schema } from "effect"
 import type { PluginOptions } from "@opencode/plugin/options"
+import pluginOptions from "@oc-lib/plugin-options/plugin-options.ts"
 
 /** The parts of the host's plugin context this plugin uses. */
 interface Host {
@@ -8,26 +8,10 @@ interface Host {
   readonly options: PluginOptions
 }
 
-/*
- * The plugin options accepted in `opencode.jsonc`: none yet, so every
- * option is unknown. Schema's excess-property check skips a struct with no
- * fields, so this check names each option instead.
- */
-const Options = Schema.Record(Schema.String, Schema.Json).check(
-    Schema.makeFilter((options) =>
-      Record.keys(options).map((option) => ({
-        issue: "Unknown option",
-        path: [option],
-      })),
-    ),
-  ),
-  /* Fails with every problem in `options`, so a typo cannot pass unnoticed. */
-  checkOptions = (
-    options: PluginOptions,
-  ): Effect.Effect<typeof Options.Type, InvalidOptions> =>
-    Schema.decodeEffect(Options)(options, { errors: "all" }).pipe(
-      Effect.mapError((failure) => InvalidOptions.fromIssue(failure.issue)),
-    ),
+/** The plugin options accepted in `opencode.jsonc`: none yet. */
+const Options = Schema.Struct({}),
+  /* Fails naming every option in the host's options, since each is unknown. */
+  checkOptions = pluginOptions.decode(Options, "oc-browser"),
   /* Start the plugin for the project the host opened. */
   setUp = Effect.fn("OcBrowser.setUp")(function* setUp(context: Host) {
     yield* checkOptions(context.options)

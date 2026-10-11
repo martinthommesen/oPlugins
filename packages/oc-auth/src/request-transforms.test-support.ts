@@ -7,7 +7,7 @@ import type {
 import { NodeCrypto } from "@effect/platform-node-shared"
 import type { Plugin } from "@opencode/plugin/effect"
 import PluginOptions from "./plugin-options.ts"
-import type PluginOptionsError from "./plugin-options-error.ts"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import RequestTransforms from "./request-transforms.ts"
 import testEnvironment from "./test-environment.test-support.ts"
 

@@ -1,14 +1,7 @@
-import {
-  Context,
-  Effect,
-  Layer,
-  Match,
-  Schema,
-  SchemaIssue,
-  SchemaTransformation,
-} from "effect"
+import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import PluginOptionsError from "./plugin-options-error.ts"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
+import pluginOptions from "@oc-lib/plugin-options/plugin-options.ts"
 
 /* A comma-separated list of beta flags that names at least one. */
 const BetaFlags = Schema.String.check(
@@ -61,54 +54,12 @@ const BetaFlags = Schema.String.check(
   },
   /** The plugin's options, decoded. */
   Options = Schema.Struct(OptionFields),
-  defaultMessage = SchemaIssue.makeFormatterDefault(),
-  optionNames = Object.keys(OptionFields).join(", "),
-  /* What is wrong with one option. An unknown name lists the known ones. */
-  problemMessage = (issue: SchemaIssue.Issue): string =>
-    Match.value(issue).pipe(
-      Match.tag(
-        "UnexpectedKey",
-        () => `unknown option (known: ${optionNames})`,
-      ),
-      Match.orElse((other: SchemaIssue.Issue) => defaultMessage(other)),
-    ),
-  /* One entry per problem, each naming its option. */
-  problemsOf = (issue: SchemaIssue.Issue): readonly string[] =>
-    Match.value(issue).pipe(
-      Match.tag(
-        "Composite",
-        (composite: { readonly issues: readonly SchemaIssue.Issue[] }) =>
-          composite.issues.flatMap((child) => problemsOf(child)),
-      ),
-      Match.tag(
-        "Pointer",
-        (pointer: {
-          readonly issue: SchemaIssue.Issue
-          readonly path: readonly PropertyKey[]
-        }) => [`${pointer.path.join(".")}: ${problemMessage(pointer.issue)}`],
-      ),
-      Match.orElse((other: SchemaIssue.Issue) => [
-        `options: ${problemMessage(other)}`,
-      ]),
-    ),
   /*
-   * The options in `raw`, decoded. Any problem fails, naming every
-   * offending option: a mistyped name or value must not be silently
-   * replaced by a default.
+   * The options in the host's raw options, decoded. Any problem fails,
+   * naming every offending option: a mistyped name or value must not be
+   * silently replaced by a default.
    */
-  settingsFrom = (
-    raw: Plugin.Context["options"],
-  ): Effect.Effect<typeof Options.Type, PluginOptionsError> =>
-    Schema.decodeEffect(Options)(raw, {
-      errors: "all",
-      onExcessProperty: "error",
-    }).pipe(
-      Effect.mapError((failure: { readonly issue: SchemaIssue.Issue }) =>
-        PluginOptionsError.make({
-          message: `Invalid oc-auth options: ${problemsOf(failure.issue).join("; ")}`,
-        }),
-      ),
-    )
+  settingsFrom = pluginOptions.decode(Options, "oc-auth")
 
 /**
  * The plugin's options from `opencode.jsonc`, decoded once when it starts.

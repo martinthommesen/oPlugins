@@ -1,6 +1,6 @@
 import { Context, Effect, Fiber, Layer, Option, Schema } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import TokenEndpoint from "./token-endpoint.test-support.ts"

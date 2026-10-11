@@ -33,6 +33,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@oc-lib/host-test": "workspace:*",
+    "@oc-lib/plugin-options": "workspace:*",
     "@opencode/plugin": "catalog:",
     "@opencode/schema": "catalog:",
     "@types/node": "catalog:",

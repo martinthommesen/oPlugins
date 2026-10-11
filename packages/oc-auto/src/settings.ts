@@ -1,6 +1,7 @@
 import { Context, Duration, Effect, Layer, Schema } from "effect"
-import InvalidOptions from "./invalid-options-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
+import pluginOptions from "@oc-lib/plugin-options/plugin-options.ts"
 
 interface Interface {
   /** Base URL of the Codex Responses backend. */
@@ -89,7 +90,9 @@ const BackendUrl = Schema.URLFromString.check(
     model: Model,
     reasoningEffort: ReasoningEffort,
     timeout: Timeout,
-  }).annotate({ messageUnexpectedKey: "Unknown option" })
+  }),
+  /* The plugin options in the host's options, decoded. */
+  decodeOptions = pluginOptions.decode(ValidOptions, "oc-auto")
 
 /** The plugin's options, validated, with their defaults. */
 class Settings extends Context.Service<Settings, Interface>()(
@@ -104,16 +107,11 @@ class Settings extends Context.Service<Settings, Interface>()(
    */
   public static readonly fromOptions = (
     options: PluginOptions,
-  ): Layer.Layer<Settings, InvalidOptions> =>
+  ): Layer.Layer<Settings, PluginOptionsError> =>
     Layer.effect(
       Settings,
       Effect.gen(function* readSettings() {
-        const decoded = yield* Schema.decodeEffect(ValidOptions)(options, {
-          errors: "all",
-          onExcessProperty: "error",
-        }).pipe(
-          Effect.mapError((failure) => InvalidOptions.fromIssue(failure.issue)),
-        )
+        const decoded = yield* decodeOptions(options)
 
         return Settings.of({
           baseUrl: decoded.baseUrl.href,

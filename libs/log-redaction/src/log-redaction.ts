@@ -1,6 +1,6 @@
 import { Array as Arr, Predicate } from "effect"
 
-/** A value a debug-log field may hold. */
+/** A value a log record field may hold. */
 type LogValue =
   | string
   | number
@@ -9,41 +9,61 @@ type LogValue =
   | readonly LogValue[]
   | LogFields
 
-/** The structured fields of one debug-log record. */
+/** The structured fields of one log record. */
 interface LogFields {
   readonly [key: string]: LogValue
 }
 
 type Scalar = Exclude<LogValue, object>
 
-const JWT_PATTERN = /^eyJ[\w-]{10,}/u,
+const LEADING_JWT = /^eyJ[\w-]{10,}/u,
   MAX_DEPTH = 4,
   NESTED = "[nested]",
   NEXT_LEVEL = 1,
   REDACTED = "REDACTED",
   REDACTED_KEYS = new Set([
+    "access",
     "accessToken",
+    "account",
     "authorization",
     "cookie",
     "password",
+    "refresh",
     "refreshToken",
     "set-cookie",
     "token",
+    "x-api-key",
   ]),
   ROOT_DEPTH = 0,
+  /*
+   * An Anthropic token (`sk-ant-...`) or a JWT, wherever it appears in a
+   * string: an error message can quote one.
+   */
+  TOKEN_PATTERN = /(?<![\w-])(?:sk-ant-[A-Za-z0-9]+-|eyJ[\w-]{10,})[\w.-]*/gu,
   TOKEN_PREFIX_LENGTH = 8,
   guardList = (
     value: readonly LogValue[] | LogFields,
   ): value is readonly LogValue[] => Arr.isArray(value),
   guardNested = (value: LogValue): value is readonly LogValue[] | LogFields =>
     Predicate.isObjectOrArray(value),
-  /* A token-shaped string keeps a short prefix, enough to tell tokens apart. */
+  /* A token keeps a short prefix, enough to tell tokens apart, and loses the rest. */
+  hidden = (token: string): string =>
+    `${token.slice(ROOT_DEPTH, TOKEN_PREFIX_LENGTH)}...REDACTED`,
+  /*
+   * `value` with every token in it hidden. A string that starts with a JWT
+   * is hidden whole, because `TOKEN_PATTERN` stops at a standard base64
+   * character (`+`, `/`, `=`) that could continue the secret.
+   */
   hideScalar = (value: Scalar): Scalar => {
-    if (Predicate.isString(value) && JWT_PATTERN.test(value)) {
-      return `${value.slice(ROOT_DEPTH, TOKEN_PREFIX_LENGTH)}...REDACTED`
+    if (!Predicate.isString(value)) {
+      return value
     }
 
-    return value
+    if (LEADING_JWT.test(value)) {
+      return hidden(value)
+    }
+
+    return value.replaceAll(TOKEN_PATTERN, (token) => hidden(token))
   },
   /*
    * `value` with secrets removed. A field named like a secret is replaced
@@ -84,4 +104,5 @@ const JWT_PATTERN = /^eyJ[\w-]{10,}/u,
       ]),
     )
 
+/** A log record's fields with every secret removed. */
 export default redact

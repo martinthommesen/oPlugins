@@ -5,7 +5,7 @@ import {
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import type { ChildProcessSpawner } from "effect/unstable/process"
 import ClaudeCodeStores from "./claude-code-stores.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"

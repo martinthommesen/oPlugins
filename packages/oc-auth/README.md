@@ -211,8 +211,9 @@ flag per model after merging everything else.
 
 An invalid option stops the plugin from starting: a value of the wrong type,
 a number out of range, or a name the plugin does not know. OpenCode logs the
-failure, naming each problem, for example
-`Invalid oc-auth options: refreshCooldownMs: Expected a value greater than 0`.
+failure, naming each problem, and lists the known options for an unknown
+name. For example:
+`oc-auth did not start because its options in opencode.jsonc are invalid. refreshCooldownMs: Expected a value greater than 0. Correct the options, then restart OpenCode.`
 Nothing is replaced by a default.
 
 Restart the service after changing an option: `opencode service restart`.

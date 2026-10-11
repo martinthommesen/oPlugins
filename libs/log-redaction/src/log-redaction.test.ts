@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest"
 import redact from "./log-redaction.ts"
 
-const ITEM_COUNT = 42,
+const EXPIRY = 1_742_860_800_000,
+  ITEM_COUNT = 42,
   STATUS_OK = 200
 
 describe("log redaction of secret fields", () => {
@@ -9,16 +10,29 @@ describe("log redaction of secret fields", () => {
     expect.hasAssertions()
     expect(
       redact({
+        accessToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.abc123",
         authorization: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.abc123",
         cookie: "session=abc123",
         password: "hunter2",
+        refreshToken: "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4",
         "set-cookie": "session=def456; HttpOnly",
+        "x-api-key": "sk-ant-api03-abc123def456",
       }),
     ).toStrictEqual({
+      accessToken: "REDACTED",
       authorization: "REDACTED",
       cookie: "REDACTED",
       password: "REDACTED",
+      refreshToken: "REDACTED",
       "set-cookie": "REDACTED",
+      "x-api-key": "REDACTED",
+    })
+  })
+
+  it("redacts the Keychain account name", { timeout: 5000 }, () => {
+    expect.hasAssertions()
+    expect(redact({ account: "someone@example.com" })).toStrictEqual({
+      account: "REDACTED",
     })
   })
 
@@ -27,8 +41,11 @@ describe("log redaction of secret fields", () => {
     { timeout: 5000 },
     () => {
       expect.hasAssertions()
-      expect(redact({ accessToken: "short", token: "" })).toStrictEqual({
+      expect(
+        redact({ accessToken: "short", refreshToken: "", token: "" }),
+      ).toStrictEqual({
         accessToken: "REDACTED",
+        refreshToken: "REDACTED",
         token: "REDACTED",
       })
     },
@@ -44,6 +61,55 @@ describe("log redaction of token-shaped values", () => {
       }),
     ).toStrictEqual({ someToken: "eyJhbGci...REDACTED" })
   })
+
+  it(
+    "catches the Anthropic token format oc-auth handles",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+      expect(
+        redact({
+          bearer: "sk-ant-oat01-abcdefghijklmnop",
+          other: "sk-ant-api03-zyxwvutsrq",
+        }),
+      ).toStrictEqual({
+        bearer: "sk-ant-o...REDACTED",
+        other: "sk-ant-a...REDACTED",
+      })
+    },
+  )
+})
+
+describe("log redaction of tokens inside text", () => {
+  it(
+    "redacts a token an error message quotes, keeping the rest",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+      expect(
+        redact({
+          error:
+            "refresh failed: Bearer sk-ant-ort01-abcdefghijklmnop rejected, id eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
+        }),
+      ).toStrictEqual({
+        error:
+          "refresh failed: Bearer sk-ant-o...REDACTED rejected, id eyJhbGci...REDACTED",
+      })
+    },
+  )
+
+  it(
+    "redacts all of a string that starts with a JWT",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+      expect(
+        redact({
+          blob: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9+c2VjcmV0/dGFpbA== tail",
+        }),
+      ).toStrictEqual({ blob: "eyJhbGci...REDACTED" })
+    },
+  )
 })
 
 describe("log redaction of structures", () => {
@@ -54,16 +120,22 @@ describe("log redaction of structures", () => {
       expect.hasAssertions()
       expect(
         redact({
+          credential: { accessToken: "sk-ant-oat01-secret", source: "file" },
+          headers: ["sk-ant-oat01-secret", "plain"],
           request: { cookie: "session=abc123", url: "https://example.com" },
           values: ["eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload", "plain"],
         }),
       ).toStrictEqual({
+        credential: { accessToken: "REDACTED", source: "file" },
+        headers: ["sk-ant-o...REDACTED", "plain"],
         request: { cookie: "REDACTED", url: "https://example.com" },
         values: ["eyJhbGci...REDACTED", "plain"],
       })
     },
   )
+})
 
+describe("log redaction of deep structures", () => {
   it(
     "never logs a secret nested past the depth limit",
     { timeout: 5000 },
@@ -77,7 +149,11 @@ describe("log redaction of structures", () => {
               level: {
                 level: {
                   level: {
-                    blob: { password: "another-secret" },
+                    accessToken: "plain-secret-value",
+                    blob: {
+                      password: "another-secret",
+                      refreshToken: "another-secret",
+                    },
                     token: "plain-secret-value",
                   },
                 },
@@ -98,8 +174,12 @@ describe("log redaction of ordinary fields", () => {
     expect.hasAssertions()
 
     const fields = {
+      expiresAt: EXPIRY,
       method: "GET",
+      modelId: "claude-opus-4-6",
+      source: "Claude Code-credentials",
       status: STATUS_OK,
+      subscriptionType: "max",
       tabTitle: "Example Domain",
       url: "https://example.com/",
     }

@@ -1,13 +1,14 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import InvalidOptions from "./invalid-options-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
+import PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import plugin from "./index.ts"
 import support from "./advisor.test-support.ts"
 
 type PluginHost = Parameters<typeof plugin.effect>[typeof FIRST]
 
 const FIRST = 0,
+  KNOWN_OPTIONS = "maxTranscriptChars, model, subagents, timeout",
   REGISTRATION = { dispose: Effect.void },
   TIMEOUT = 60,
   TOO_SHORT = 0,
@@ -40,7 +41,7 @@ const FIRST = 0,
     storage: support.memoryStorage(),
     tool: { transform: acceptRegistration },
   }),
-  /* The message of the `InvalidOptions` set-up dies with on `options`, if it does. */
+  /* The message of the `PluginOptionsError` set-up dies with on `options`, if it does. */
   invalidOptionsMessage = (
     options: PluginOptions,
   ): Effect.Effect<Option.Option<string>> =>
@@ -51,7 +52,7 @@ const FIRST = 0,
         onFailure: (cause) =>
           Option.liftPredicate(
             Cause.squash(cause),
-            Schema.is(InvalidOptions),
+            Schema.is(PluginOptionsError),
           ).pipe(
             Option.map(
               (failure: { readonly message: string }) => failure.message,
@@ -63,7 +64,9 @@ const FIRST = 0,
   namesEveryProblem = Effect.gen(function* namesEveryProblem() {
     assert.deepStrictEqual(
       yield* invalidOptionsMessage({ subagents: "no", timout: TIMEOUT }),
-      failureNaming("timout: Unknown option. subagents: Expected boolean."),
+      failureNaming(
+        `timout: Unknown option (known: ${KNOWN_OPTIONS}). subagents: Expected boolean.`,
+      ),
     )
   }),
   rejectsMalformedModel = Effect.gen(function* rejectsMalformedModel() {
@@ -83,7 +86,7 @@ const FIRST = 0,
   rejectsUnknownOption = Effect.gen(function* rejectsUnknownOption() {
     assert.deepStrictEqual(
       yield* invalidOptionsMessage({ subagent: false }),
-      failureNaming("subagent: Unknown option."),
+      failureNaming(`subagent: Unknown option (known: ${KNOWN_OPTIONS}).`),
     )
   }),
   rejectsWrongType = Effect.gen(function* rejectsWrongType() {

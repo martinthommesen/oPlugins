@@ -1,7 +1,7 @@
 import { Effect, Option, Ref } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import type { Vitest } from "@effect/vitest"
 import claudeCodeCredential from "./claude-code-credential.ts"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"

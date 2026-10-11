@@ -8,7 +8,7 @@ import {
   pipe,
 } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import type InvalidOptions from "./invalid-options-error.ts"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import type { Scope } from "effect"
 import Settings from "./settings.ts"
 import type { Vitest } from "@effect/vitest"
@@ -38,7 +38,7 @@ const FIRST = 0,
   /* The settings the plugin reads from `options`, built in their own scope. */
   settingsOf = (
     options: Parameters<typeof support.settingsFrom>[typeof FIRST],
-  ): Effect.Effect<Settings["Service"], InvalidOptions> =>
+  ): Effect.Effect<Settings["Service"], PluginOptionsError> =>
     Layer.build(support.settingsFrom(options)).pipe(
       Effect.map((built) => Context.get(built, Settings)),
       Effect.scoped,

@@ -3,9 +3,9 @@ import type { Credential } from "@opencode/plugin/effect"
 import Host from "./host.ts"
 import HostError from "./host-error.ts"
 import { Integration } from "@opencode/plugin/effect"
-import type InvalidOptions from "./invalid-options-error.ts"
 import type { Option } from "effect"
 import type { PluginOptions } from "@opencode/plugin/options"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import { Session } from "@opencode/schema/session"
 import Settings from "./settings.ts"
 
@@ -56,7 +56,7 @@ const FIRST = 0,
   /* The settings the plugin reads from `options`. */
   settingsFrom = (
     options: PluginOptions,
-  ): Layer.Layer<Settings, InvalidOptions> => Settings.fromOptions(options)
+  ): Layer.Layer<Settings, PluginOptionsError> => Settings.fromOptions(options)
 
 /** Fakes and fixtures the tests share. */
 export default Object.freeze({

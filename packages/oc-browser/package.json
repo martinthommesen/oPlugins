@@ -30,7 +30,7 @@
   "scripts": {
     "build": "tsdown && node -e \"const fs = require('node:fs'); const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8')); manifest.version = require('./package.json').version; fs.writeFileSync('dist/extension/manifest.json', JSON.stringify(manifest, null, 2) + '\\n')\"",
     "typecheck": "tsc -p tsconfig.json && tsc -p extension/tsconfig.json",
-    "pretest": "node -e \"const n=require('node:fs').globSync(['src/**/*.test.ts', 'extension/**/*.test.ts']).length; if (n < 3) { console.error('expected at least 3 test files, found '+n); process.exit(1) }\"",
+    "pretest": "node -e \"const n=require('node:fs').globSync(['src/**/*.test.ts', 'extension/**/*.test.ts']).length; if (n < 2) { console.error('expected at least 2 test files, found '+n); process.exit(1) }\"",
     "test": "vitest run",
     "test:host": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); for (const file of ['./dist/tui.js', './dist/extension/manifest.json', './dist/extension/service-worker.js']) { if (!require('node:fs').existsSync(file)) { throw new Error(file + ' is missing') } }\"",
@@ -40,7 +40,9 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@oc-lib/captured-logs": "workspace:*",
     "@oc-lib/host-test": "workspace:*",
+    "@oc-lib/plugin-options": "workspace:*",
     "@opencode/plugin": "catalog:",
     "@opencode/theme": "catalog:",
     "@opentui/solid": "catalog:",

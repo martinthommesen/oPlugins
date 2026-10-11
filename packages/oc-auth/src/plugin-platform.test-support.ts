@@ -3,7 +3,7 @@ import {
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import { Layer } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import PluginOptions from "./plugin-options.ts"

@@ -30,7 +30,9 @@ Environment variables are only for test overrides.
 Log with `Effect.logInfo` and its siblings: the message is a `snake_case`
 event name and the details go in `Effect.annotateLogs`. The host writes the
 records to its log. Records at info level and above carry metadata only;
-debug records may carry content once `src/log-redaction.ts` has redacted it.
+debug records may carry content once the `@oc-lib/log-redaction` library
+has redacted it; add the library as a devDependency when a record first
+needs it.
 
 Long-lived state (connections, pending requests, the active tab) lives in
 `Ref`s owned by a service's layer.

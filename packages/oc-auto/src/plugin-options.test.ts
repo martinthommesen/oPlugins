@@ -1,12 +1,14 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect"
 import { describe, expect, it } from "@effect/vitest"
-import InvalidOptions from "./invalid-options-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
+import PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import plugin from "./index.ts"
 
 type PluginHost = Parameters<typeof plugin.effect>[typeof FIRST]
 
 const FIRST = 0,
+  KNOWN_OPTIONS =
+    "baseUrl, extraPolicy, fallbackModel, maxConsecutiveDenials, maxTotalDenials, model, reasoningEffort, timeout",
   REGISTRATION = { dispose: Effect.void },
   TOTAL_DENIALS = 6,
   /* A host call that registers something, as set-up's call does. */
@@ -29,7 +31,7 @@ const FIRST = 0,
     permission: { hook: acceptRegistration },
     session: { context: dieIfCalled, get: dieIfCalled },
   }),
-  /* The message of the `InvalidOptions` set-up dies with on `options`, if it does. */
+  /* The message of the `PluginOptionsError` set-up dies with on `options`, if it does. */
   invalidOptionsMessage = (
     options: PluginOptions,
   ): Effect.Effect<Option.Option<string>> =>
@@ -40,7 +42,7 @@ const FIRST = 0,
         onFailure: (cause) =>
           Option.liftPredicate(
             Cause.squash(cause),
-            Schema.is(InvalidOptions),
+            Schema.is(PluginOptionsError),
           ).pipe(
             Option.map(
               (failure: { readonly message: string }) => failure.message,
@@ -69,7 +71,9 @@ describe("plugin options", () => {
       expect(Exit.isSuccess(exit)).toBe(true)
     }),
   )
+})
 
+describe("invalid plugin options", () => {
   it.effect("fail set-up on an option of the wrong type", () =>
     Effect.gen(function* rejectsWrongType() {
       expect.hasAssertions()
@@ -95,7 +99,9 @@ describe("plugin options", () => {
       expect.hasAssertions()
       expect(
         yield* invalidOptionsMessage({ fallback: "gpt-6-luna" }),
-      ).toStrictEqual(failureNaming("fallback: Unknown option."))
+      ).toStrictEqual(
+        failureNaming(`fallback: Unknown option (known: ${KNOWN_OPTIONS}).`),
+      )
     }),
   )
 })

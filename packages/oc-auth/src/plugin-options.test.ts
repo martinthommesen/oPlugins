@@ -15,6 +15,11 @@ const COOLDOWN_MS = 15_000,
   KNOWN_OPTIONS =
     "betaFlags, cliVersion, cost, entrypoint, refreshCooldownMs, refreshLockTtlMs, userAgent",
   NO_LEASE_MS = 0,
+  /* The message set-up fails with when the options have `problems`. */
+  failureNaming = (problems: string): Option.Option<string> =>
+    Option.some(
+      `oc-auth did not start because its options in opencode.jsonc are invalid. ${problems} Correct the options, then restart OpenCode.`,
+    ),
   /* A host with no active connection. */
   host = fakeHost.domains(Option.none())
 
@@ -25,11 +30,7 @@ describe("plugin options of the wrong type", () => {
         expect.hasAssertions()
         expect(
           yield* fakeHost.optionsFailure({ refreshCooldownMs: "15000" }),
-        ).toStrictEqual(
-          Option.some(
-            "Invalid oc-auth options: refreshCooldownMs: Expected number",
-          ),
-        )
+        ).toStrictEqual(failureNaming("refreshCooldownMs: Expected number."))
       }),
     )
   })
@@ -43,9 +44,7 @@ describe("plugin options out of range", () => {
         expect(
           yield* fakeHost.optionsFailure({ refreshLockTtlMs: NO_LEASE_MS }),
         ).toStrictEqual(
-          Option.some(
-            "Invalid oc-auth options: refreshLockTtlMs: Expected a value greater than 0",
-          ),
+          failureNaming("refreshLockTtlMs: Expected a value greater than 0."),
         )
       }),
     )
@@ -60,8 +59,8 @@ describe("plugin options with an unknown name", () => {
         expect(
           yield* fakeHost.optionsFailure({ refresh_cooldown_ms: COOLDOWN_MS }),
         ).toStrictEqual(
-          Option.some(
-            `Invalid oc-auth options: refresh_cooldown_ms: unknown option (known: ${KNOWN_OPTIONS})`,
+          failureNaming(
+            `refresh_cooldown_ms: Unknown option (known: ${KNOWN_OPTIONS}).`,
           ),
         )
       }),

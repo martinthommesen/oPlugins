@@ -7,7 +7,7 @@ import type ModelUnavailable from "./model-unavailable-error.ts"
 import type RequestFailed from "./request-failed-error.ts"
 import type ReviewTimedOut from "./review-timed-out-error.ts"
 import Verdict from "./verdict.ts"
-import redact from "./log-redaction.ts"
+import redact from "@oc-lib/log-redaction/log-redaction.ts"
 
 /** Why a review could not decide, as far as the user is told. */
 type ReviewFailure =

@@ -4,7 +4,7 @@ import {
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import CredentialRefresh from "./credential-refresh.ts"
 import { Layer } from "effect"
 import PluginOptions from "./plugin-options.ts"

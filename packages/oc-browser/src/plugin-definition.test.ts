@@ -1,16 +1,14 @@
 import { Effect, Layer } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import InvalidOptions from "./invalid-options-error.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
+import PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
-import capturedLog from "./captured-log.test-support.ts"
 import plugin from "./index.ts"
 
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
-  readonly effect: Vitest.Test<
-    Layer.Success<typeof capturedLog.layer> | Scope.Scope
-  >
+  readonly effect: Vitest.Test<CapturedLogs | Scope.Scope>
 }
 
 /** The `it` of a `test.layer` block that provides no services. */
@@ -33,7 +31,7 @@ describe("the plugin definition", () => {
 })
 
 describe("the plugin set-up", () => {
-  test.layer(capturedLog.layer)((it: Tests) => {
+  test.layer(CapturedLogs.layer)((it: Tests) => {
     it.effect("records the host's project in the host's log", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
@@ -42,10 +40,10 @@ describe("the plugin set-up", () => {
           .effect({ location: { project: { id: PROJECT } }, options: {} })
           .pipe(Effect.scoped)
 
-        expect(yield* capturedLog.records).toStrictEqual([
+        expect(yield* (yield* CapturedLogs).records).toStrictEqual([
           {
             annotations: { project: PROJECT },
-            level: "INFO",
+            level: "Info",
             message: "plugin_started",
           },
         ])
@@ -55,7 +53,7 @@ describe("the plugin set-up", () => {
 })
 
 describe("the plugin options", () => {
-  test.layer(capturedLog.layer)((it: Tests) => {
+  test.layer(CapturedLogs.layer)((it: Tests) => {
     it.effect("fails set-up on an unknown option, naming it", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
@@ -70,12 +68,14 @@ describe("the plugin options", () => {
             Effect.catchDefect((defect) => Effect.succeed(defect)),
           )
 
-        expect(failure).toBeInstanceOf(InvalidOptions)
+        expect(failure).toBeInstanceOf(PluginOptionsError)
         expect(failure).toHaveProperty(
           "message",
-          expect.stringContaining("debug: Unknown option."),
+          expect.stringContaining(
+            "debug: Unknown option (oc-browser has no options).",
+          ),
         )
-        expect(yield* capturedLog.records).toStrictEqual([])
+        expect(yield* (yield* CapturedLogs).records).toStrictEqual([])
       }),
     )
   })

@@ -1,8 +1,8 @@
 import Advisor from "./advisor.ts"
 import type Host from "./host.ts"
-import type InvalidOptions from "./invalid-options-error.ts"
 import { Layer } from "effect"
 import type { PluginOptions } from "@opencode/plugin/options"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import PreferenceStore from "./preference-store.ts"
 import Settings from "./settings.ts"
 import type { StorageDomain } from "@opencode/plugin/effect/storage"
@@ -18,7 +18,7 @@ const servicesLayer = (
   host: Layer.Layer<Host>,
   options: PluginOptions,
   storage: StorageDomain,
-): Layer.Layer<Services, InvalidOptions> => {
+): Layer.Layer<Services, PluginOptionsError> => {
   const foundation = Layer.merge(host, Settings.fromOptions(options)),
     preferences = PreferenceStore.fromStorage(storage).pipe(
       Layer.provideMerge(foundation),

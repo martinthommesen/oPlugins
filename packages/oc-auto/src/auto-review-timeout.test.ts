@@ -3,8 +3,8 @@ import { describe, expect, it as test } from "@effect/vitest"
 import AutoReview from "./auto-review.ts"
 import DenialBreaker from "./denial-breaker.ts"
 import HangingHost from "./hanging-host.test-support.ts"
-import type InvalidOptions from "./invalid-options-error.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import Reviewer from "./reviewer.ts"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
@@ -19,7 +19,7 @@ interface Tests {
 /* A one-second deadline over a host that never answers and records being interrupted. */
 const deadlineServices = (): Layer.Layer<
   AutoReview | HangingHost,
-  InvalidOptions
+  PluginOptionsError
 > => {
   const settings = support.settingsFrom({ timeout: "1 second" }),
     stalledReviewer = Reviewer.of({ review: () => Effect.never }),

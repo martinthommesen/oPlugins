@@ -14,7 +14,7 @@ type PluginContext = Plugin.Context
 
 type HostContext = Parameters<typeof Host.fromPlugin>[typeof FIRST]
 
-type InvalidOptions = Layer.Error<ReturnType<typeof Settings.fromOptions>>
+type PluginOptionsError = Layer.Error<ReturnType<typeof Settings.fromOptions>>
 
 /** The parts of the host's plugin context this plugin uses. */
 interface PluginHost extends HostContext {
@@ -26,7 +26,7 @@ const FIRST = 0,
   /* The plugin's services over the host's plugin context and options. */
   composeServices = (
     context: PluginHost,
-  ): Layer.Layer<AutoReview, InvalidOptions> => {
+  ): Layer.Layer<AutoReview, PluginOptionsError> => {
     const host = Host.fromPlugin(context),
       settings = Settings.fromOptions(context.options),
       signIn = ChatGptAuth.layer.pipe(Layer.provide(host)),

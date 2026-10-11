@@ -44,7 +44,8 @@ its card in `chrome://extensions`.
 
 oc-browser has no options yet. Any option set in the object form of its
 `plugins` entry is unknown, and an unknown option stops the plugin from
-loading: OpenCode's log then shows an error that names the option.
+loading: OpenCode's log then shows an error that names the option and says
+that oc-browser has no options.
 
 ## Environment variables
 

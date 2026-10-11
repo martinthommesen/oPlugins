@@ -4,8 +4,8 @@ import AutoReview from "./auto-review.ts"
 import ConversationItem from "./conversation-item.ts"
 import DenialBreaker from "./denial-breaker.ts"
 import FakeReviewer from "./fake-reviewer.test-support.ts"
-import type InvalidOptions from "./invalid-options-error.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import type Reviewer from "./reviewer.ts"
 import support from "./testing.test-support.ts"
 
@@ -49,7 +49,7 @@ const CHILD = support.sessionId("ses_child"),
   autoReviewWith = (
     script: Script,
     snapshots: Sessions = SESSIONS,
-  ): Layer.Layer<AutoReview | FakeReviewer | Reviewer, InvalidOptions> => {
+  ): Layer.Layer<AutoReview | FakeReviewer | Reviewer, PluginOptionsError> => {
     const host = support.fakeHost(Option.none(), snapshots),
       settings = support.settingsFrom({ maxConsecutiveDenials: DENIAL_LIMIT }),
       strikes = DenialBreaker.layer.pipe(Layer.provide(settings))

@@ -5,7 +5,7 @@ import {
   NodePath,
 } from "@effect/platform-node-shared"
 import { describe, expect, it as test } from "@effect/vitest"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
 import accountLabels from "./claude-code-account-labels.ts"

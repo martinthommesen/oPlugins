@@ -77,9 +77,10 @@ numbers, not strings.
 An invalid option stops the plugin from loading: a value of the wrong type,
 a value out of range, a `reasoningEffort` not in the list, or an option name
 not in the table. No invalid option is replaced by its default. OpenCode's
-log then shows an error that names each invalid option and the problem, and
-permission prompts behave as if the plugin were not installed until you
-correct the option and restart OpenCode.
+log then shows an error that names each invalid option and the problem,
+listing the known options for an unknown name, and permission prompts
+behave as if the plugin were not installed until you correct the option and
+restart OpenCode.
 
 Only set `baseUrl` to a backend you trust. It receives your ChatGPT access token
 and conversation. Use HTTPS unless testing a local backend. Requests do not

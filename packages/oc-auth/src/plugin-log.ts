@@ -1,5 +1,5 @@
 import { Effect, Predicate } from "effect"
-import redact from "./log-redaction.ts"
+import redact from "@oc-lib/log-redaction/log-redaction.ts"
 
 type Fields = typeof redact extends (fields: infer Value) => object
   ? Value

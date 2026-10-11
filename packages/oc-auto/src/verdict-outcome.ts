@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
 import Verdict from "./verdict.ts"
-import redact from "./log-redaction.ts"
+import redact from "@oc-lib/log-redaction/log-redaction.ts"
 
 type Settled = Parameters<typeof Verdict.$match>[typeof FIRST]
 

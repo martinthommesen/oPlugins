@@ -2,8 +2,8 @@ import { Effect, Layer } from "effect"
 import FakeHost from "./fake-host.test-support.ts"
 import type Host from "./host.ts"
 import HostError from "./host-error.ts"
-import type InvalidOptions from "./invalid-options-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import type { Schema } from "effect"
 import { Session } from "@opencode/schema/session"
 import type { StorageDomain } from "@opencode/plugin/effect/storage"
@@ -48,7 +48,7 @@ const FIRST = 0,
     host: Layer.Layer<Extra | Host>,
     options: PluginOptions,
     stored: Entries = [],
-  ): Layer.Layer<Extra | Services, InvalidOptions> =>
+  ): Layer.Layer<Extra | Services, PluginOptionsError> =>
     Layer.merge(
       Layer.unwrap(
         Effect.sync(() => services.layer(host, options, memoryStorage(stored))),
@@ -64,7 +64,7 @@ const FIRST = 0,
     script: HostOverrides,
     options: PluginOptions,
     stored: Entries = [],
-  ): Layer.Layer<FakeHost | Services, InvalidOptions> =>
+  ): Layer.Layer<FakeHost | Services, PluginOptionsError> =>
     pluginServices(FakeHost.layer(script), options, stored)
 
 /** What the advisor tests share. */

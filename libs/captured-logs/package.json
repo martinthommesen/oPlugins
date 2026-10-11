@@ -1,0 +1,25 @@
+{
+  "name": "@oc-lib/captured-logs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The test logger: keeps every log record, at every level, for a test to read.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

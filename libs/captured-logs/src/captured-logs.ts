@@ -16,7 +16,7 @@ const Joined = SchemaTransformation.transform({
     decode: (parts: readonly string[]) => parts.join(" "),
     encode: (text: string): readonly string[] => [text],
   }),
-  /** One record the plugin logged: its level, its event, and its annotations. */
+  /** One record a plugin logged: its level, its event, and its annotations. */
   LogRecord = Schema.Struct({
     annotations: Schema.Record(Schema.String, Schema.Json),
     level: Schema.String,
@@ -27,7 +27,7 @@ const Joined = SchemaTransformation.transform({
   LogRecords = Schema.Array(LogRecord)
 
 /**
- * The plugin's log for tests: a logger that keeps every record, at every
+ * A plugin's log for tests: a logger that keeps every record, at every
  * level, for inspection, in place of the default console logger.
  */
 class CapturedLogs extends Context.Service<
@@ -40,7 +40,7 @@ class CapturedLogs extends Context.Service<
     /** Every record logged so far, oldest first. */
     readonly records: Effect.Effect<readonly (typeof LogRecord.Type)[]>
   }
->()("@martinthommesen/oc-auth/captured-logs.test-support/CapturedLogs") {
+>()("@oc-lib/captured-logs/captured-logs/CapturedLogs") {
   /** Captures every record, and provides this service to read them. */
   public static readonly layer: Layer.Layer<CapturedLogs> = Layer.unwrap(
     Effect.sync(() => {

@@ -1,0 +1,26 @@
+{
+  "name": "@oc-lib/plugin-options",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plugin options: a plugin's options from the host context, decoded, or an error that names every problem.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@opencode/plugin": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

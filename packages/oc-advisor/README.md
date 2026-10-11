@@ -87,9 +87,10 @@ object form of a `plugins` entry in `opencode.json(c)`:
 An invalid option stops the plugin from loading: a value of the wrong type,
 a value out of range, a `model` that isn't of the form
 `provider/model[#variant]`, or an option name not in the table. OpenCode's
-log then shows an error that names each invalid option and the problem, and
-the advisor is unavailable until you correct the option and restart
-OpenCode. No invalid option is replaced by its default.
+log then shows an error that names each invalid option and the problem,
+listing the known options for an unknown name, and the advisor is
+unavailable until you correct the option and restart OpenCode. No invalid
+option is replaced by its default.
 
 ## How it works
 

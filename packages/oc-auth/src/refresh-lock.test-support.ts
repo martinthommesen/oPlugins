@@ -14,7 +14,7 @@ import {
   NodeFileSystem,
   NodePath,
 } from "@effect/platform-node-shared"
-import CapturedLogs from "./captured-logs.test-support.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import PluginOptions from "./plugin-options.ts"
 import RefreshLock from "./refresh-lock.ts"

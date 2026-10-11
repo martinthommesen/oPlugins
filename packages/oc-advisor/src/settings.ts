@@ -1,7 +1,8 @@
 import { Context, Duration, Effect, Layer, Option, Schema } from "effect"
-import InvalidOptions from "./invalid-options-error.ts"
 import { Model } from "@opencode/plugin/effect"
 import type { PluginOptions } from "@opencode/plugin/options"
+import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
+import pluginOptions from "@oc-lib/plugin-options/plugin-options.ts"
 
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 200_000,
   DEFAULT_TIMEOUT_SECONDS = 300,
@@ -34,7 +35,9 @@ const DEFAULT_MAX_TRANSCRIPT_CHARS = 200_000,
     model: Schema.optionalKey(ModelReference),
     subagents: OptionSubagents,
     timeout: OptionTimeout,
-  }).annotate({ messageUnexpectedKey: "Unknown option" })
+  }),
+  /* The plugin options in the host's options, decoded. */
+  decodeOptions = pluginOptions.decode(Options, "oc-advisor")
 
 /** The plugin options, decoded once when the plugin loads. */
 class Settings extends Context.Service<
@@ -56,16 +59,11 @@ class Settings extends Context.Service<
    */
   public static readonly fromOptions = (
     options: PluginOptions,
-  ): Layer.Layer<Settings, InvalidOptions> =>
+  ): Layer.Layer<Settings, PluginOptionsError> =>
     Layer.effect(
       Settings,
       Effect.gen(function* readSettings() {
-        const decoded = yield* Schema.decodeEffect(Options)(options, {
-          errors: "all",
-          onExcessProperty: "error",
-        }).pipe(
-          Effect.mapError((failure) => InvalidOptions.fromIssue(failure.issue)),
-        )
+        const decoded = yield* decodeOptions(options)
 
         return Settings.of({
           maxTranscriptChars: decoded.maxTranscriptChars,

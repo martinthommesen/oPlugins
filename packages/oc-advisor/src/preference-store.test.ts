@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it as test } from "@effect/vitest"
 import PreferenceStore from "./preference-store.ts"
 import type { Scope } from "effect"
 import Settings from "./settings.ts"
@@ -112,35 +112,40 @@ const OPTIONS = { model: "openai/gpt-6-sol", subagents: false },
   })
 
 describe("preference store", () => {
-  it.layer(Settings.fromOptions(OPTIONS))((tests: Tests) => {
-    tests.effect(
+  test.layer(Settings.fromOptions(OPTIONS))((it: Tests) => {
+    it.effect(
       "turns the advisor on when the options name a model",
       () => usesOptions,
     )
+  })
 
-    tests.effect(
+  test.layer(Settings.fromOptions(OPTIONS))((it: Tests) => {
+    it.effect(
       "lets /advisor choices override the options",
       () => overridesOptions,
     )
   })
 
-  it.layer(Settings.fromOptions({}))((tests: Tests) => {
-    tests.effect(
-      "ignores stored values it cannot read",
-      () => ignoresUnreadable,
-    )
+  test.layer(Settings.fromOptions({}))((it: Tests) => {
+    it.effect("ignores stored values it cannot read", () => ignoresUnreadable)
   })
 
-  it.layer(Settings.fromOptions(OPTIONS))((tests: Tests) => {
-    tests.effect(
+  test.layer(Settings.fromOptions(OPTIONS))((it: Tests) => {
+    it.effect(
       "does not lose changes from concurrent commands",
       () => preservesConcurrentUpdates,
     )
-    tests.effect(
+  })
+
+  test.layer(Settings.fromOptions(OPTIONS))((it: Tests) => {
+    it.effect(
       "preserves old stored choices when one field changes",
       () => preservesLegacyChoices,
     )
-    tests.effect(
+  })
+
+  test.layer(Settings.fromOptions(OPTIONS))((it: Tests) => {
+    it.effect(
       "does not discard valid choices when another field is unreadable",
       () => isolatesUnreadableChoices,
     )

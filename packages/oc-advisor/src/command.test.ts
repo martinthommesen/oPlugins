@@ -1,5 +1,5 @@
-import { Effect, pipe } from "effect"
-import { assert, describe, expect, it } from "@effect/vitest"
+import { Effect, Layer, pipe } from "effect"
+import { assert, describe, expect, it as test } from "@effect/vitest"
 import type Host from "./host.ts"
 import type PreferenceStore from "./preference-store.ts"
 import type { Scope } from "effect"
@@ -12,7 +12,27 @@ interface Tests {
   readonly effect: Vitest.Test<Host | PreferenceStore | Scope.Scope>
 }
 
+/** The `it` of a `test.layer` block that provides no services. */
+interface PureTests {
+  readonly effect: Vitest.Test<Scope.Scope>
+}
+
 const { AdvisorCommand } = command,
+  /** `/advisor` inputs and the commands they parse to. */
+  PARSED = [
+    ["", AdvisorCommand.Status()],
+    ["  status ", AdvisorCommand.Status()],
+    ["ON", AdvisorCommand.SetEnabled({ enabled: true })],
+    ["off", AdvisorCommand.SetEnabled({ enabled: false })],
+    ["subagents  off", AdvisorCommand.SetSubagents({ allowed: false })],
+    ["Subagents On", AdvisorCommand.SetSubagents({ allowed: true })],
+    [
+      "anthropic/Claude-Opus#high",
+      AdvisorCommand.SetModel({ model: "anthropic/Claude-Opus#high" }),
+    ],
+    ["two words", AdvisorCommand.Invalid({ input: "two words" })],
+    ["subagents maybe", AdvisorCommand.Invalid({ input: "subagents maybe" })],
+  ] as const,
   /* Runs `/advisor` commands in order and returns the replies. */
   answers = (
     inputs: readonly string[],
@@ -68,51 +88,41 @@ const { AdvisorCommand } = command,
   })
 
 describe("parseCommand", () => {
-  it.each([
-    ["", AdvisorCommand.Status()],
-    ["  status ", AdvisorCommand.Status()],
-    ["ON", AdvisorCommand.SetEnabled({ enabled: true })],
-    ["off", AdvisorCommand.SetEnabled({ enabled: false })],
-    ["subagents  off", AdvisorCommand.SetSubagents({ allowed: false })],
-    ["Subagents On", AdvisorCommand.SetSubagents({ allowed: true })],
-    [
-      "anthropic/Claude-Opus#high",
-      AdvisorCommand.SetModel({ model: "anthropic/Claude-Opus#high" }),
-    ],
-    ["two words", AdvisorCommand.Invalid({ input: "two words" })],
-    ["subagents maybe", AdvisorCommand.Invalid({ input: "subagents maybe" })],
-  ])("parses %j", { timeout: 5000 }, (input, expected) => {
-    expect.hasAssertions()
+  for (const [input, expected] of PARSED) {
+    test.layer(Layer.empty)((it: PureTests) => {
+      it.effect(`parses ${JSON.stringify(input)}`, () =>
+        Effect.sync(() => {
+          expect.hasAssertions()
 
-    expect(command.parseCommand(input)).toStrictEqual(expected)
-  })
+          expect(command.parseCommand(input)).toStrictEqual(expected)
+        }),
+      )
+    })
+  }
 })
 
 describe("runCommand", () => {
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect(
-      "sets a selectable model and reports it as on",
-      () => setsModel,
-    )
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect("sets a selectable model and reports it as on", () => setsModel)
   })
 
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect("rejects models the user cannot select", () => rejectsModels)
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect("rejects models the user cannot select", () => rejectsModels)
   })
 
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect(
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect(
       "turns the advisor off and back on with its model",
       () => togglesAdvisor,
     )
   })
 
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect("needs a model before it can turn on", () => needsModel)
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect("needs a model before it can turn on", () => needsModel)
   })
 
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect(
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect(
       "records whether subagents may consult the advisor",
       () => recordsSubagents,
     )

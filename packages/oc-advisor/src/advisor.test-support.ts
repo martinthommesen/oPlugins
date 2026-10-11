@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect"
 import FakeHost from "./fake-host.test-support.ts"
+import type Host from "./host.ts"
 import HostError from "./host-error.ts"
 import type InvalidOptions from "./invalid-options-error.ts"
 import type { PluginOptions } from "@opencode/plugin/options"
@@ -39,6 +40,22 @@ const FIRST = 0,
     }
   },
   /*
+   * The advisor's services around `host`, with what else `host` provides,
+   * the plugin `options`, and storage in memory holding `stored`. Each build
+   * starts with fresh storage and builds `host` once.
+   */
+  pluginServices = <Extra>(
+    host: Layer.Layer<Extra | Host>,
+    options: PluginOptions,
+    stored: Entries = [],
+  ): Layer.Layer<Extra | Services, InvalidOptions> =>
+    Layer.merge(
+      Layer.unwrap(
+        Effect.sync(() => services.layer(host, options, memoryStorage(stored))),
+      ),
+      host,
+    ),
+  /*
    * The advisor's services around a host that answers from `script`, with
    * the host's record, the plugin `options`, and storage in memory holding
    * `stored`. Each build starts with fresh storage and a fresh record.
@@ -47,21 +64,14 @@ const FIRST = 0,
     script: HostOverrides,
     options: PluginOptions,
     stored: Entries = [],
-  ): Layer.Layer<FakeHost | Services, InvalidOptions> => {
-    const host = FakeHost.layer(script)
-
-    return Layer.merge(
-      Layer.unwrap(
-        Effect.sync(() => services.layer(host, options, memoryStorage(stored))),
-      ),
-      host,
-    )
-  }
+  ): Layer.Layer<FakeHost | Services, InvalidOptions> =>
+    pluginServices(FakeHost.layer(script), options, stored)
 
 /** What the advisor tests share. */
 export default Object.freeze({
   SERVER_UNAVAILABLE,
   SESSION_ID,
   memoryStorage,
+  pluginServices,
   scriptedServices,
 })

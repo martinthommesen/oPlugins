@@ -1,5 +1,5 @@
 import { Effect, Fiber, Option, Ref } from "effect"
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it as test } from "@effect/vitest"
 import Advisor from "./advisor.ts"
 import AdvisorUnavailable from "./advisor-unavailable-error.ts"
 import ConsultationTimedOut from "./consultation-timed-out-error.ts"
@@ -75,7 +75,7 @@ const { ConversationItem } = conversation,
   })
 
 describe("advisor.consult", () => {
-  it.layer(
+  test.layer(
     support.scriptedServices(
       {
         transcript: [
@@ -86,39 +86,36 @@ describe("advisor.consult", () => {
       },
       configured,
     ),
-  )((tests: Tests) => {
-    tests.effect(
+  )((it: Tests) => {
+    it.effect(
       "sends the conversation and question to the advisor model",
       () => sendsConversation,
     )
   })
 
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect(
-      "refuses when no model is configured",
-      () => refusesWithoutModel,
-    )
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect("refuses when no model is configured", () => refusesWithoutModel)
   })
 
-  it.layer(
+  test.layer(
     support.scriptedServices(
       { subagent: true },
       { model: configured.model, subagents: false },
     ),
-  )((tests: Tests) => {
-    tests.effect(
+  )((it: Tests) => {
+    it.effect(
       "refuses subagents when they are not allowed",
       () => refusesSubagents,
     )
   })
 
-  it.layer(
+  test.layer(
     support.scriptedServices(
       { reply: Effect.never },
       { model: configured.model, timeout: TIMEOUT_SECONDS },
     ),
-  )((tests: Tests) => {
-    tests.effect(
+  )((it: Tests) => {
+    it.effect(
       "gives up when the advisor model outlasts the timeout",
       () => timesOut,
     )
@@ -126,9 +123,9 @@ describe("advisor.consult", () => {
 })
 
 describe("advisor.availability", () => {
-  it.layer(support.scriptedServices({ subagent: true }, configured))(
-    (tests: Tests) => {
-      tests.effect(
+  test.layer(support.scriptedServices({ subagent: true }, configured))(
+    (it: Tests) => {
+      it.effect(
         "lets subagents consult the advisor by default",
         () => allowsSubagents,
       )

@@ -1,5 +1,5 @@
 import { Boolean as Bool, Effect, Predicate } from "effect"
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it as test } from "@effect/vitest"
 import Advisor from "./advisor.ts"
 import { Agent } from "@opencode/schema/agent"
 import { Model } from "@opencode/plugin/effect"
@@ -80,43 +80,40 @@ const CONFIGURED = { model: "anthropic/claude-opus-5-5", subagents: false },
   })
 
 describe("presentAdvisor", () => {
-  it.layer(support.scriptedServices({}, CONFIGURED))((tests: Tests) => {
-    tests.effect("tells a main agent when to consult", () => instructsMainAgent)
+  test.layer(support.scriptedServices({}, CONFIGURED))((it: Tests) => {
+    it.effect("tells a main agent when to consult", () => instructsMainAgent)
   })
-  it.layer(support.scriptedServices({ subagent: true }, CONFIGURED))(
-    (tests: Tests) => {
-      tests.effect(
+  test.layer(support.scriptedServices({ subagent: true }, CONFIGURED))(
+    (it: Tests) => {
+      it.effect(
         "hides the advisor from blocked subagents",
         () => hidesFromSubagent,
       )
     },
   )
-  it.layer(support.scriptedServices({}, CONFIGURED))((tests: Tests) => {
-    tests.effect(
+  test.layer(support.scriptedServices({}, CONFIGURED))((it: Tests) => {
+    it.effect(
       "does not instruct agents without the tool",
       () => skipsAgentWithoutTool,
     )
   })
-  it.layer(support.scriptedServices({}, {}))((tests: Tests) => {
-    tests.effect(
-      "hides the advisor when no model is set",
-      () => hidesWithoutModel,
-    )
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect("hides the advisor when no model is set", () => hidesWithoutModel)
   })
-  it.layer(
+  test.layer(
     support.scriptedServices({}, CONFIGURED, [
       ["preferences.enabled", { enabled: false }],
     ]),
-  )((tests: Tests) => {
-    tests.effect("hides the advisor when it is turned off", () => hidesWhenOff)
+  )((it: Tests) => {
+    it.effect("hides the advisor when it is turned off", () => hidesWhenOff)
   })
-  it.layer(
+  test.layer(
     support.scriptedServices(
       { parentLookup: Effect.fail(support.SERVER_UNAVAILABLE) },
       CONFIGURED,
     ),
-  )((tests: Tests) => {
-    tests.effect(
+  )((it: Tests) => {
+    it.effect(
       "hides the advisor when the availability check fails",
       () => hidesWhenCheckFails,
     )

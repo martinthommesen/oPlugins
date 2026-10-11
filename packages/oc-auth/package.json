@@ -24,17 +24,11 @@
     "#src/*": "./src/*"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./tui": {
-      "types": "./dist/tui.d.ts",
-      "import": "./dist/tui.js"
-    }
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp types/index.d.ts types/tui.d.ts dist/",
+    "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
     "pretest": "node -e \"const n=require('node:fs').globSync('src/**/*.test.ts').length; if (n < 9) { console.error('expected at least 9 test files, found '+n); process.exit(1) }\"",
     "test": "vitest run",

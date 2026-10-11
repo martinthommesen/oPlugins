@@ -38,8 +38,8 @@ Long-lived state (connections, pending requests, the active tab) lives in
 # Extension
 
 The extension runs in Chrome as a Manifest V3 extension, not in Node.
-esbuild bundles `extension/service-worker.ts` with everything it imports
-into `dist/extension/`, and the build writes `extension/manifest.json`
+The second config in `tsdown.config.ts` bundles `extension/service-worker.ts`
+with everything it imports into `dist/extension/`, and the build writes `extension/manifest.json`
 beside it with `package.json`'s version stamped in; load that folder
 unpacked in `chrome://extensions`.
 

@@ -24,18 +24,11 @@
     "#src/*": "./src/*"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./tui": {
-      "types": "./dist/tui.d.ts",
-      "import": "./dist/tui.js"
-    }
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && cp types/index.d.ts types/tui.d.ts dist/ && pnpm run build:extension",
-    "build:extension": "esbuild extension/service-worker.ts --bundle --format=esm --platform=browser --target=chrome120 --outfile=dist/extension/service-worker.js && node -e \"const fs = require('node:fs'); const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8')); manifest.version = require('./package.json').version; fs.writeFileSync('dist/extension/manifest.json', JSON.stringify(manifest, null, 2) + '\\n')\"",
+    "build": "tsdown && node -e \"const fs = require('node:fs'); const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8')); manifest.version = require('./package.json').version; fs.writeFileSync('dist/extension/manifest.json', JSON.stringify(manifest, null, 2) + '\\n')\"",
     "typecheck": "tsc -p tsconfig.json && tsc -p extension/tsconfig.json",
     "pretest": "node -e \"const n=require('node:fs').globSync(['src/**/*.test.ts', 'extension/**/*.test.ts']).length; if (n < 3) { console.error('expected at least 3 test files, found '+n); process.exit(1) }\"",
     "test": "vitest run",
@@ -53,7 +46,6 @@
     "@types/chrome": "catalog:",
     "@types/node": "catalog:",
     "effect": "catalog:",
-    "esbuild": "catalog:",
     "solid-js": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

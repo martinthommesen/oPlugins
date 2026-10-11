@@ -40,6 +40,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@oc-lib/host-test": "workspace:*",
     "@opencode/plugin": "catalog:",
     "@opencode/theme": "catalog:",
     "@opentui/solid": "catalog:",

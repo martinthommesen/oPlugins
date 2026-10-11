@@ -1,4 +1,5 @@
 packages:
+  - libs/*
   - packages/*
 
 # The OpenCode host supplies `effect` and its platform packages to plugins at

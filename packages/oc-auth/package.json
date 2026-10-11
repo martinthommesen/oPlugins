@@ -32,7 +32,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "pretest": "node -e \"const n=require('node:fs').globSync('src/**/*.test.ts').length; if (n < 9) { console.error('expected at least 9 test files, found '+n); process.exit(1) }\"",
     "test": "vitest run",
-    "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-headless.ts",
+    "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
     "test:host": "pnpm run test:headless --offline",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); if (!require('node:fs').existsSync('./dist/tui.js')) { throw new Error('dist/tui.js is missing') }\"",
     "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
@@ -44,6 +44,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@oc-lib/host-test": "workspace:*",
     "@opencode/plugin": "catalog:",
     "@opencode/theme": "catalog:",
     "@opentui/solid": "catalog:",

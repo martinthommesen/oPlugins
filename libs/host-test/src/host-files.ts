@@ -10,7 +10,7 @@ const CONFIG_SCHEMA = "https://opencode.ai/config.json",
   /*
    * The plugin as the host loads it, wrapped. Once the plugin's own set-up
    * has finished, the wrapper appends the plugin's ID to the marker file, so
-   * the smoke test can tell a plugin that started from one the host skipped
+   * the host test can tell a plugin that started from one the host skipped
    * or that failed. It is written beside the installed plugin, so its
    * `effect` resolves exactly as the plugin's does.
    */
@@ -32,7 +32,7 @@ export default {
 }
 `
 
-/** The files the smoke test writes for the host. */
+/** The files the host test writes for the host. */
 export default Object.freeze({
   hostConfig: HOST_CONFIG,
   /* The host's plugin file: the wrapper at `wrapperUrl`, re-exported. */

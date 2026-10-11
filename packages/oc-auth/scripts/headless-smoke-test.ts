@@ -1,36 +1,9 @@
-/**
- * Manual packed-package smoke test for OpenCode v2.
- *
- * Pass --offline to test plugin loading, import, pricing, and a streamed
- * read-tool round trip with a fake credential and a local mock API, without
- * reading real credentials or contacting Anthropic.
- *
- * By default this copies one valid Claude Code account into an isolated source
- * and verifies package loading, automatic import, account labeling, native
- * catalog pricing, and one real read-tool round trip. It never refreshes the
- * copied token because doing so would invalidate its original source.
- *
- * To exercise near-expiry refresh and write-back, set
- * OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR to a disposable Claude config
- * directory. Its refresh token will rotate and the resulting credentials will
- * remain in that directory.
- */
-import {
-  Console,
-  Crypto,
-  Effect,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-} from "effect"
-import { NodeRuntime } from "@effect/platform-node"
+import { Console, Crypto, Effect, FileSystem, Option, Path } from "effect"
 import checks from "./headless-checks.ts"
 import credentials from "./headless-credentials.ts"
-import headlessServices from "./headless-services.ts"
 import headlessSettings from "./headless-settings.ts"
 import hostFiles from "./headless-host-files.ts"
-import install from "./headless-install.ts"
+import install from "@oc-lib/host-test/install.ts"
 import mockAnthropic from "./mock-anthropic.ts"
 import sandbox from "./headless-sandbox.ts"
 
@@ -61,8 +34,9 @@ type HostVariable =
   | "XDG_DATA_HOME"
   | "XDG_STATE_HOME"
 
-/* What an offline run reports when it passes. */
-const asOfflinePass = (config: Settings): string => {
+const NPM_NAME = "@martinthommesen/oc-auth",
+  /* What an offline run reports when it passes. */
+  asOfflinePass = (config: Settings): string => {
     const passed = `Packed OpenCode ${config.hostVersion} offline tool round trip passed with ${config.model}`
 
     if (config.customModel) {
@@ -151,17 +125,22 @@ const asOfflinePass = (config: Settings): string => {
   /* The whole smoke test, inside one sandbox. */
   smokeTest = Effect.gen(function* smokeTest() {
     const config = yield* headlessSettings,
-      layout = yield* sandbox
-        .acquire(config.keep)
-        .pipe(
-          Effect.tap((made) => sandbox.furnish(made, hostFiles.securityStub)),
-        ),
+      layout = yield* sandbox.acquire(config.keep, hostFiles.securityStub),
       marker = yield* newMarker,
       mock = yield* mockAnthropic
         .start(marker, layout.smoke)
         .pipe(Effect.when(Effect.succeed(config.offline))),
-      opencode = yield* install.host(layout.cli, config.hostVersion),
-      plugin = yield* install.plugin(layout.packed, layout.install),
+      opencode = yield* install.host({
+        checkout: config.checkout,
+        cli: layout.cli,
+        version: config.hostVersion,
+      }),
+      plugin = yield* install.plugin({
+        checkout: config.checkout,
+        install: layout.install,
+        npmName: NPM_NAME,
+        packed: layout.packed,
+      }),
       source = yield* credentials.prepare(layout.root, config),
       target = {
         env: hostEnvironment(layout, config, source),
@@ -181,11 +160,4 @@ const asOfflinePass = (config: Settings): string => {
     yield* conclude(config, source, mock)
   }).pipe(Effect.scoped)
 
-NodeRuntime.runMain(
-  Layer.build(headlessServices).pipe(
-    Effect.flatMap((services) =>
-      smokeTest.pipe(Effect.provideContext(services)),
-    ),
-    Effect.scoped,
-  ),
-)
+export default smokeTest

@@ -25,15 +25,25 @@ Rules that already resolve to **allow** are not reviewed, and configured
 
 ## Install
 
-Run `pnpm install` at the root of the oc-plugins checkout, then add this
-package's directory to `plugins` in `opencode.jsonc`, globally or per project:
+oc-auto is not published to npm yet. Build it from an oc-plugins checkout:
+
+```sh
+pnpm install
+pnpm --filter @martinthommesen/oc-auto run build
+```
+
+Then add the built plugin to `plugins` in `opencode.jsonc`, globally or per
+project, and restart OpenCode:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/oc-plugins/packages/oc-auto"],
+  "plugins": ["/path/to/oc-plugins/packages/oc-auto/dist"],
 }
 ```
+
+After pulling changes, run the build again; OpenCode picks the new build up
+on its next start.
 
 ## Options
 
@@ -43,7 +53,7 @@ Pass options with the object form of the plugin entry:
 {
   "plugins": [
     {
-      "package": "/path/to/oc-plugins/packages/oc-auto",
+      "package": "/path/to/oc-plugins/packages/oc-auto/dist",
       "options": { "fallbackModel": "gpt-6-luna", "timeout": "60 seconds" },
     },
   ],
@@ -143,4 +153,22 @@ The root `AGENTS.md` describes the shared lint and compiler policy.
 
 `src/vendor/codex/` contains Apache-2.0 text from
 [openai/codex](https://github.com/openai/codex); its `LICENSE`, `NOTICE`, and
-`UPSTREAM.md` describe the copy and how to update it.
+`UPSTREAM.md` describe the copy and how to update it. The build copies the
+`LICENSE` and `NOTICE` to `dist/vendor/codex/`, beside the bundle that
+carries the text.
+
+## Verify host compatibility
+
+Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
+The test installs the pinned CLI and the packed plugin in a temporary
+directory, with their own config, data, cache, and state directories, and
+checks that the host starts the plugin. Package installation may require
+network access.
+
+To check another V2 host version:
+
+```sh
+OC_AUTO_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+```
+
+Set `HEADLESS_KEEP=1` to keep the sandbox afterwards.

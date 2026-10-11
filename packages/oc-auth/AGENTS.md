@@ -44,4 +44,4 @@ block's own `it` type is not deeply readonly. A test-support helper that
 builds a fresh component per call uses `Layer.build` in its own scope.
 
 `pnpm run test:host` builds the plugin and loads it into a headless OpenCode
-host (`scripts/test-headless.ts`).
+host (`scripts/test-host.ts`, on the shared `@oc-lib/host-test`).

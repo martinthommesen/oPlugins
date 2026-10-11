@@ -1,8 +1,8 @@
 import { Effect, FileSystem, Schema } from "effect"
 import type { PlatformError, Stdio } from "effect"
 import type { ChildProcessSpawner } from "effect/unstable/process"
-import HeadlessSmokeError from "./headless-smoke-error.ts"
-import commands from "./headless-command.ts"
+import HostTestError from "@oc-lib/host-test/host-test-error.ts"
+import commands from "@oc-lib/host-test/command.ts"
 
 /** The installed host, and how the smoke test runs it. */
 interface Host {
@@ -30,15 +30,15 @@ const ACCOUNT_LABEL = /Claude(?: (?:Pro|Max|Team|Enterprise|Code))?(?:\s|$)/mu,
   NO_PRICES = 0,
   URL_PATTERN = /https?:\/\//u,
   /* Fail with `message`. */
-  failWith = (message: string): Effect.Effect<never, HeadlessSmokeError> =>
-    Effect.fail(HeadlessSmokeError.make({ message })),
+  failWith = (message: string): Effect.Effect<never, HostTestError> =>
+    Effect.fail(HostTestError.make({ message })),
   /* Run the host with `args` in the sandbox. */
   hostRun = (
     host: Host,
     args: readonly string[],
   ): Effect.Effect<
     string,
-    HeadlessSmokeError | PlatformError.PlatformError,
+    HostTestError | PlatformError.PlatformError,
     ChildProcessSpawner.ChildProcessSpawner | Stdio.Stdio
   > =>
     commands.run({

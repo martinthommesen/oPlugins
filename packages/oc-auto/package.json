@@ -1,7 +1,6 @@
 {
   "name": "@martinthommesen/oc-auto",
   "version": "0.1.0",
-  "private": true,
   "description": "OpenCode v2 plugin that routes permission prompts through a reviewer model before asking the user.",
   "keywords": [
     "auto-review",
@@ -9,30 +8,34 @@
     "permissions",
     "plugin"
   ],
+  "license": "MIT",
+  "author": "Martin Lammetun Thommesen <267603464+martinthommesen@users.noreply.github.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/martinthommesen/oc-plugins.git",
     "directory": "packages/oc-auto"
   },
   "files": [
-    "index.ts",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test-support.ts"
+    "dist"
   ],
   "type": "module",
   "exports": {
-    ".": "./index.ts"
+    ".": "./dist/index.js"
   },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:host": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
+    "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } })\"",
+    "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
     "vendor:codex": "node scripts/vendor-codex-policy.ts && oxfmt --write src/vendor/codex/policy.ts",
     "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@oc-lib/host-test": "workspace:*",
     "@opencode/plugin": "catalog:",
     "@opencode/schema": "catalog:",
     "@types/node": "catalog:",
@@ -41,7 +44,6 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@opencode/plugin": ">=2.0.26",
     "effect": "^4.0.0-rc.112"
   }
 }

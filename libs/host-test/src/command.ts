@@ -1,6 +1,6 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { Effect, Option, Stdio, Stream } from "effect"
-import HeadlessSmokeError from "./headless-smoke-error.ts"
+import HostTestError from "./host-test-error.ts"
 import type { PlatformError } from "effect"
 
 /** One command to run, where, and how its environment differs from ours. */
@@ -45,7 +45,7 @@ const SUCCESS = 0,
       ),
     ),
   /* Write `text` to stderr as it is. */
-  printError = Effect.fn("Headless.printError")(function* printError(
+  printError = Effect.fn("HostTest.printError")(function* printError(
     text: string,
   ) {
     const stdio = yield* Stdio.Stdio
@@ -56,7 +56,7 @@ const SUCCESS = 0,
    * Run a command and return its stdout. A command that fails or times out
    * has its output written to stderr before the failure.
    */
-  run = Effect.fn("Headless.run")(function* run(invocation: Invocation) {
+  run = Effect.fn("HostTest.run")(function* run(invocation: Invocation) {
     const childProcesses = yield* ChildProcessSpawner.ChildProcessSpawner,
       handle = yield* childProcesses.spawn(
         ChildProcess.make(invocation.command, invocation.args, {
@@ -77,10 +77,10 @@ const SUCCESS = 0,
 
     yield* printError(`${stdout}${stderr}`)
 
-    return yield* HeadlessSmokeError.make({
+    return yield* HostTestError.make({
       message: `${invocation.command} ${invocation.args.join(" ")} ${describe(code)}`,
     })
   }, Effect.scoped)
 
-/** Running the commands the smoke test drives. */
-export default Object.freeze({ printError, run })
+/** Running the commands the host test drives. */
+export default Object.freeze({ describe, printError, run })

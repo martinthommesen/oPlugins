@@ -18,15 +18,25 @@ replies with advice and cannot run tools.
 
 ## Install
 
-Run `pnpm install` at the root of the oc-plugins checkout, then add this
-package's directory to `plugins` in `opencode.jsonc`, globally or per project:
+oc-advisor is not published to npm yet. Build it from an oc-plugins checkout:
+
+```sh
+pnpm install
+pnpm --filter @martinthommesen/oc-advisor run build
+```
+
+Then add the built plugin to `plugins` in `opencode.jsonc`, globally or per
+project, and restart OpenCode:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/oc-plugins/packages/oc-advisor"],
+  "plugins": ["/path/to/oc-plugins/packages/oc-advisor/dist"],
 }
 ```
+
+After pulling changes, run the build again; OpenCode picks the new build up
+on its next start.
 
 ## Use
 
@@ -60,7 +70,7 @@ object form of a `plugins` entry in `opencode.json(c)`:
 {
   "plugins": [
     {
-      "package": "/path/to/oc-plugins/packages/oc-advisor",
+      "package": "/path/to/oc-plugins/packages/oc-advisor/dist",
       "options": { "model": "anthropic/claude-opus-5-5", "subagents": false },
     },
   ],
@@ -122,3 +132,19 @@ From the repository root:
 pnpm install
 pnpm run check
 ```
+
+## Verify host compatibility
+
+Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
+The test installs the pinned CLI and the packed plugin in a temporary
+directory, with their own config, data, cache, and state directories, and
+checks that the host starts the plugin. Package installation may require
+network access.
+
+To check another V2 host version:
+
+```sh
+OC_ADVISOR_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+```
+
+Set `HEADLESS_KEEP=1` to keep the sandbox afterwards.

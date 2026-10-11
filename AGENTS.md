@@ -26,17 +26,38 @@ A change is done when this passes with zero diagnostics from the repository
 root:
 
 ```sh
-pnpm run check   # lint, typecheck, lint:effect, test for every package
+pnpm run check   # every check below, in order, stopping at the first failure
 ```
 
 - `pnpm run lint`: Oxlint (every plugin and category, type-aware, plus the
   vendored anti-slop rules) and `oxfmt --check`, once for the whole
-  repository, from the root `.oxlintrc.json` and `.oxfmtrc.json`.
+  repository, from the root `.oxlintrc.json` and `.oxfmtrc.json`. Both run
+  on the paths the `format` script lists; add a new top-level file there.
 - `pnpm run typecheck`: `tsc` in every package. Each package's
   `tsconfig.json` extends `tsconfig.base.json`.
 - `pnpm run lint:effect`: the `@effect/language-service` diagnostics in every
   package, every diagnostic at error (configured in `tsconfig.base.json`).
 - `pnpm run test`: Vitest in every package.
+- `pnpm run build`, then `pnpm run verify:dist`: each plugin's bundle, and
+  a check that it loads.
+- `pnpm run pack:dry-run` and `pnpm run publint`: each plugin's package as
+  npm would publish it.
+- `pnpm run knip`: unused files, exports, and dependencies, configured in
+  `knip.jsonc`.
+- `pnpm run sherif`: the workspace's `package.json` files agree.
+- `pnpm run check:layout`: `tools/check-layout.ts`, which checks that every
+  plugin and library is named and wired as the ADRs and this file say, and
+  that no other suppression comment exists.
+
+`pnpm run secrets` scans the files for secrets with gitleaks, from
+`.gitleaks.toml`; install gitleaks with `brew install gitleaks`.
+`pnpm install` installs a pre-commit hook (`lefthook.yml`) that fixes and
+formats the staged files and scans them for secrets.
+
+`pnpm run test:host` in a plugin downloads OpenCode, so it runs in CI and by
+hand only. Each plugin records the oldest OpenCode version it supports once,
+as `engines.opencode` in its `package.json`; set its
+`OC_<WORD>_HEADLESS_HOST_VERSION` to `oldest` to test on that version.
 
 There is one lint and compiler policy for the whole repository; packages do
 not carry their own lint, format, or compiler strictness settings.

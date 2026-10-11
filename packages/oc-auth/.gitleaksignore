@@ -1,5 +1,0 @@
-# The public Anthropic beta flag name oauth-2025-04-20, not a credential.
-scripts/mock-anthropic.ts:generic-api-key:15
-src/model-config.test.ts:generic-api-key:10
-# Claude Code's public OAuth client ID, not a secret.
-src/token-exchange.ts:generic-api-key:52

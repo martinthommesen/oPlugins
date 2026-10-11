@@ -87,6 +87,9 @@ To check another V2 host version:
 OC_BROWSER_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
 ```
 
+Set it to `oldest` to check the oldest version oc-browser supports, which its
+`package.json` records as `engines.opencode`.
+
 Set `HEADLESS_KEEP=1` to keep the sandbox afterwards.
 
 ## License

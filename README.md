@@ -12,7 +12,10 @@ pnpm run check
 ```
 
 `check` runs lint, format check, typecheck, Effect diagnostics, and tests
-for every package. See `AGENTS.md` for the policy behind them.
+for every package, then builds and packs every plugin and runs publint,
+knip, sherif, and the layout check. `pnpm run secrets` scans for secrets
+with gitleaks (`brew install gitleaks`). See `AGENTS.md` for the policy
+behind them.
 
 ## Plugins
 

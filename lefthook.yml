@@ -1,0 +1,35 @@
+# The Git hooks. `pnpm install` installs them through lefthook's install
+# script. The pre-commit hook fixes and formats the staged files, stages
+# the fixes, and then scans the staged changes for secrets.
+pre-commit:
+  # In order, stopping at the first failure: the scan sees the fixes.
+  piped: true
+  jobs:
+    - name: oxlint
+      glob: "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      # Oxlint's own ignore patterns still apply, so a commit may leave it
+      # nothing to lint.
+      run: pnpm exec oxlint --fix --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+      # Someone else's working folders, outside the tracked tree, which the
+      # tools never change.
+      exclude:
+        - "research_notes/*"
+        - "reports/*"
+    - name: oxfmt
+      # Oxfmt skips the files it can't format and those its config ignores,
+      # so a commit may leave it nothing to format.
+      run: pnpm exec oxfmt --write --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+      # The same working folders as above.
+      exclude:
+        - "research_notes/*"
+        - "reports/*"
+    - name: gitleaks
+      # `--verbose` shows each finding, and `--redact` hides its secret.
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "gitleaks isn't installed, so the staged changes can't be scanned for secrets. Install it with \`brew install gitleaks\`, then commit again." >&2
+          exit 1
+        fi
+        gitleaks git --pre-commit --staged --no-banner --redact --verbose --config .gitleaks.toml

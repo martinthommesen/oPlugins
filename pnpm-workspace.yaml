@@ -1,10 +1,12 @@
 packages:
   - libs/*
   - packages/*
+  - tools
 
 # The OpenCode host supplies `effect` and its platform packages to plugins at
-# runtime, so these pins follow `@opencode/plugin`'s own dependencies rather
-# than the newest releases.
+# runtime, so the `effect` and `@effect/*` pins follow `@opencode/plugin`'s
+# own dependencies rather than the newest releases. The layout check
+# (`pnpm run check:layout`) enforces it.
 catalog:
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/platform-node-shared": 4.0.0-rc.112
@@ -16,13 +18,20 @@ catalog:
   "@types/chrome": 0.3.5
   "@types/node": ^26.6.5
   effect: 4.0.0-rc.112
+  knip: 6.41.0
+  lefthook: 2.2.1
+  publint: 0.3.25
+  sherif: 1.13.0
   solid-js: 1.9.17
   tsdown: 0.23.1
   typescript: 7.0.2
   vitest: 4.1.11
+  yaml: 2.9.1
 
 allowBuilds:
   esbuild: false
+  # Its install script installs the Git hooks in `lefthook.yml`.
+  lefthook: true
   msgpackr-extract: false
 
 minimumReleaseAgeExclude:

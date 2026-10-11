@@ -342,6 +342,9 @@ To check another V2 host version:
 OC_AUTH_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
 ```
 
+Set it to `oldest` to check the oldest version oc-auth supports, which its
+`package.json` records as `engines.opencode`.
+
 `OC_AUTH_HEADLESS_MODEL` selects a model for the smoke test. Set
 `OC_AUTH_HEADLESS_CUSTOM_MODEL=1` with the offline test to exercise a model
 outside the catalog using an explicit test-only model definition.

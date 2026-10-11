@@ -33,7 +33,10 @@ NodeRuntime.runMain(
 - `pluginId` is the ID the host must start that entry under.
 - `hostVersionVariable` picks the host version. Unset or `target`, it is the
   version of `@opencode/plugin` the plugin is built against, which the
-  workspace catalog pins. `HEADLESS_KEEP` keeps the sandbox afterwards.
+  workspace catalog pins. `oldest` is the oldest version the plugin
+  supports, which its `package.json` records as `engines.opencode`
+  (`>=X.Y.Z`). Any other value is the version to install.
+  `HEADLESS_KEEP` keeps the sandbox afterwards.
 
 ## Building blocks
 

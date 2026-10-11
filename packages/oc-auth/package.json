@@ -35,7 +35,7 @@
     "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
     "test:host": "pnpm run test:headless --offline",
     "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); if (!require('node:fs').existsSync('./dist/tui.js')) { throw new Error('dist/tui.js is missing') }\"",
-    "prepublishOnly": "pnpm -w run lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
+    "prepublishOnly": "pnpm run --workspace-root lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
     "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
   },
   "dependencies": {
@@ -69,5 +69,8 @@
     "solid-js": {
       "optional": true
     }
+  },
+  "engines": {
+    "opencode": ">=2.0.25"
   }
 }

@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/knip/schema-jsonc.json",
+  // Homebrew installs gitleaks, not npm; `pnpm run secrets` runs it.
+  "ignoreBinaries": ["gitleaks"],
+  // Each workspace names its Vitest config, whose test files are entry
+  // points, and each plugin its tsdown config, whose bundle entries are.
+  "workspaces": {
+    ".": {
+      "ignoreDependencies": [
+        // `AGENTS.md` sends agents to `node_modules/effect` for Effect's
+        // guide and source; nothing at the root imports it.
+        "effect",
+        // `tsconfig.base.json` configures the Effect language service under
+        // this name, and `@effect/tsgo` runs it; there's no such package to
+        // install.
+        "@effect/language-service",
+        // Its install script installs the Git hooks, and nothing imports or
+        // runs it. Knip counts it as used only in CI.
+        "lefthook",
+      ],
+    },
+    // A library exports every module in its `src/` (`"./*": "./src/*"`).
+    "libs/*": {
+      "entry": ["src/*.ts"],
+      "vitest": { "config": ["vitest.config.ts"] },
+    },
+    // A plugin's entry points are its bundle's, which knip reads from
+    // `tsdown.config.ts` (`src/index.ts`, `src/tui.ts`, and oc-browser's
+    // `extension/service-worker.ts`), and the scripts its `package.json`
+    // runs, such as `scripts/test-host.ts`. Naming them here again makes
+    // knip report them as redundant.
+    "packages/*": {
+      "tsdown": { "config": ["tsdown.config.ts"] },
+      "vitest": { "config": ["vitest.config.ts"] },
+    },
+    // The tools' entry point, `check-layout.ts`, is the script the root
+    // `check:layout` runs, which knip reads from the root `package.json`.
+    "tools": {
+      // The vendored lint rules follow their upstream, and the
+      // `install-anti-slop` skill updates them.
+      "ignore": ["oxlint/anti-slop/**"],
+      "vitest": { "config": ["vitest.config.ts"] },
+    },
+  },
+}

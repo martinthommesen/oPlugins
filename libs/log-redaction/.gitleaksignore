@@ -1,3 +1,0 @@
-# Fake token fixtures in the log redaction test.
-src/log-redaction.test.ts:generic-api-key:13
-src/log-redaction.test.ts:generic-api-key:17

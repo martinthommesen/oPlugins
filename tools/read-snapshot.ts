@@ -3,7 +3,7 @@ import type Snapshot from "./snapshot.ts"
 
 const CONCURRENCY = { concurrency: 16 },
   HOST_MANIFEST = "node_modules/@opencode/plugin/package.json",
-  /** The repository's files the checks read beside the workspace's own. */
+  /** The files at the repository root that the checks read. */
   ROOT_FILES = [
     ".release-please-manifest.json",
     "pnpm-workspace.yaml",

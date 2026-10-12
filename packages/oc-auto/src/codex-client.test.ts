@@ -14,11 +14,11 @@ import ChatGptAuth from "./chatgpt-auth.ts"
 import CodexResponses from "./codex-client.ts"
 import FakeBackend from "./fake-backend.test-support.ts"
 import ModelUnavailable from "./model-unavailable-error.ts"
+import PluginOptions from "./plugin-options.ts"
 import RequestFailed from "./request-failed-error.ts"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import type { Vitest } from "@effect/vitest"
-import support from "./testing.test-support.ts"
 
 type Responder = Parameters<typeof FakeBackend.layer>[typeof FIRST]
 
@@ -56,15 +56,15 @@ const COMPLETION = {
     ChatGptAuth,
     ChatGptAuth.of({ current: Effect.succeed(TOKEN) }),
   ),
-  /* The Codex client over a backend that answers with `respond`, signed in, with the default settings. */
+  /* The Codex client over a backend that answers with `respond`, signed in, with the default options. */
   codexWith = (
     respond: Responder,
   ): Layer.Layer<
     CodexResponses | FakeBackend,
-    Layer.Error<ReturnType<typeof support.settingsFrom>>
+    Layer.Error<ReturnType<typeof PluginOptions.fromOptions>>
   > =>
     CodexResponses.layer.pipe(
-      Layer.provide([chatGptSignIn, support.settingsFrom({})]),
+      Layer.provide([chatGptSignIn, PluginOptions.fromOptions({})]),
       Layer.provideMerge(FakeBackend.layer(respond)),
     ),
   /**

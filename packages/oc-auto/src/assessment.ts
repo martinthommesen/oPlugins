@@ -10,12 +10,16 @@ const OBJECT_END = "}",
   UserAuthorization = Schema.Literals(["unknown", "low", "medium", "high"]),
   /** The reviewer's assessment of one planned action. */
   ValidAssessment = Schema.Struct({
+    /** Whether the reviewer allows or denies the action. */
     outcome: Outcome,
+    /** The reviewer's reason for its outcome. */
     rationale: Schema.String,
+    /** The action's intrinsic risk, as the reviewer judges it. */
     riskLevel: RiskLevel,
+    /** How directly the user authorized the action, as the reviewer judges it. */
     userAuthorization: UserAuthorization,
   }),
-  /*
+  /**
    * The reviewer's wire format, which Codex documents in its output
    * contract. Only `outcome` is required; the rest default the way Codex
    * defaults them.
@@ -57,7 +61,7 @@ const OBJECT_END = "}",
     text: string,
   ) {
     const payload = yield* decodePayload(text).pipe(
-        Effect.catch(() =>
+        Effect.catchTag("SchemaError", () =>
           Effect.fromOption(outermostObject(text)).pipe(
             Effect.flatMap(decodePayload),
           ),

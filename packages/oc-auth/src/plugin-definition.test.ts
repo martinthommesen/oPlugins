@@ -1,4 +1,4 @@
-import { Effect, Exit, Fiber, Layer, Option } from "effect"
+import { Effect, Exit, Fiber, Layer, Option, Struct } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import FakeConnection from "./fake-connection.test-support.ts"
 import FakeHooks from "./fake-hooks.test-support.ts"
@@ -35,12 +35,7 @@ const FOREIGN_CONNECTIONS = [
   /* A host whose account discovery never finishes. */
   discovering = scenario.onHost(
     scenario.ours("access"),
-    Object.freeze({
-      accounts: Effect.never,
-      adopt: PluginRig.quiet.adopt,
-      fetch: PluginRig.quiet.fetch,
-      refresh: PluginRig.quiet.refresh,
-    }),
+    Struct.assign(PluginRig.quiet, { accounts: Effect.never }),
   ),
   /* The hooks registered so far. */
   registeredHooks = FakeHooks.pipe(Effect.flatMap((hooks) => hooks.names))

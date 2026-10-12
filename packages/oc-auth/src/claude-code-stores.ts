@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import type { Crypto, FileSystem, Option, Path } from "effect"
-import type { ChildProcessSpawner } from "effect/unstable/process"
+import type { ChildProcessSpawner } from "effect/process"
 import type ClaudeAccount from "./claude-account.ts"
 import type ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import type Environment from "./environment.ts"
@@ -26,10 +26,10 @@ type StoreServices =
   | Path.Path
 
 /**
- * The credential stores Claude Code keeps: macOS Keychain items through
- * the `security` tool, and the credentials file in the Claude config
- * directory. Every account found, the current credentials of one store, and
- * the guarded write-back of refreshed tokens into the store they came from.
+ * The credential stores Claude Code keeps: macOS Keychain items, reached
+ * through the `security` tool, and the credentials file in a Claude Code
+ * config directory. The service finds every account, reads what one store
+ * holds now, and writes refreshed tokens back into the store they came from.
  */
 class ClaudeCodeStores extends Context.Service<
   ClaudeCodeStores,
@@ -43,7 +43,7 @@ class ClaudeCodeStores extends Context.Service<
       readonly Account[],
       ClaudeCodeStoreError
     >
-    /** The credentials `source` holds now, or none when it holds none. */
+    /** The credentials now in the store that `source` names, if any. */
     readonly readSource: (
       source: string,
       configDir: Option.Option<string>,
@@ -82,4 +82,5 @@ class ClaudeCodeStores extends Context.Service<
   )
 }
 
+/** @internal */
 export default ClaudeCodeStores

@@ -15,7 +15,7 @@ const COOLDOWN_MS = 15_000,
   KNOWN_OPTIONS =
     "betaFlags, cliVersion, cost, entrypoint, refreshCooldownMs, refreshLockTtlMs, userAgent",
   NO_LEASE_MS = 0,
-  /* The message set-up fails with when the options have `problems`. */
+  /* The message setup fails with when the options have `problems`. */
   failureNaming = (problems: string): Option.Option<string> =>
     Option.some(
       `oc-auth did not start because its options in opencode.jsonc are invalid. ${problems} Correct the options, then restart OpenCode.`,

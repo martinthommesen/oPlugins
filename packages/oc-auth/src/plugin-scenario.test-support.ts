@@ -24,9 +24,18 @@ type Scenario =
   | Layer.Success<ReturnType<ReturnType<typeof pluginServices>>>
   | Layer.Success<ReturnType<typeof fakeHost.domains>>
 
+/** A 401 that counts how many times its body is released. */
+interface Releasable {
+  readonly released: () => number
+  readonly response: Response
+}
+
 const FIRST = 0,
   MODEL = "claude-sonnet-4-5",
+  ONE = 1,
   SECOND = 1,
+  UNAUTHORIZED = 401,
+  ZERO = 0,
   /* A Messages API request that `signal` can abort. */
   abortable = (signal: AbortSignal): Request =>
     new Request("https://api.anthropic.com/v1/messages", {
@@ -85,6 +94,22 @@ const FIRST = 0,
     CredentialRefresh.Result.Refreshed({
       credential: PluginRig.credential(access),
     }),
+  /* A 401 that counts how many times its body is released. */
+  releasable = (): Releasable => {
+    let released = ZERO
+
+    return {
+      released: () => released,
+      response: new Response(
+        new ReadableStream({
+          cancel: (): void => {
+            released += ONE
+          },
+        }),
+        { status: UNAUTHORIZED },
+      ),
+    }
+  },
   /*
    * Answer `request` with `response` through the response hook, in
    * `session`, and the response the caller gets.
@@ -108,30 +133,31 @@ const FIRST = 0,
    * Answer `request` with `response` through the response hook, for a model
    * call of `kind`, and the response the caller gets.
    */
-  respondAs = (
+  respondAs = Effect.fn("test.respondAs")(function* respondAs(
     kind: SessionHttpResponse["kind"],
     request: Request,
     response: Response,
-  ): Effect.Effect<Response, never, FakeHooks> =>
-    Effect.gen(function* answerKind() {
-      const event: SessionHttpResponse = Struct.assign(
-        transformsSupport.httpEvent(request, MODEL),
-        { kind, response },
-      )
+  ) {
+    const event: SessionHttpResponse = Struct.assign(
+      transformsSupport.httpEvent(request, MODEL),
+      { kind, response },
+    )
 
-      yield* (yield* FakeHooks).fire("http.response", event)
+    yield* (yield* FakeHooks).fire("http.response", event)
 
-      return event.response
-    }),
+    return event.response
+  }),
   /* Send `request` through the request hook, and the request that goes out. */
-  send = (request: Request): Effect.Effect<Request, never, FakeHooks> =>
-    Effect.gen(function* outbound() {
-      const event = transformsSupport.httpEvent(request, MODEL)
+  send = Effect.fn("test.send")(function* send(request: Request) {
+    const event = transformsSupport.httpEvent(request, MODEL)
 
-      yield* (yield* FakeHooks).fire("http.request", event)
+    yield* (yield* FakeHooks).fire("http.request", event)
 
-      return event.request
-    })
+    return event.request
+  }),
+  /* The plain 401 the API answers with. */
+  unauthorized = (): Response =>
+    new Response("unauthorized", { status: UNAUTHORIZED })
 
 /** What the plugin scenarios share. */
 export default Object.freeze({
@@ -145,7 +171,9 @@ export default Object.freeze({
   onHost,
   ours,
   refreshed,
+  releasable,
   respond,
   respondAs,
   send,
+  unauthorized,
 })

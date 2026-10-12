@@ -2,34 +2,26 @@
 
 [![CI](https://github.com/martinthommesen/oc-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/martinthommesen/oc-plugins/actions/workflows/ci.yml)
 
-oc-auth is an OpenCode v2 plugin that imports Claude Code subscription credentials into
-OpenCode's native Anthropic integration. It does not install a custom model
-provider or require another browser login.
-
-## Requirements
-
-- OpenCode 2.0.25 or newer
-- Claude Code installed and authenticated by running `claude`
-
-This release targets `@opencode/plugin@2.0.26` and is an Effect plugin: it
-runs on the `effect` instance the host provides to plugins. It is tested on
-OpenCode 2.0.25 and 2.0.26; on 2.0.24 the host could not load its `effect`
-import in our loader test. It uses
-`model.transform` and `model.reload`. Rather than match version strings, the
-plugin checks for the host capabilities it needs at load and reports any
-missing ones. OpenCode v1 is not supported.
+oc-auth is an OpenCode v2 plugin that imports Claude Code subscription
+credentials into OpenCode's native Anthropic integration. It doesn't install a
+custom model provider or ask for another browser sign-in.
 
 ## Install
 
-oc-auth is not published to npm yet. Build it from an oc-plugins checkout:
+You need:
+
+- OpenCode 2.0.27 or newer. OpenCode v1 isn't supported.
+- Claude Code, signed in by running `claude`.
+
+oc-auth isn't published to npm yet. Build it from an oc-plugins checkout:
 
 ```sh
 pnpm install
 pnpm --filter @martinthommesen/oc-auth run build
 ```
 
-Then add the built plugin to the plural `plugins` field in
-`opencode.jsonc`, and restart OpenCode:
+Then add the built plugin to the plural `plugins` field in `opencode.jsonc`, and
+restart OpenCode:
 
 ```jsonc
 {
@@ -38,13 +30,15 @@ Then add the built plugin to the plural `plugins` field in
 }
 ```
 
-After pulling changes, run the build again; OpenCode picks the new
-build up on its next start.
+After pulling changes, run the build again. OpenCode loads the new build the
+next time it starts.
 
 See the [OpenCode v2 plugin guide](https://opencode.ai/v2/docs/build/plugins)
 for package and local-file configuration.
 
-## Connect
+## Configure
+
+### Import a Claude Code account
 
 1. Start `opencode`.
 2. Open `/connect`.
@@ -52,128 +46,20 @@ for package and local-file configuration.
 4. Choose **Import Claude Code subscription**.
 5. Select a Claude Code account when more than one is available.
 
-The import completes automatically and OpenCode stores the resulting
-connection. Repeat `/connect` to import additional accounts. OpenCode's
-connection UI owns activation and account switching.
+The import reads the selected account's current credentials and finishes on its
+own, and OpenCode stores the resulting connection. Run `/connect` again to
+import more accounts. OpenCode's connection UI handles activation and account
+switching. `opencode auth login` offers the same import.
 
-The account picker is captured when the OpenCode service loads the plugin.
-The import reads the selected account's current credentials. If you add or
-remove a Claude Code account later, refresh the picker before reopening
-`/connect`:
+The plugin finds the accounts when the OpenCode service loads it, so the account
+picker doesn't change while OpenCode runs. After you add or remove a Claude Code
+account, restart the service before you open `/connect` again:
 
 ```sh
 opencode service restart
 ```
 
-`opencode auth login` also remains available in v2, but `/connect` is the
-primary TUI flow documented for this plugin.
-
-## Credential sources
-
-On macOS, the plugin discovers `Claude Code-credentials*` entries in Keychain
-and labels accounts with their subscription tier and email when available. On
-Linux and Windows it reads `~/.claude/.credentials.json`.
-
-macOS falls back to that file only when no Keychain entry holds a usable
-credential (an entry with only MCP tokens does not count). If the Keychain is
-locked, denies access, or times out, the plugin reports that error instead,
-because a silent fallback would hide the cause. A credentials file that exists
-but cannot be read is reported the same way rather than as missing.
-
-Set `CLAUDE_CONFIG_DIR` to use a different Claude Code configuration directory:
-
-```sh
-export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
-```
-
-On Linux and Windows the variable selects the credentials file. On macOS the
-Keychain remains the credential source, and the variable only selects the
-config directory used for account labels (email lookup) and for the file
-fallback when no Keychain entry exists.
-
-OpenCode owns connection persistence. The plugin does not write OpenCode
-`auth.json` files or maintain a background synchronization timer.
-
-## Behavior
-
-- Uses OpenCode's native Anthropic provider and model catalog.
-- Keeps OpenCode's native API pricing, so the sidebar and prompt footer show
-  what subscription traffic would cost at API rates. Anthropic does not bill
-  this amount to a subscription. Set the `cost` option to `"zero"` to report
-  zero dollar cost instead (see [Options](#options)).
-- Adds a **Cache** section to the session sidebar with the prompt cache hit
-  and miss rates (see [Prompt cache stats](#prompt-cache-stats)).
-- Adds the Claude Code billing identity, supported beta flags, and request
-  headers required for subscription traffic, including title, compaction, and
-  transient generation requests. The current wire defaults match Claude Code
-  2.1.295 and its bundled Anthropic SDK 0.128.0.
-- Renames tools in the request body to `mcp_` plus the name with its first
-  letter upper-cased (`read_file` becomes `mcp_Read_file`), the prefix Claude
-  Code uses, because Anthropic's billing validator rejects other tool names. The response restores OpenCode's own names, so tool calls keep their
-  native rendering and behavior. The plugin adds the name mapping to the
-  first user message so the model can follow instructions written with
-  OpenCode names.
-  Deferred tool-search references are renamed consistently as well.
-- Lets OpenCode own generic rate-limit and provider retries.
-- Refreshes near-expiry credentials through Anthropic's current OAuth endpoint,
-  with per-account locking, cooldowns, and guarded source write-back. A
-  write-back is confirmed by reading the stored credential back. It does not
-  refresh while the credential source cannot be read, because the new tokens
-  could not be saved and Claude Code would be signed out.
-- Adopts credentials rotated by Claude Code or another process without a
-  session restart. It re-reads the source at most every 30 seconds, beside
-  the request rather than in front of it, so a rotation applies from the next
-  request. A request whose cached token has expired waits for the re-read.
-- Performs at most two bounded retries after a 401: one source adoption and one
-  direct refresh.
-
-OpenCode's `anthropic` provider catalog supplies the available models,
-capabilities, and limits. This package does not maintain a separate model list.
-New catalog models therefore need no plugin allowlist update, including Claude
-Opus 5.5, Sonnet 5.5, and Haiku 5.5. Availability still
-depends on Anthropic granting your account access. Legacy models and dated
-snapshots keep their model-specific beta exclusions; custom model aliases use
-the model ID sent on the wire.
-
-### Models ahead of OpenCode's catalog
-
-If `/models` does not list a newly released model, add it to OpenCode's native
-provider configuration. For example, Mythos 5.1 is not in the OpenCode 2.0.26
-catalog yet, but can be configured using the metadata from Claude Code 2.1.295:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "providers": {
-    "anthropic": {
-      "models": {
-        "claude-mythos-5-1": {
-          "name": "Claude Mythos 5.1",
-          "capabilities": {
-            "tools": true,
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": { "context": 1000000, "output": 128000 },
-        },
-      },
-    },
-  },
-}
-```
-
-Merge this with your existing configuration, restart the service, then select
-`anthropic/claude-mythos-5-1`. This only makes the model selectable; it does not
-grant account access or guarantee Anthropic accepts subscription requests for it.
-Other new model IDs can use the same native configuration mechanism with their
-own documented capabilities and limits.
-
-Registering native HTTP hooks disables OpenCode's provider WebSocket transport
-for affected requests. The `anthropic` provider does not advertise that
-capability in the targeted OpenCode build; this coupling is rechecked when the
-host version is updated.
-
-## Options
+### Options
 
 Pass options with the object form of the `plugins` entry:
 
@@ -197,33 +83,178 @@ Pass options with the object form of the `plugins` entry:
 | `userAgent`         | string                  | `claude-cli/<cliVersion> (external, <entrypoint>)` | Complete user-agent override, sent verbatim                                                                         |
 | `betaFlags`         | string, comma-separated | The built-in base set                              | Replaces the base beta set; the required flags and the request's own `anthropic-beta` flags still merge in          |
 | `refreshCooldownMs` | integer above 0         | `15000`                                            | Base cooldown after a transient token refresh failure, in milliseconds                                              |
-| `refreshLockTtlMs`  | integer above 0         | `20000`                                            | Base lease of the cross-process refresh lock, in milliseconds. A larger value than `120000` is capped at `120000`   |
+| `refreshLockTtlMs`  | integer above 0         | `20000`                                            | Base lease of the cross-process refresh lock, in milliseconds. A value above `120000` is capped at `120000`         |
 
-In `cliVersion`, `entrypoint`, and `userAgent`, every control character
-becomes a space and the value is trimmed, because these values land in
-request headers and the system prompt; something printable must remain.
+`cliVersion`, `entrypoint`, and `userAgent` end up in request headers and the
+system prompt. So the plugin turns every control character in them into a space
+and trims the value, and something printable must remain.
 
-`betaFlags` must name at least one flag. It cannot drop `oauth-2025-04-20`
-or `claude-code-20250219`: subscription auth does not work without them, so
-they are re-added after any override. It also cannot add `effort-2025-11-24`
-for a model that Claude Code does not send it for. The plugin removes that
-flag per model after merging everything else.
+`betaFlags` must name at least one flag. It can't drop `oauth-2025-04-20` or
+`claude-code-20250219`: subscription auth doesn't work without them, so the
+plugin adds them back after any override. It also can't add `effort-2025-11-24`
+for a model that Claude Code doesn't send it for. The plugin removes that flag
+per model after it merges everything else.
 
-An invalid option stops the plugin from starting: a value of the wrong type,
-a number out of range, or a name the plugin does not know. OpenCode logs the
-failure, naming each problem, and lists the known options for an unknown
-name. For example:
+An invalid option stops the plugin from starting. That covers a value of the
+wrong type, a number out of range, and an option name the plugin doesn't know.
+No invalid option is replaced by its default. OpenCode's log names each problem,
+and lists the known options for an unknown name. For example:
 `oc-auth did not start because its options in opencode.jsonc are invalid. refreshCooldownMs: Expected a value greater than 0. Correct the options, then restart OpenCode.`
-Nothing is replaced by a default.
 
-Restart the service after changing an option: `opencode service restart`.
-Costs are recorded per message when it completes, so a change applies to new
-messages only.
+Restart the service after you change an option: `opencode service restart`.
+OpenCode records costs per message when the message completes, so a change to
+`cost` applies to new messages only.
 
-## Prompt cache stats
+### Models missing from OpenCode's catalog
 
-The package also ships a terminal plugin, loaded automatically with the
-server plugin, that adds a **Cache** section to the session sidebar:
+If `/models` doesn't list a newly released model, add it to OpenCode's native
+provider configuration. For example, Mythos 5.1 isn't in the OpenCode 2.0.26
+catalog yet, but you can configure it with the metadata from Claude Code
+2.1.295:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "anthropic": {
+      "models": {
+        "claude-mythos-5-1": {
+          "name": "Claude Mythos 5.1",
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": { "context": 1000000, "output": 128000 },
+        },
+      },
+    },
+  },
+}
+```
+
+Merge this with your existing configuration, restart the service, then select
+`anthropic/claude-mythos-5-1`. This only makes the model selectable. It doesn't
+grant your account access, and Anthropic may still reject subscription requests
+for the model. Configure other new model IDs the same way, with their own
+documented capabilities and limits.
+
+## Environment variables
+
+Everything you configure in oc-auth itself is an [option](#options). The plugin
+reads only these variables, which belong to other programs or to tests:
+
+| Variable                   | Purpose                                                                                                  | Default                 |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `CLAUDE_CONFIG_DIR`        | Claude Code config directory, for file credentials and account labels                                    | `~/.claude`             |
+| `HOME`                     | Home directory, where the Claude Code and OpenCode directories are by default (`USERPROFILE` on Windows) | Set by the system       |
+| `XDG_DATA_HOME`            | Parent of OpenCode's data directory, which holds the refresh locks. Used only when it's an absolute path | `~/.local/share`        |
+| `OC_AUTH_REFRESH_LOCK_DIR` | Refresh lock directory. For tests only                                                                   | OpenCode data directory |
+| `OC_AUTH_SECURITY_BIN`     | Path to the macOS `security` binary. For tests only. Changing it hands credentials to that program       | `/usr/bin/security`     |
+
+The OpenCode service reads these variables when it starts, so a change takes
+effect only after `opencode service restart`. The host test's variables are in
+[Development](#development).
+
+## How it works
+
+### Credential stores
+
+A credential store is where Claude Code keeps one account's credentials: a
+Keychain item or its credentials file.
+
+On macOS, the plugin finds the `Claude Code-credentials*` items in the Keychain,
+and labels each account with its subscription tier and email when it can. On
+Linux and Windows, it reads `~/.claude/.credentials.json`.
+
+On macOS, the plugin falls back to that file only when no Keychain item holds a
+usable credential. An item with only MCP tokens doesn't count. If no item could
+be read because the Keychain is locked, denied access, or timed out, the plugin
+reports that error instead of falling back, so the cause isn't hidden. A
+credentials file that exists but can't be read is reported the same way, not as
+missing.
+
+Set `CLAUDE_CONFIG_DIR` to use a different Claude Code config directory:
+
+```sh
+export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
+```
+
+On Linux and Windows, the variable selects the credentials file. On macOS, the
+Keychain stays the credential store. There, the variable only selects the config
+directory that account labels (the email) come from, and the file to fall back
+to when no Keychain item holds a credential.
+
+OpenCode keeps the connection. The plugin doesn't write OpenCode's `auth.json`
+files or run a background sync timer.
+
+### Requests
+
+- Requests go through OpenCode's native Anthropic provider. Its `anthropic`
+  catalog supplies the models, their capabilities, and their limits, and the
+  plugin keeps no model list of its own. So new catalog models, such as Claude
+  Opus 5.5, Sonnet 5.5, and Haiku 5.5, need no plugin update. Legacy models and
+  dated snapshots keep their model-specific beta exclusions, and the betas for a
+  custom model alias follow the model ID in the request body.
+- The plugin adds the Claude Code billing header, the beta flags, and the
+  request headers that subscription traffic needs. It does this for the agent
+  loop and for title, compaction, and `generate` requests. The defaults match
+  Claude Code 2.1.295 and its bundled Anthropic SDK 0.128.0.
+- The system prompt becomes the billing header and Claude Code's identity. The
+  plugin moves the rest of the system prompt into the first user message.
+- Anthropic's billing validator rejects tool names other than Claude Code's, so
+  the plugin renames tools in the request body to `mcp_` plus the name with its
+  first letter in upper case: `read_file` becomes `mcp_Read_file`. It renames
+  deferred tool-search references too. The response gets OpenCode's own names
+  back, so tool calls render and behave as usual. The plugin adds the name
+  mapping to the first user message, so the model can follow instructions
+  written with OpenCode's names.
+- OpenCode keeps its native API pricing, so the sidebar and prompt footer show
+  what subscription traffic would cost at API rates. Anthropic doesn't bill that
+  amount to a subscription. Set the `cost` option to `"zero"` to report zero
+  cost instead.
+- OpenCode handles generic rate-limit and provider retries.
+
+### Keeping credentials current
+
+- The plugin refreshes credentials that are about to expire through Anthropic's
+  OAuth endpoint. One OpenCode process at a time refreshes a credential store,
+  under a cross-process refresh lock. The plugin writes the new tokens back into
+  the store they came from, so Claude Code stays signed in, and reads them back
+  to confirm the write.
+- The plugin doesn't refresh while it can't read the credential store, because
+  it couldn't save the new tokens, and Claude Code would be signed out.
+- When Claude Code or another process rotates the tokens in a store, the plugin
+  takes them up without a session restart. It re-reads the store at most every
+  30 seconds, beside a request rather than in front of it, so a rotation applies
+  from the next request. A request whose token has expired waits for the
+  re-read.
+- After a 401, the plugin sends the request again at most twice: once with
+  credentials taken up from the store, and once with refreshed ones.
+
+A transient refresh failure, such as a network error, keeps the current access
+token while it's still valid. When the API answers with a 401 and the refresh
+fails transiently or is in a cooldown, the plugin answers with a 429 that
+OpenCode retries. Its `retry-after` header is the cooldown left, in whole
+seconds. When another OpenCode process is waiting out that cooldown, the 429
+comes back at once.
+
+Only an OAuth error that rejects the refresh token, such as `invalid_grant`,
+fails for good and asks you to sign in to Claude Code again. The plugin retries
+every other failure with a growing cooldown. After ten failures in a row for one
+store, it reports the error and names the last cause: an HTTP status, a network
+error, or credentials it couldn't read. It keeps retrying at the longest
+cooldown, so it recovers once the cause clears. With the default
+`refreshCooldownMs`, the report comes after about eight minutes at most, and
+closer to six with typical jitter.
+
+When recovery from a 401 ends in either kind of error, the response carries the
+plugin's message, so OpenCode shows what to do instead of a bare 401.
+
+### Prompt cache stats
+
+The package also ships a CLI plugin, which OpenCode loads with the server
+plugin. It adds a **Cache** section to the session sidebar:
 
 ```text
 Cache
@@ -232,137 +263,128 @@ Cache
 Last request 99.0% hit
 ```
 
-- **hit** is the share of prompt tokens served from the cache (cache reads
-  divided by every prompt token). **miss** is the rest: tokens written to the
+- **hit** is the share of prompt tokens served from the cache: cache reads
+  divided by every prompt token. **miss** is the rest: tokens written to the
   cache plus uncached input.
-- The first two lines cover every request in the session, including title
-  and compaction requests. **Last request** covers the newest response.
-- Run `/cache`, or **Show prompt cache stats** from the command palette, to
-  see the same numbers when the sidebar is hidden.
+- The first two lines cover every request in the session, including title and
+  compaction requests. **Last request** covers the newest response.
+- Run `/cache`, or **Show prompt cache stats** from the command palette, to see
+  the same numbers when the sidebar is hidden.
 
 The stats use the token counts OpenCode records for each message, so they work
 for any provider that reports cache usage.
 
-## Refresh failures
+### Host compatibility
 
-A transient refresh failure keeps using a still-valid access token. When the
-API returns a 401 and the recovery refresh is transiently unavailable, the
-plugin returns an explicitly retryable 429 response so OpenCode can back off
-the turn. Its `retry-after` header is the cooldown left, in whole seconds. When
-another OpenCode process is the one waiting out that cooldown, the 429 comes
-back at once.
+This release targets `@opencode/plugin@2.0.27` and Effect 4.0.1. It runs on the
+`effect` instance the host provides to plugins. OpenCode 2.0.27 is the minimum
+version: earlier hosts don't provide the stable Effect module paths this release
+imports. Rather than match version strings, the plugin checks at load that the
+host offers every plugin API it needs, such as `model.transform` and
+`model.reload`, and names any that are missing.
 
-Only a known OAuth error such as `invalid_grant` is terminal on its own, and
-only that asks you to re-authenticate. Every other failure is retried with an
-escalating cooldown. After ten consecutive transient failures for one account
-the error is reported, naming the last cause (an HTTP status, a network
-error, or an unreadable Keychain), and retries continue at the capped
-cooldown, so the plugin recovers once the cause clears. The report comes
-after at most about eight minutes, and closer to six with typical jitter.
+## Limitations
 
-When recovery from a 401 ends in either kind of error, the response carries
-the plugin's message, so OpenCode shows what to do instead of a bare 401.
-
-Problems that need your attention but do not fail a request are logged as
-warnings (see [Logs](#logs)).
-
-The plugin has no Claude CLI subprocess fallback. After an expired or
-terminal credential failure, run `claude` for the selected account and retry.
-Use `/connect` again only when the stored OpenCode connection itself must be
-replaced.
-
-## Logs
-
-The plugin logs through OpenCode's own log, by default
-`~/.local/share/opencode/log/opencode.log`, and keeps no log file of its own.
-Each record's message is a stable event name, such as
-`refresh_lock_degraded`, with fields such as the credential source attached.
-
-Warnings carry metadata only: event names, credential sources, counts,
-durations, status codes, and the like, never a token, a message, or a path.
-
-| Warning                    | Meaning                                                                                                                                      |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `refresh_writeback_failed` | Refreshed tokens could not be saved back to Claude Code, so its CLI will need to sign in again once its current token expires                |
-| `refresh_lock_degraded`    | The refresh lock directory cannot be used, so refreshes are not coordinated between OpenCode processes; two at once can sign Claude Code out |
-| `keychain_list_failed`     | Keychain items could not be listed, so only the primary Claude Code account is offered                                                       |
-| `credential_reload_failed` | The newly selected Anthropic credential could not be loaded; Claude Code credentials apply again from the next switch                        |
-
-Debug records add the details, such as error messages and config paths,
-and OpenCode keeps them only when it logs at debug level (its
-`--log-level` flag). They pass through redaction first: values under keys
-such as `accessToken`, `refreshToken`, `account`, and `x-api-key`, and any
-Anthropic token (`sk-ant-…`) or JWT inside a string, are redacted, and
-structure nested more than four levels deep is replaced with a placeholder.
-Keychain service names and config paths are not redacted, so review debug
-records before sharing them. No record carries a prompt, a request or
-response body, or model output.
-
-## Environment variables
-
-Every setting of the plugin's own is an [option](#options). The plugin reads
-only these variables:
-
-| Variable                   | Purpose                                                                                              | Default                 |
-| -------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
-| `CLAUDE_CONFIG_DIR`        | Claude Code config directory for file credentials and account mapping                                | `~/.claude`             |
-| `HOME`                     | Home directory, where the Claude Code and OpenCode directories default to (`USERPROFILE` on Windows) | Set by the system       |
-| `XDG_DATA_HOME`            | Selects the OpenCode data directory, which holds the refresh locks                                   | `~/.local/share`        |
-| `OC_AUTH_REFRESH_LOCK_DIR` | Refresh lock directory. For tests only                                                               | OpenCode data directory |
-| `OC_AUTH_SECURITY_BIN`     | Path to the macOS `security` binary. For tests only. Changing it hands credentials to that program   | `/usr/bin/security`     |
-
-The long-running OpenCode service reads every variable above. Setting or
-unsetting one takes effect only after `opencode service restart`.
+- The plugin uses Claude Code OAuth credentials for Anthropic requests.
+  Anthropic's terms may restrict subscription credentials to official clients.
+  This community integration may stop working if Anthropic changes its OAuth or
+  billing requirements. Use it at your own discretion.
+- A model's availability depends on Anthropic granting your account access to
+  it.
+- The plugin has no Claude Code subprocess to fall back on. After an expired or
+  rejected credential, run `claude` for the selected account and try again. Run
+  `/connect` again only when the stored OpenCode connection itself must be
+  replaced.
+- Registering native HTTP hooks turns off OpenCode's provider WebSocket
+  transport for the requests they affect. The `anthropic` provider doesn't
+  advertise that transport in the targeted OpenCode build. Check this again when
+  the targeted host version changes.
 
 ## Troubleshooting
 
-| Problem                              | Action                                                                                                                                                                          |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No Claude Code account in `/connect` | Run `claude`, then `opencode service restart`. If the Keychain failed, the `/connect` error text names the cause                                                                |
-| The plugin does not start            | Check the OpenCode log: an invalid option is named there. Fix the `options` in `opencode.jsonc`, then `opencode service restart`                                                |
-| Keychain locked or denied            | Unlock Keychain and grant the `security` command access                                                                                                                         |
-| Credentials expired or rejected      | Run `claude` for that account and retry                                                                                                                                         |
-| File credentials not found           | Check `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`                                                                                                   |
-| Host compatibility error             | Check `opencode --version` and use a plugin release that supports that host. For a local checkout, update its source and run `pnpm run build`, then `opencode service restart`. |
+| Problem                                                  | Action                                                                                                                                                                |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No Claude Code account in `/connect`                     | Run `claude`, then `opencode service restart`. If the Keychain failed, the `/connect` error names the cause                                                           |
+| The plugin doesn't start                                 | Check OpenCode's log, which names each invalid option. Fix the `options` in `opencode.jsonc`, then run `opencode service restart`                                     |
+| Keychain locked or access denied                         | Unlock the Keychain, and let the `security` command access it                                                                                                         |
+| Credentials expired or rejected                          | Run `claude` for that account, then try again                                                                                                                         |
+| Claude Code token refresh has failed many times in a row | Check your network connection, and that Claude Code's credentials can be read. The plugin keeps retrying                                                              |
+| File credentials not found                               | Check `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`                                                                                         |
+| OpenCode lacks plugin APIs oc-auth needs                 | Check `opencode --version`, and use an oc-auth release built for that version. For a local checkout, update it, run `pnpm run build`, then `opencode service restart` |
 
-## Verify host compatibility
+### Logs
 
-Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
-The test installs the pinned CLI in a temporary directory, loads the plugin
-with options from the generated `opencode.json`, and checks plugin
-activation, credential import, catalog pricing, billing headers, and a
-streamed read-tool round trip against a local mock API with a fake credential.
-It does not read your credentials or send requests to Anthropic. Package
-installation and OpenCode startup may require network access. CI runs this test
-against both OpenCode 2.0.25 and the targeted release on Linux and macOS.
+The plugin writes to OpenCode's own log, by default
+`~/.local/share/opencode/log/opencode.log`, and keeps no log file of its own.
+Each record's message is a stable event name, such as `refresh_lock_degraded`,
+with fields such as `source`, which names the credential store.
 
-To check another V2 host version:
+Warnings carry metadata only, such as credential store names, counts, and status
+codes, never a token, a message, or a path. Each of these events is a warning:
+
+| Event                      | Meaning                                                                                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refresh_writeback_failed` | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires             |
+| `refresh_lock_degraded`    | The refresh lock directory can't be used, so OpenCode processes don't take turns refreshing a store. Two refreshes at once can sign Claude Code out |
+| `keychain_list_failed`     | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                           |
+| `credential_reload_failed` | The newly selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch                            |
+
+Debug records add the details, such as error messages and config paths. OpenCode
+keeps them only when it logs at debug level (its `--log-level` flag). They pass
+through redaction first: values under keys such as `accessToken`,
+`refreshToken`, `account`, and `x-api-key`, and any Anthropic token
+(`sk-ant-...`) or JWT inside a string, are redacted. Structure nested more than
+four levels deep is replaced with a placeholder. Keychain item names and config
+paths aren't redacted, so review debug records before you share them. No record
+carries a prompt, a request or response body, or model output.
+
+## Development
+
+From the repository root:
 
 ```sh
-OC_AUTH_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+pnpm install
+pnpm run check
+```
+
+The root `AGENTS.md` lists every check and the shared lint and compiler policy.
+
+### Verify host compatibility
+
+Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.27. The
+test installs that CLI and the packed plugin in a temporary directory, loads the
+plugin with options from the generated `opencode.json`, and checks plugin
+loading, credential import, catalog pricing, billing headers, and a streamed
+read-tool round trip. It runs against a local mock API with a fake credential,
+so it doesn't read your credentials or send requests to Anthropic. Installing
+packages and starting OpenCode can require network access. CI runs this test on
+Linux and macOS, against the oldest supported host and the targeted release.
+
+To check another OpenCode v2 version:
+
+```sh
+OC_AUTH_HEADLESS_HOST_VERSION=2.0.27 pnpm run test:host
 ```
 
 Set it to `oldest` to check the oldest version oc-auth supports, which its
-`package.json` records as `engines.opencode`.
+`package.json` records as `engines.opencode`. Set `HEADLESS_KEEP=1` to keep the
+sandbox afterwards.
 
-`OC_AUTH_HEADLESS_MODEL` selects a model for the smoke test. Set
-`OC_AUTH_HEADLESS_CUSTOM_MODEL=1` with the offline test to exercise a model
-outside the catalog using an explicit test-only model definition.
+`OC_AUTH_HEADLESS_MODEL` selects the model for the test, by default
+`anthropic/claude-sonnet-5-5`. Set `OC_AUTH_HEADLESS_CUSTOM_MODEL=1` with the
+offline test to test a model outside the catalog, with a model definition
+written for the test.
 
-Run `pnpm run test:headless` for the live read-tool test using your Claude Code
-account. This sends a model request and consumes subscription usage.
+Run `pnpm run test:headless` for the live read-tool test with your Claude Code
+account. It sends a model request and uses subscription usage. To test
+near-expiry refresh and write-back as well, set
+`OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR` to a disposable Claude Code config
+directory. Its refresh token rotates, and the new credentials stay there.
 
-On macOS, `OC_AUTH_LIVE_KEYCHAIN=1 pnpm test` also runs Keychain write-back
+On macOS, `OC_AUTH_LIVE_KEYCHAIN=1 pnpm test` also tests Keychain write-back
 against the real `security` tool. It adds throwaway items named
 `Claude Code-credentials-<random>` to the default keychain and deletes them
 again. CI runs it on its macOS leg with a dedicated keychain.
-
-## Disclaimer
-
-This plugin uses Claude Code OAuth credentials for Anthropic requests.
-Anthropic's terms may restrict subscription credentials to official clients.
-This community integration may stop working if Anthropic changes its OAuth or
-billing requirements. Use it at your own discretion.
 
 ## License
 

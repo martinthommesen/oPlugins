@@ -3,13 +3,13 @@ import { describe, expect, it as test } from "@effect/vitest"
 import FakeCodex from "./fake-codex.test-support.ts"
 import MalformedAssessment from "./malformed-assessment-error.ts"
 import ModelUnavailable from "./model-unavailable-error.ts"
+import PluginOptions from "./plugin-options.ts"
 import RequestFailed from "./request-failed-error.ts"
 import ReviewTimedOut from "./review-timed-out-error.ts"
 import Reviewer from "./reviewer.ts"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import type { Vitest } from "@effect/vitest"
-import support from "./testing.test-support.ts"
 
 type Script = Parameters<typeof FakeCodex.layer>[typeof FIRST]
 
@@ -24,7 +24,7 @@ const ALLOW = '{"outcome":"allow"}',
   REQUEST = {
     cacheKey: "ses_1",
     plannedAction: '{"action":"bash"}',
-    transcript: "[1] user: Run the tests.",
+    transcript: '{"label":"user","text":"Run the tests."}',
   },
   TWO_REVIEWS = 2,
   invalidRequest: Script = (model) =>
@@ -58,10 +58,10 @@ const ALLOW = '{"outcome":"allow"}',
     script: Script,
   ): Layer.Layer<
     FakeCodex | Reviewer,
-    Layer.Error<ReturnType<typeof support.settingsFrom>>
+    Layer.Error<ReturnType<typeof PluginOptions.fromOptions>>
   > =>
     Reviewer.layer.pipe(
-      Layer.provide(support.settingsFrom({})),
+      Layer.provide(PluginOptions.fromOptions({})),
       Layer.provideMerge(FakeCodex.layer(script)),
     ),
   /* A backend that never answers. */

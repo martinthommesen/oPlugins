@@ -27,9 +27,8 @@ const ZERO_COST = "zero",
   },
   /*
    * Native pricing stays by default, so OpenCode reports what the traffic
-   * would cost at API rates. The `cost: "zero"` option restores the
-   * subscription view, for Anthropic models while a Claude Code credential
-   * is active.
+   * would cost at API rates. With the `cost` option at `"zero"`, Anthropic
+   * models cost nothing while a Claude Code credential is active.
    */
   zeroCosts = Effect.fn("ModelPricing.register")(function* zeroCosts(
     transform: ModelTransform,

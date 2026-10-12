@@ -29,8 +29,8 @@ const FIRST_LETTER = 1,
   /*
    * Assign aliases one-to-one, in first-seen order. A name whose alias is
    * already taken, either by a tool that carries that name itself or by an
-   * earlier name with the same alias, keeps its own name so no two tools
-   * share one wire name.
+   * earlier name with the same alias, keeps its own name, so no two tools
+   * share one name in a request.
    *
    * This only sees the names present in the request, so a real MCP tool the
    * request never mentions, such as one from Anthropic's server-side MCP
@@ -75,7 +75,7 @@ const FIRST_LETTER = 1,
         }),
     )
 
-/** Wire aliases for tool names, and their restoration. */
+/** Tool aliases, and restoring the tool names they stand for. */
 export default Object.freeze({
   build: buildToolAliases,
   invert: invertAliases,

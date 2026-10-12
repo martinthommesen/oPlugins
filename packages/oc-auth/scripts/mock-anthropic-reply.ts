@@ -1,6 +1,6 @@
 import { Data, Effect, Option, Schema, Struct } from "effect"
-import type { HttpBody } from "effect/unstable/http"
-import { HttpServerResponse } from "effect/unstable/http"
+import type { HttpBody } from "effect/http"
+import { HttpServerResponse } from "effect/http"
 
 /** What the mock answers: a call of the read tool, or text. */
 type ReplyKind = Data.TaggedEnum<{
@@ -189,6 +189,7 @@ const BLOCK_INDEX = 0,
     )
 
 /** The mock's replies, as Messages API responses. */
+/** @internal */
 export default Object.freeze({
   json: respondJson,
   readCall: Reply.ReadCall,

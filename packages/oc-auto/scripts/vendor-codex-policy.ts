@@ -33,6 +33,7 @@ const render = (template: string, policy: string): string =>
     )
   })
 
+// The Effect diagnostics reject `Effect.provide` with a layer, so the script builds the layer itself.
 NodeRuntime.runMain(
   Layer.build(NodeServices.layer).pipe(
     Effect.flatMap((services) =>

@@ -7,14 +7,14 @@ type KeymapLayer = ReturnType<Parameters<Host["keymap"]["layer"]>[typeof FIRST]>
 
 type Toast = Parameters<Host["ui"]["toast"]["show"]>[typeof FIRST]
 
-/** What the TUI plugin registered with a fake host. */
+/** What the CLI plugin registered with a fake host. */
 interface Registered {
   readonly layers: KeymapLayer[]
   readonly toasts: Toast[]
 }
 
 const FIRST = 0,
-  /* Set the TUI plugin up on a fake host that records what it is given. */
+  /* Sets the CLI plugin up on a fake host that records what it's given. */
   setUpOnFake = (): Registered => {
     const registered: Registered = { layers: [], toasts: [] }
 
@@ -36,7 +36,7 @@ const FIRST = 0,
     return registered
   }
 
-describe("the TUI plugin", () => {
+describe("the CLI plugin", () => {
   it(
     "adds a palette command that confirms oc-browser loaded",
     { timeout: 5000 },

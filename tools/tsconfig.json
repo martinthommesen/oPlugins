@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
-  // The vendored lint rules in `oxlint/` are not part of this project.
+  // The vendored lint rules in `oxlint/` aren't part of this project.
   "include": ["*.ts"]
 }

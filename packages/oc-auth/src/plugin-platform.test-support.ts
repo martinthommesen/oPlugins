@@ -19,9 +19,9 @@ const platform = Layer.mergeAll(
     NodePath.layer,
   ),
   /*
-   * What the plugin's services stand on in a test: the plugin's `options`,
-   * and the real backoff and request transforms, on a machine whose home
-   * holds nothing.
+   * What the plugin's services run on in a test: the plugin's `options`,
+   * the real request transforms, and the real `RefreshBackoff`, whose state
+   * a `/connect` import clears, on a machine whose home holds nothing.
    */
   pluginPlatform = (
     options: Plugin.Context["options"],

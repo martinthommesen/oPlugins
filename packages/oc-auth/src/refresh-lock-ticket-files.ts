@@ -4,6 +4,7 @@ import tickets from "./refresh-lock-tickets.ts"
 
 type Claim = typeof RefreshLockClaim.Type
 
+// The lease in a ticket file, as JSON; without `cooldown` it holds a refresh.
 const Lease = Schema.fromJsonString(
     Schema.Struct({
       cooldown: Schema.optionalKey(Schema.Boolean),
@@ -28,7 +29,7 @@ const Lease = Schema.fromJsonString(
     },
     Effect.orElseSucceed(() => Option.none<number>()),
   ),
-  /* The lease written in the ticket at `path`, or none when it has none. */
+  /* The lease written in the ticket at `path`, or none when it has none or cannot be read. */
   leaseAt = Effect.fn("RefreshLock.readLease")(function* leaseAt(path: string) {
     const fs = yield* FileSystem.FileSystem
 

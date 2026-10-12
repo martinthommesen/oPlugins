@@ -127,11 +127,11 @@ const EVENT_STREAM = { "content-type": "text/event-stream" },
     RequestTransforms,
     Config.ConfigError | PluginOptionsError
   > => {
-    const environment = testEnvironment({ HOME })(),
-      settings = PluginOptions.layer(options)
+    const decoded = PluginOptions.layer(options),
+      environment = testEnvironment({ HOME })()
 
     return RequestTransforms.layer.pipe(
-      Layer.provide(Layer.mergeAll(NodeCrypto.layer, environment, settings)),
+      Layer.provide(Layer.mergeAll(NodeCrypto.layer, environment, decoded)),
     )
   }
 

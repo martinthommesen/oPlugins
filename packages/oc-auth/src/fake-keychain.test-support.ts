@@ -9,7 +9,7 @@ import {
   Sink,
   Stream,
 } from "effect"
-import { ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcessSpawner } from "effect/process"
 import type { PlatformError } from "effect"
 import fakeSecurity from "./fake-security.test-support.ts"
 
@@ -56,17 +56,16 @@ const FAKE_PID = 4243,
 /**
  * A macOS Keychain for tests: a `ChildProcessSpawner` that answers every
  * command as `security` would, from named files the test writes and reads.
- * The names are those of the old stand-in script: one file per service
- * holding its blob, `<service>.account`, `<service>.exit`, `dump`,
- * `<service>.drop`, `<service>.drop-once`, `<service>.flip`, and
- * `<service>.written-as`. Every invocation's argv is kept.
+ * `fake-security.test-support.ts` says what each file means.
  */
 class FakeKeychain extends Context.Service<
   FakeKeychain,
   {
     /** The argv of every `security` invocation, in order. */
     readonly argv: Effect.Effect<readonly (readonly string[])[]>
+    /** The content of the file `name`, or none when there is no such file. */
     readonly read: (name: string) => Effect.Effect<Option.Option<string>>
+    /** Write `content` to the file `name`. */
     readonly write: (name: string, content: string) => Effect.Effect<void>
   }
 >()("@martinthommesen/oc-auth/fake-keychain.test-support/FakeKeychain") {
@@ -113,4 +112,5 @@ class FakeKeychain extends Context.Service<
   )
 }
 
+/** @internal */
 export default FakeKeychain

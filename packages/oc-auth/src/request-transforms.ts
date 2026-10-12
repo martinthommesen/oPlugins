@@ -26,14 +26,14 @@ type AccessCredential = Pick<Credential.OAuth, "access">
 
 /**
  * The request and response rewrites that let OpenCode traffic bill to a
- * Claude subscription: the session context, outbound requests and their 401
- * replays, and tool names in responses.
+ * Claude subscription: the session context, outbound requests and their
+ * replays after a 401, and tool names in responses.
  */
 class RequestTransforms extends Context.Service<
   RequestTransforms,
   {
     /**
-     * Rewrite a `context`, `compaction`, `generate` or `title` event in
+     * Rewrite a `context`, `compaction`, `generate`, or `title` event in
      * place. Returns the aliases the registered tools will carry on the wire.
      */
     readonly context: (
@@ -82,8 +82,7 @@ class RequestTransforms extends Context.Service<
           outboundRequest
             .transform(event, credential, sessionID)
             .pipe(Effect.provideContext(context)),
-        restore: (response, originalByAlias) =>
-          responseRestoration.restore(response, originalByAlias),
+        restore: responseRestoration.restore,
       })
     }),
   )

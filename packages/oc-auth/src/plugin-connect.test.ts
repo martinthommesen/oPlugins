@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Match, Option } from "effect"
+import { Cause, Effect, Exit, Match, Option, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
@@ -51,13 +51,7 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   answering = (
     accounts: Script["accounts"],
     refresh: Script["refresh"] = PluginRig.quiet.refresh,
-  ): Script =>
-    Object.freeze({
-      accounts,
-      adopt: PluginRig.quiet.adopt,
-      fetch: PluginRig.quiet.fetch,
-      refresh,
-    }),
+  ): Script => Struct.assign(PluginRig.quiet, { accounts, refresh }),
   /*
    * The authorization the registered method offers for `answer`. The host
    * leaves the method's failures untyped; each is kept as the cause.

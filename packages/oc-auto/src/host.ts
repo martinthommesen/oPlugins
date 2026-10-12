@@ -10,7 +10,7 @@ type SessionId = PermissionEvaluation["sessionID"]
 
 type PluginContext = Plugin.Context
 
-/** The parts of the host's plugin context the reviewer reads. */
+/** The parts of the host's plugin context this service reads. */
 interface HostContext {
   readonly integration: {
     readonly connection: Pick<
@@ -67,10 +67,11 @@ const OPENAI_INTEGRATION = "openai",
       }
     })
 
-/** OpenCode server capabilities the reviewer reads, behind a service tag. */
+/** What the plugin reads from the host: sessions and the OpenAI credential. */
 class Host extends Context.Service<Host, Interface>()(
   "@martinthommesen/oc-auto/host",
 ) {
+  /* The host service, reading through the plugin context. */
   public static readonly fromPlugin = (
     context: HostContext,
   ): Layer.Layer<Host> => {

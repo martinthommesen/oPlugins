@@ -189,15 +189,12 @@ const UNAUTHORIZED = 401,
    * failure surfaces as the original 401. Every response it opened but does
    * not return is released.
    */
-  unauthorized = (
-    original: Response,
-    state: RequestState,
-  ): Effect.Effect<Response, never, Recovery> => {
-    if (state.snapshot.signal.aborted) {
-      return Effect.succeed(original)
-    }
+  unauthorized = Effect.fn("UnauthorizedRecovery.recover")(
+    function* unauthorized(original: Response, state: RequestState) {
+      if (state.snapshot.signal.aborted) {
+        return original
+      }
 
-    return Effect.gen(function* recover() {
       const opened = yield* Ref.make<readonly Response[]>([]),
         recording: Attempt = { opened, state },
         resolved = yield* tryRecovery(recording, original).pipe(
@@ -228,8 +225,8 @@ const UNAUTHORIZED = 401,
       )
 
       return resolved
-    })
-  }
+    },
+  )
 
 /** Recovering from a 401 on a request this plugin sent. */
 export default Object.freeze({ recover: unauthorized })

@@ -11,22 +11,18 @@ const ACCOUNT_FILE = ".claude.json",
     }),
   ),
   NONE = 0,
-  /* The email `.claude.json` at `path` names, or none. */
-  emailAt = (
-    path: string,
-  ): Effect.Effect<Option.Option<string>, never, FileSystem.FileSystem> =>
-    Effect.gen(function* readEmail() {
-      const fs = yield* FileSystem.FileSystem
+  /* The email the `.claude.json` at `path` names, or none. */
+  emailAt = Effect.fn("ClaudeConfigDirs.emailAt")(
+    function* emailAt(path: string) {
+      const fs = yield* FileSystem.FileSystem,
+        text = yield* fs.readFileString(path)
 
-      return yield* fs.readFileString(path)
-    }).pipe(
-      Effect.orElseSucceed(() => ""),
-      Effect.map((text) =>
-        Schema.decodeOption(AccountFile)(text).pipe(
-          Option.map((file) => file.oauthAccount.emailAddress),
-        ),
-      ),
-    ),
+      return Schema.decodeOption(AccountFile)(text).pipe(
+        Option.map((file) => file.oauthAccount.emailAddress),
+      )
+    },
+    Effect.orElseSucceed(() => Option.none<string>()),
+  ),
   /* Whether `dir` is a directory holding a `.claude.json`. */
   holdsAccountFile = Effect.fn("ClaudeConfigDirs.isConfigDir")(
     function* holdsAccountFile(dir: string) {
@@ -39,7 +35,7 @@ const ACCOUNT_FILE = ".claude.json",
         (yield* fs.exists(path.join(dir, ACCOUNT_FILE)))
       )
     },
-    (effect) => Effect.orElseSucceed(effect, () => false),
+    Effect.orElseSucceed(() => false),
   ),
   /* The dot directories in the home directory that hold a `.claude.json`. */
   homeConfigDirs = Effect.gen(function* homeConfigDirs() {
@@ -83,13 +79,13 @@ const ACCOUNT_FILE = ".claude.json",
     return Option.firstSomeOf(stated)
   }),
   /*
-   * The config directory each of `needed` suffixes hashes from. Claude Code
-   * names a non-primary item after its config directory, and those
-   * directories live in the home directory unless CLAUDE_CONFIG_DIR points
-   * elsewhere. Unmapped suffixes only lose their config directory and email
+   * The config directory each suffix in `needed` was hashed from. Claude
+   * Code names a non-primary item after its config directory, and those
+   * directories live in the home directory unless `CLAUDE_CONFIG_DIR` points
+   * elsewhere. An unmapped suffix only loses its config directory and email
    * label, so a failed scan is logged and otherwise ignored.
    */
-  suffixMap = Effect.fn("ClaudeConfigDirs.bySuffix")(
+  suffixMap = Effect.fn("ClaudeConfigDirs.configDirsBySuffix")(
     function* suffixMap(needed: readonly string[]) {
       const environment = yield* Environment,
         scanned = yield* homeConfigDirs.pipe(
@@ -129,5 +125,5 @@ const ACCOUNT_FILE = ".claude.json",
       }),
   )
 
-/** What the Claude config directories on this machine say about accounts. */
+/** What each Claude Code config directory says about its account. */
 export default Object.freeze({ configDirsBySuffix: suffixMap, readEmail })

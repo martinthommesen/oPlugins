@@ -22,6 +22,7 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
   PRIMARY = sources.PRIMARY_SERVICE,
   THREE_ASSERTIONS = 3,
   TWO_ASSERTIONS = 2,
+  TWO_WRITES = 2,
   /** The primary item, already holding the tokens of a newer login. */
   WON_ITEM = [
     [PRIMARY, support.credentialBlob("winner")],
@@ -36,7 +37,7 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
     [ACCOUNT, "me@example.com"],
     ...extra,
   ],
-  /* Write refreshed tokens over `source`, which held `expected`. */
+  /* Write refreshed tokens into `source`'s store, which held `expected`. */
   refreshing =
     (source: string, expected: string) =>
     (
@@ -44,14 +45,13 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
     ): Effect.Effect<Effect.Success<ReturnType<Stores["writeBack"]>>> =>
       stores.writeBack(support.refresh(source, expected, Option.none())),
   /* The access token the fake Keychain holds under `name`. */
-  storedToken = (
+  storedToken = Effect.fn("test.storedToken")(function* storedToken(
     name: string,
-  ): Effect.Effect<Option.Option<string>, never, FakeKeychain> =>
-    Effect.gen(function* read() {
-      const keychain = yield* FakeKeychain
+  ) {
+    const keychain = yield* FakeKeychain
 
-      return support.accessTokenIn(yield* keychain.read(name))
-    })
+    return support.accessTokenIn(yield* keychain.read(name))
+  })
 
 describe("keychain write-back retry", () => {
   test.layer(support.layer)((it: Tests) => {
@@ -69,7 +69,7 @@ describe("keychain write-back retry", () => {
           )
 
         expect(result).toBe("written")
-        expect(writes).toHaveLength(TWO_ASSERTIONS)
+        expect(writes).toHaveLength(TWO_WRITES)
       }),
     )
   })
@@ -79,9 +79,11 @@ describe("keychain write-back retry", () => {
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
-        // The write is lost and the user runs `claude` before the next attempt.
-        // Re-reading the guard token then would compare the item against
-        // Itself and overwrite that login.
+        /*
+         * The write is lost and the user runs `claude` before the next
+         * attempt. Taking the expected token from a fresh read then would
+         * compare the item with itself and overwrite that login.
+         */
         const result = yield* support.onMac(
           primaryWith([
             [`${PRIMARY}.drop-once`, support.credentialBlob("external")],
@@ -188,7 +190,7 @@ describe("keychain write-back over a blob it cannot identify", () => {
   })
 
   test.layer(support.layer)((it: Tests) => {
-    it.effect("refuses a source name that is not a Claude Code item", () =>
+    it.effect("refuses a `source` that names no Claude Code item", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 

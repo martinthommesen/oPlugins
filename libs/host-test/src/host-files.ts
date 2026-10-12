@@ -5,14 +5,14 @@ interface WrapperInput {
 }
 
 const CONFIG_SCHEMA = "https://opencode.ai/config.json",
-  /* The host config: updates off, nothing else changed. */
+  /* The host config. It turns updates off and changes nothing else. */
   HOST_CONFIG = JSON.stringify({ $schema: CONFIG_SCHEMA, update: "disable" }),
   /*
-   * The plugin as the host loads it, wrapped. Once the plugin's own set-up
+   * The plugin as the host loads it, wrapped. Once the plugin's own setup
    * has finished, the wrapper appends the plugin's ID to the marker file, so
    * the host test can tell a plugin that started from one the host skipped
-   * or that failed. It is written beside the installed plugin, so its
-   * `effect` resolves exactly as the plugin's does.
+   * or that failed. The host test writes it beside the installed plugin, so
+   * its `effect` import resolves to the plugin's own copy.
    */
   pluginWrapper = (
     input: WrapperInput,

@@ -1,31 +1,31 @@
 # oc-auto
 
-OpenCode v2 plugin that sends permission prompts to a reviewer model before
-they reach you. It uses Codex's
+OpenCode v2 plugin that sends permission prompts to a reviewer model before they
+reach you. It reuses the policy and the reviewer model of Codex's
 [Auto-review](https://developers.openai.com/codex/concepts/sandboxing/auto-review).
 
-When a permission rule resolves to **ask**, the plugin shows the reviewer the
-conversation and the exact action, and applies its verdict:
+When a permission rule resolves to `ask`, the plugin shows the reviewer the
+conversation and the exact action, then settles the request:
 
-- An allow decision runs the action without a prompt.
-- A deny decision refuses the action. The agent gets the reviewer's reason and
-  Codex's instruction to find a materially safer path or stop and ask.
-- An ask decision leaves the normal prompt for you, with a note saying why.
-  This happens when the review fails, times out, lacks context, or keeps denying.
+- If the reviewer allows the action, it runs without a prompt.
+- If the reviewer denies the action, it's refused. The agent gets the reviewer's
+  reason and Codex's instruction to find a materially safer path or stop and
+  ask.
+- Otherwise you get the normal prompt, with a note that says why: the review
+  failed, timed out, or lacked context, or the reviewer kept denying.
 
-Rules that already resolve to **allow** are not reviewed, and configured
-**deny** rules never reach the plugin.
-
-## Requirements
-
-- OpenCode 2.0.26 or newer.
-- OpenAI connected with "Sign in with ChatGPT". Run `/connect` and choose
-  OpenAI. The reviewer uses that sign-in to call the ChatGPT Codex backend.
-  An OpenAI API key does not work.
+Requests that a rule already resolves to `allow` or `deny` are left unchanged.
 
 ## Install
 
-oc-auto is not published to npm yet. Build it from an oc-plugins checkout:
+You need:
+
+- OpenCode 2.0.27 or newer.
+- OpenAI connected with "Sign in with ChatGPT". Run `/connect` and choose
+  OpenAI. The reviewer uses that sign-in to call the ChatGPT Codex backend. An
+  OpenAI API key doesn't work.
+
+oc-auto isn't published to npm yet. Build it from an oc-plugins checkout:
 
 ```sh
 pnpm install
@@ -42,10 +42,10 @@ project, and restart OpenCode:
 }
 ```
 
-After pulling changes, run the build again; OpenCode picks the new build up
-on its next start.
+After pulling changes, run the build again. OpenCode loads the new build the
+next time it starts.
 
-## Options
+## Configure
 
 Pass options with the object form of the plugin entry:
 
@@ -71,75 +71,112 @@ Pass options with the object form of the plugin entry:
 | `extraPolicy`           | (empty)                                 | Text added to the security policy, such as trusted hosts or repositories.   |
 | `baseUrl`               | `https://chatgpt.com/backend-api/codex` | HTTP(S) backend URL without credentials, a query, or a fragment.            |
 
-`timeout` is a string such as `"60 seconds"`, and the denial limits are
-numbers, not strings.
+`timeout` is a string such as `"60 seconds"`, and the denial limits are numbers,
+not strings.
 
-An invalid option stops the plugin from loading: a value of the wrong type,
-a value out of range, a `reasoningEffort` not in the list, or an option name
-not in the table. No invalid option is replaced by its default. OpenCode's
-log then shows an error that names each invalid option and the problem,
-listing the known options for an unknown name, and permission prompts
-behave as if the plugin were not installed until you correct the option and
-restart OpenCode.
+An invalid option stops the plugin from loading. That covers a value of the
+wrong type, a value out of range, a `reasoningEffort` not in the list, and an
+option name not in the table. No invalid option falls back to its default.
+OpenCode's log names each invalid option and the problem, and lists the known
+options for an unknown name. Until you correct the option and restart OpenCode,
+permission prompts behave as if the plugin weren't installed.
 
 Only set `baseUrl` to a backend you trust. It receives your ChatGPT access token
-and conversation. Use HTTPS unless testing a local backend. Requests do not
-follow redirects.
+and the conversation. Use HTTPS unless you're testing a local backend. Requests
+don't follow redirects.
+
+## Environment variables
+
+oc-auto reads no environment variables. The host test's variables are under
+[Verify host compatibility](#verify-host-compatibility).
 
 ## How it works
 
-`codex-auto-review` is the hidden model Codex uses for Auto-review.
-OpenAI enables it per account and does not document it, so it
-can change or disappear. When the backend rejects it, the plugin switches to
-`fallbackModel` until the plugin reloads and logs a warning. Other request
-errors do not select the fallback.
+### The reviewer model
+
+`codex-auto-review` is the hidden model Codex uses for Auto-review. OpenAI
+enables it per account and doesn't document it, so it can change or disappear.
+When the backend rejects it, the plugin logs a warning and uses `fallbackModel`
+until the plugin reloads. Other request errors don't select the fallback.
 
 The instructions are Codex's Auto-review policy template and default security
-policy, copied unchanged from the Codex repository. Its source is documented
-in `src/vendor/codex/UPSTREAM.md`. The plugin adds a short section describing
-OpenCode and replaces Codex's output contract with one that says the
-reviewer has no tools.
+policy, copied unchanged from the Codex repository.
+`src/vendor/codex/UPSTREAM.md` records their source. The plugin adds a short
+section that describes OpenCode, and replaces Codex's output contract with one
+that says the reviewer has no tools.
+
+### What the reviewer sees
 
 The reviewer sees user messages, the agent's messages and tool calls,
-conversation summaries, and the planned action. The planned action
-contains the permission request and the exact tool call that raised it.
-Tool outputs are left out. Each transcript entry quotes its text separately
-from its speaker label, so embedded labels remain part of that entry's text.
+conversation summaries, and the planned action. The planned action is the
+permission request and the exact tool call that raised it. Tool outputs are left
+out. Each transcript entry quotes its text apart from its speaker label, so a
+label inside the text stays part of that entry's text.
+
 For a subagent, the reviewer also sees the user's messages from the root
-session, and the subagent's own "user" messages are labeled as coming from
-the delegating agent. If the root session or originating tool call cannot
-be identified, the plugin asks you instead.
+session, and the subagent's own user messages are labeled as coming from the
+delegating agent. If the plugin can't identify the root session or the tool call
+that raised the request, it asks you instead.
 
-The transcript has a 48,000-character budget. Older agent entries can be
-omitted, and agent text and historical tool inputs can be shortened. User
-messages are never shortened. The planned action has an 8,000-character limit
-and is never shortened. If either cannot fit, the plugin asks you instead.
+The transcript has a 48,000-character budget. The oldest agent entries are left
+out first, and agent text, summaries, and tool inputs in the transcript can be
+shortened. Your own messages are never shortened. The planned action has an
+8,000-character limit and is never shortened. If either can't fit, the plugin
+asks you instead.
 
-A turn starts at the newest user message in the root session. The root and
-its subagents share denial counts. Three consecutive denials or ten total
-denials per turn hand the decision back to you. An approval resets only the
-consecutive count. Reaching the total limit keeps subsequent denials with you
-until a new user turn, even after an approval.
+### Denial limits
+
+A turn starts at the newest user message in the root session. The root session
+and its subagents share one count of denials per turn. With the default limits,
+the third denial in a row or the tenth in a turn comes to you as a prompt
+instead of going to the agent. An approval resets only the consecutive count, so
+once a turn reaches the total limit, every later denial in it comes to you, even
+after an approval.
+
+### Failures
 
 Missing or expired sign-ins, backend errors, timeouts, unfinished response
 streams, and unreadable answers leave the prompt for you, with the reason.
 
-The plugin's log records go to OpenCode's log. Each verdict is logged at info
-level with metadata only: the permission action, the verdict, and the
-reviewer model. The reviewer's rationale and the reason a review failed are
-logged only at debug level, after secrets are redacted.
+### Logs
+
+The plugin logs to OpenCode's log. Records at info level and above carry
+metadata only:
+
+| Event                        | Level   | Fields                                                                    |
+| ---------------------------- | ------- | ------------------------------------------------------------------------- |
+| `auto_review_verdict`        | Info    | `action`, `verdict`, and `model` when the reviewer decided                |
+| `auto_review_failed`         | Warning | `error`, and `model`, `status`, `operation`, or `timeout` when they apply |
+| `reviewer_model_unavailable` | Warning | `model` and `fallbackModel`                                               |
+| `auto_review_rationale`      | Debug   | `action` and the reviewer's `rationale`                                   |
+| `auto_review_failure_reason` | Debug   | The `reason` the prompt shows                                             |
+
+Debug records pass through redaction first, and OpenCode keeps them only when it
+logs at debug level (its `--log-level` flag).
 
 ## Limitations
 
-- Unlike Codex's reviewer, this one cannot run read-only commands to inspect
-  files before deciding. The policy tells it to lean conservative when the
-  decision depends on state it cannot see.
-- The plugin does not refresh the ChatGPT sign-in. OpenCode renews it when it
-  sends a request to an OpenAI model; until then an expired sign-in means
+- Unlike Codex's reviewer, this one can't run read-only commands to inspect
+  files before deciding. Its instructions tell it to lean conservative when the
+  decision depends on state it can't see.
+- The plugin doesn't refresh the ChatGPT sign-in. OpenCode renews it when it
+  sends a request to an OpenAI model. Until then, an expired sign-in means
   reviews fall back to asking you.
-- Like Codex's Auto-review, this is not a security boundary. A reviewer can be
+- Like Codex's Auto-review, this isn't a security boundary. A reviewer can be
   misled, and it only sees actions that reach an `ask` rule. Keep `deny` rules
   for anything that must never run.
+
+## Troubleshooting
+
+| Problem                                         | Action                                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| The plugin doesn't start                        | Check OpenCode's log, which names each invalid option. Fix the `options` in `opencode.jsonc`, then restart OpenCode.                  |
+| The prompt says OpenAI isn't connected          | Run `/connect`, choose OpenAI, and sign in with ChatGPT.                                                                              |
+| The prompt says OpenAI uses an API key          | Run `/connect`, choose OpenAI, and sign in with ChatGPT instead.                                                                      |
+| The prompt says the ChatGPT sign-in has expired | Send a message with an OpenAI model. OpenCode renews the sign-in when it sends that request.                                          |
+| The prompt says the review didn't finish        | Raise `timeout`.                                                                                                                      |
+| Every review uses `fallbackModel`               | The backend rejected `model` for your account, as the `reviewer_model_unavailable` warning records. Restart OpenCode to try it again. |
+| You want to know why the reviewer decided       | Run OpenCode at debug log level and read the `auto_review_rationale` records.                                                         |
 
 ## Development
 
@@ -147,32 +184,38 @@ From the repository root:
 
 ```sh
 pnpm install
-pnpm run check   # lint, format check, typecheck, Effect diagnostics, tests
+pnpm run check
 ```
 
-The root `AGENTS.md` describes the shared lint and compiler policy.
+The root `AGENTS.md` lists every check and the shared lint and compiler policy.
 
-`src/vendor/codex/` contains Apache-2.0 text from
-[openai/codex](https://github.com/openai/codex); its `LICENSE`, `NOTICE`, and
-`UPSTREAM.md` describe the copy and how to update it. The build copies the
-`LICENSE` and `NOTICE` to `dist/vendor/codex/`, beside the bundle that
-carries the text.
+To take an upstream update of the vendored Codex policy, follow
+`src/vendor/codex/UPSTREAM.md`, then run `pnpm run vendor:codex` to regenerate
+`policy.ts`.
 
-## Verify host compatibility
+### Verify host compatibility
 
-Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
-The test installs the pinned CLI and the packed plugin in a temporary
-directory, with their own config, data, cache, and state directories, and
-checks that the host starts the plugin. Package installation may require
-network access.
+Run `pnpm run test:host` to test the packed plugin against the OpenCode version
+oc-auto is built against, 2.0.27. The test installs that CLI and the packed
+plugin in a temporary directory, with their own config, data, cache, and state
+directories, and checks that the host starts the plugin. Installing packages can
+require network access.
 
-To check another V2 host version:
+To check another OpenCode v2 version:
 
 ```sh
-OC_AUTO_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+OC_AUTO_HEADLESS_HOST_VERSION=2.0.27 pnpm run test:host
 ```
 
 Set it to `oldest` to check the oldest version oc-auto supports, which its
-`package.json` records as `engines.opencode`.
+`package.json` records as `engines.opencode`. Set `HEADLESS_KEEP=1` to keep the
+sandbox afterwards.
 
-Set `HEADLESS_KEEP=1` to keep the sandbox afterwards.
+## License
+
+[MIT](LICENSE).
+
+`src/vendor/codex/` holds Apache-2.0 text from
+[openai/codex](https://github.com/openai/codex). Its `LICENSE`, `NOTICE`, and
+`UPSTREAM.md` describe the copy. The build copies that `LICENSE` and `NOTICE` to
+`dist/vendor/codex/`, beside the bundle that includes the text.

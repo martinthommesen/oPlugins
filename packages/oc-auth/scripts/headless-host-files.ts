@@ -128,9 +128,9 @@ exit 44
    * The plugin as the host loads it, wrapped. Offline, a hook tags each
    * Anthropic request with its kind so the mock can tell the agent loop from
    * title requests. Standalone API reads do not activate plugins in the
-   * supported hosts; auth/run commands do, as a normal client does. So the
-   * wrapper reads the host's models after the plugin has started and leaves
-   * them where the smoke test checks their pricing. It is written beside the
+   * supported hosts, but the `auth` and `run` commands do, as a normal
+   * client does. So the wrapper reads the host's models after the plugin
+   * has started and leaves them where the smoke test checks their pricing. It is written beside the
    * installed plugin, so its `effect` resolves exactly as the plugin's does
    * on any host, whether or not the host provides one to its plugins. It is
    * the entry of a package directory, because the host config names local

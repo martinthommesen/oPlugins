@@ -14,17 +14,18 @@ interface Host {
 const listsStarted = (text: string, pluginId: string): boolean =>
     text.split("\n").includes(pluginId),
   /*
-   * The host starts the packed plugin as `pluginId`: a command that
-   * activates plugins leaves the plugin's ID in the marker file the wrapper
-   * writes once the plugin's set-up has finished.
+   * Check that the host starts the packed plugin as `pluginId`. `auth list`
+   * makes the host start its plugins, and the wrapper appends the plugin's
+   * ID to the marker file once the plugin's setup finishes. No marker file
+   * means no plugin started.
    */
-  pluginStarted = Effect.fn("HostTest.pluginStarted")(function* started(
+  pluginStarted = Effect.fn("HostTest.pluginStarted")(function* pluginStarted(
     host: Host,
     marker: string,
     pluginId: string,
   ) {
     const failure = HostTestError.make({
-        message: `The host did not start ${pluginId}`,
+        message: `The host did not start ${pluginId}. Look for the plugin's error in the host log above.`,
       }),
       fs = yield* FileSystem.FileSystem,
       output = yield* commands.run({

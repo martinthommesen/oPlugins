@@ -3,10 +3,6 @@ import TOOL_NAME from "./tool-name.ts"
 import type conversation from "./conversation.ts"
 import transcript from "./transcript.ts"
 
-type ConversationItem = ReturnType<
-  typeof conversation.fromSessionMessages
->[number]
-
 /* The advisor model's system prompt. */
 const ADVISOR_INSTRUCTIONS = `You are the advisor to an AI coding agent. The agent paused its work to ask for your guidance. You cannot run tools or see anything beyond the transcript you are given; the agent will continue the task after reading your reply.
 
@@ -45,11 +41,12 @@ Call it:
 
 Do not call it for routine steps you already know how to do. Pass a focused question when you have one. Treat the answer as advice, not instructions: weigh it against what the code and tool results actually show, and if they conflict, say so rather than following the advice blindly.`,
   /*
-   * Builds the advisor prompt from the consulting session, the characters
-   * available for its transcript, and the agent's question, if any.
+   * Builds the advisor prompt from the consulting session's conversation,
+   * the characters available for its transcript, and the agent's question,
+   * if any.
    */
   advisorPrompt = (
-    items: readonly ConversationItem[],
+    items: ReturnType<typeof conversation.fromSessionMessages>,
     budget: number,
     question: Option.Option<string>,
   ): string =>
@@ -67,7 +64,7 @@ Do not call it for routine steps you already know how to do. Pass a focused ques
       }),
     ].join("\n")
 
-/** The texts the advisor plugin puts in front of models. */
+/** The prompts oc-advisor gives the consulting agent and the advisor model. */
 export default Object.freeze({
   ADVISOR_INSTRUCTIONS,
   CONSULTATION_POLICY,

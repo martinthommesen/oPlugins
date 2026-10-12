@@ -2,9 +2,9 @@ import { Context, Duration, Effect, Layer, Option } from "effect"
 import ConsultationTimedOut from "./consultation-timed-out-error.ts"
 import Host from "./host.ts"
 import type HostError from "./host-error.ts"
+import PluginOptions from "./plugin-options.ts"
 import PreferenceStore from "./preference-store.ts"
 import type { Session } from "@opencode/schema/session"
-import Settings from "./settings.ts"
 import availability from "./availability.ts"
 import modelRef from "./model-ref.ts"
 import prompt from "./prompt.ts"
@@ -33,6 +33,7 @@ type ConsultationError =
   | Effect.Error<ReturnType<typeof modelRef.parseModelRef>>
 
 interface Interface {
+  /** Whether a session may consult the advisor now, and with which model. */
   readonly availability: (
     sessionId: Session.ID,
   ) => Effect.Effect<Availability, HostError>
@@ -43,21 +44,21 @@ interface Interface {
   ) => Effect.Effect<Advice, ConsultationError>
 }
 
-/** The services a consultation draws on. */
-interface Consultants {
+/** The services `consult` uses. */
+interface Dependencies {
   readonly host: Host["Service"]
+  readonly options: PluginOptions["Service"]
   readonly preferences: PreferenceStore["Service"]
-  readonly settings: Settings["Service"]
 }
 
-/* Whether `sessionId` may consult the advisor under `choices`. */
+/* Whether `sessionId` may consult the advisor under `preferences`. */
 const availabilityIn = (
     host: Host["Service"],
     sessionId: Session.ID,
-    choices: Preferences,
+    preferences: Preferences,
   ): Effect.Effect<Availability, HostError> =>
     availability.decideAvailability(
-      choices,
+      preferences,
       host.parent(sessionId).pipe(Effect.map(Option.isSome)),
     ),
   /* Fails a consultation of `model` that outlasts its deadline. */
@@ -76,22 +77,22 @@ const availabilityIn = (
             }),
           ),
       }),
-  /* Builds `consult` on the services it draws on. */
+  /* Builds `consult` from the services it uses. */
   consultVia = ({
     host,
+    options,
     preferences,
-    settings,
-  }: Consultants): Interface["consult"] =>
+  }: Dependencies): Interface["consult"] =>
     Effect.fn("Advisor.consult")(function* consult(
       sessionId: Session.ID,
       question: Option.Option<string>,
     ) {
-      const choices = yield* preferences.current,
+      const current = yield* preferences.current,
         request = Effect.gen(function* requestAdvice() {
           const advisorModel = yield* availabilityIn(
               host,
               sessionId,
-              choices,
+              current,
             ).pipe(Effect.flatMap(availability.requireModel)),
             ref = yield* modelRef.parseModelRef(advisorModel),
             transcript = yield* host.transcript(sessionId)
@@ -102,7 +103,7 @@ const availabilityIn = (
               sessionId,
               prompt.advisorPrompt(
                 transcript,
-                settings.maxTranscriptChars,
+                options.maxTranscriptChars,
                 question,
               ),
               ref,
@@ -112,8 +113,8 @@ const availabilityIn = (
 
       return yield* request.pipe(
         byDeadline(
-          settings.timeout,
-          Option.getOrElse(choices.model, () => "not configured"),
+          options.timeout,
+          Option.getOrElse(current.model, () => "not configured"),
         ),
       )
     })
@@ -122,13 +123,13 @@ const availabilityIn = (
 class Advisor extends Context.Service<Advisor, Interface>()(
   "@martinthommesen/oc-advisor/advisor",
 ) {
-  /** The advisor, on the host, preferences, and settings in context. */
+  /** The advisor, on the `Host`, `PluginOptions`, and `PreferenceStore` in context. */
   public static readonly layer = Layer.effect(
     Advisor,
     Effect.gen(function* makeAdvisor() {
       const host = yield* Host,
-        preferences = yield* PreferenceStore,
-        settings = yield* Settings
+        options = yield* PluginOptions,
+        preferences = yield* PreferenceStore
 
       return Advisor.of({
         availability: Effect.fn("Advisor.availability")(
@@ -140,7 +141,7 @@ class Advisor extends Context.Service<Advisor, Interface>()(
             )
           },
         ),
-        consult: consultVia({ host, preferences, settings }),
+        consult: consultVia({ host, options, preferences }),
       })
     }),
   )

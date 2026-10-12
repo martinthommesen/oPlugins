@@ -1,7 +1,7 @@
 /**
  * The layout check: every plugin and library is named, shaped, and wired as
  * the ADRs and `AGENTS.md` say. It prints one line per problem, naming the
- * file, and fails when there's any. `pnpm run check:layout` runs it.
+ * file, and fails when it finds any. `pnpm run check:layout` runs it.
  */
 import { Array as Arr, Console, Effect, Layer, Path } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
@@ -25,12 +25,12 @@ const announce = (
   checkLayout = Effect.gen(function* checkLayout() {
     const path = yield* Path.Path,
       root = yield* path.fromFileUrl(new URL("..", import.meta.url)),
-      snapshot = yield* readSnapshot.read(root),
-      violations = layoutRules.problems(snapshot),
-      withProblems = Effect.succeed(Arr.isReadonlyArrayNonEmpty(violations))
+      snapshot = yield* readSnapshot.read(root)
 
-    yield* announce(violations).pipe(Effect.when(withProblems))
-    yield* Console.log("The layout check found no problems.")
+    yield* Arr.match(layoutRules.problems(snapshot), {
+      onEmpty: () => Console.log("The layout check found no problems."),
+      onNonEmpty: (problems) => announce(problems),
+    })
   })
 
 NodeRuntime.runMain(

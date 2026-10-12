@@ -6,7 +6,7 @@ import {
   NodePath,
 } from "@effect/platform-node-shared"
 import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
-import type { ChildProcessSpawner } from "effect/unstable/process"
+import type { ChildProcessSpawner } from "effect/process"
 import ClaudeCodeStores from "./claude-code-stores.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"
 import testEnvironment from "./test-environment.test-support.ts"
@@ -68,7 +68,7 @@ const FIRST = 0,
   sandbox = Effect.gen(function* makeSandbox() {
     const fs = yield* FileSystem.FileSystem
 
-    return yield* fs.makeTempDirectoryScoped({ prefix: "claude-auth-stores-" })
+    return yield* fs.makeTempDirectoryScoped({ prefix: "oc-auth-stores-" })
   }),
   /*
    * Run `body` against the stores of `machine`: its home directory, its
@@ -122,6 +122,7 @@ const FIRST = 0,
   })
 
 /** What the credential-store tests share. */
+/** @internal */
 export default Object.freeze({
   accessTokenIn,
   credentialBlob,

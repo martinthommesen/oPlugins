@@ -10,9 +10,9 @@ interface Host {
 
 /** The plugin options accepted in `opencode.jsonc`: none yet. */
 const Options = Schema.Struct({}),
-  /* Fails naming every option in the host's options, since each is unknown. */
+  /* Rejects every option, since oc-browser has none yet, naming each one. */
   checkOptions = pluginOptions.decode(Options, "oc-browser"),
-  /* Start the plugin for the project the host opened. */
+  /* Starts the server plugin for the location the host opened. */
   setUp = Effect.fn("OcBrowser.setUp")(function* setUp(context: Host) {
     yield* checkOptions(context.options)
     yield* Effect.logInfo("plugin_started").pipe(
@@ -20,5 +20,5 @@ const Options = Schema.Struct({}),
     )
   })
 
-/** Setting the plugin up inside the host. */
+/** The server plugin's setup, which the host runs once per location. */
 export default Object.freeze({ setUp })

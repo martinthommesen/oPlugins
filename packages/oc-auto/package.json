@@ -47,9 +47,9 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "effect": "^4.0.0-rc.112"
+    "effect": "^4.0.1"
   },
   "engines": {
-    "opencode": ">=2.0.26"
+    "opencode": ">=2.0.27"
   }
 }

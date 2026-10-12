@@ -9,9 +9,7 @@ import policy from "./refresh-backoff-policy.ts"
 
 type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
 
-type HeldLock = (typeof LockAttempt.held extends (args: infer Args) => object
-  ? Args
-  : never)["lock"]
+type HeldLock = ReturnType<typeof LockAttempt.Held>["lock"]
 
 /** A refresh holding the lock for its store. */
 interface Holder {
@@ -39,7 +37,7 @@ const NETWORK_FAILURE = 0,
    * ceiling, tell the user. Nothing is latched: the next attempt after the
    * cooldown goes out as usual.
    */
-  noteTransient = Effect.fn("CredentialRefresh.transient")(
+  noteTransient = Effect.fn("CredentialRefresh.noteTransient")(
     function* noteTransient(
       holder: Holder,
       cause: string,

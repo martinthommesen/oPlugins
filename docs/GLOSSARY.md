@@ -5,6 +5,8 @@ are shared by all of them.
 
 ## Language
 
+### Plugins
+
 **Plugin**:
 One product in oc-plugins, such as oc-auth or oc-browser, released under
 one name.
@@ -36,3 +38,19 @@ _Avoid_: config value, setting (for an option)
 Code shared by plugins, built into each plugin that uses it and never
 released on its own.
 _Avoid_: shared package, kit, utils, common (for a library)
+
+### Sessions
+
+**Root session**:
+The session at the top of an OpenCode session tree, the one the user talks
+to.
+_Avoid_: parent session, main session, root conversation
+
+**Subagent session**:
+A session an agent started to hand part of its task to a subagent. It
+belongs to the tree of one root session.
+_Avoid_: child session, sub-session
+
+**Transcript**:
+A session's conversation written out as text for another model to read.
+_Avoid_: history, log, context (for the text)

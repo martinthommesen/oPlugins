@@ -11,16 +11,19 @@ type Account = typeof ClaudeAccount.Type
 
 type Credentials = Account["credentials"]
 
-/** An account before it is labelled. */
-interface UnlabelledAccount {
+/** An account before it is labeled. */
+interface UnlabeledAccount {
+  /** The config directory the account belongs to, when known. */
   readonly configDir: Option.Option<string>
+  /** The credentials its store holds. */
   readonly credentials: Credentials
+  /** The `source` that names its store. */
   readonly source: string
 }
 
 const FIRST = 0,
   /* `item` as an account, with its config directory when known. */
-  accountOf = (item: UnlabelledAccount, label: string): Account =>
+  accountOf = (item: UnlabeledAccount, label: string): Account =>
     Option.match(item.configDir, {
       onNone: (): Account => ({
         credentials: item.credentials,
@@ -43,7 +46,7 @@ const FIRST = 0,
       onSome: (blob) => credentialBlob.parseCredentials(blob),
     }),
   /* The one account of the credentials file in `configDir`. */
-  fileAccountIn = Effect.fn("ClaudeCodeFileAccounts.fileAccount")(
+  fileAccountIn = Effect.fn("ClaudeCodeFileAccounts.fileAccountIn")(
     function* fileAccountIn(configDir: string, credentials: Credentials) {
       const email = yield* configDirs.readEmail(configDir),
         labels = accountLabels.buildAccountLabels([
@@ -63,8 +66,8 @@ const FIRST = 0,
     },
   ),
   /*
-   * The credentials in `configDir`, or none when there is no file or it
-   * holds no usable credential. A file that exists but cannot be read
+   * The credentials in the credentials file of `configDir`, or none when
+   * there is no file or it holds no usable credential. A file that exists but cannot be read
    * fails, because reporting a permission problem as "no credentials" sends
    * the user to log in again for nothing.
    */
@@ -109,7 +112,7 @@ const FIRST = 0,
     })
   })
 
-/** The account in the Claude credentials file, and reading that file. */
+/** The account in the Claude Code credentials file, and reading that file. */
 export default Object.freeze({
   accountOf,
   credentialsIn,

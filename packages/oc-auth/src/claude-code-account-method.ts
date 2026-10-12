@@ -25,9 +25,9 @@ interface AccountField {
   readonly type: "string"
 }
 
-const AccountAnswer = Schema.Struct({ account: Schema.String }),
+const AccountAnswer = Schema.Struct({ account: Schema.NonEmptyString }),
   NO_CREDENTIALS =
-    "No Claude Code credentials were found. Run `claude` to authenticate, restart the OpenCode service, and try /connect again.",
+    "No Claude Code credentials were found. Run `claude` to authenticate, restart the OpenCode service, and try `/connect` again.",
   SINGLE_ACCOUNT = 1,
   /* A static account form, only when there is more than one account to pick. */
   buildAccountForm = (
@@ -76,8 +76,9 @@ const AccountAnswer = Schema.Struct({ account: Schema.String }),
   refuse = (message: string): Effect.Effect<never, AccountSelectionError> =>
     Effect.fail(AccountSelectionError.make({ message })),
   /*
-   * The store the user asked for. With several accounts the form must name
-   * one; with one, it is that one.
+   * The `source` of the store the user asked for, or none when there is no
+   * account. With several accounts the form must name one; with one, it is
+   * that one.
    */
   requestedSource = (
     accounts: readonly Account[],
@@ -85,13 +86,11 @@ const AccountAnswer = Schema.Struct({ account: Schema.String }),
   ): Effect.Effect<Option.Option<string>, AccountSelectionError> => {
     if (accounts.length > SINGLE_ACCOUNT) {
       return Option.match(Schema.decodeUnknownOption(AccountAnswer)(answer), {
-        onNone: () => refuse("Select a registered Claude Code account"),
-        onSome: (answered) =>
-          Effect.succeed(
-            Option.some(answered.account).pipe(
-              Option.filter((source) => source !== ""),
-            ),
+        onNone: () =>
+          refuse(
+            "No Claude Code account was selected. Select a registered Claude Code account, then try again.",
           ),
+        onSome: (answered) => Effect.succeedSome(answered.account),
       })
     }
 
@@ -111,15 +110,17 @@ const AccountAnswer = Schema.Struct({ account: Schema.String }),
         return yield* refuse(NO_CREDENTIALS)
       }
 
-      return yield* Option.match(
-        Option.fromUndefinedOr(
-          accounts.find((account) => account.source === requested.value),
-        ),
-        {
+      return yield* Arr.findFirst(
+        accounts,
+        (account) => account.source === requested.value,
+      ).pipe(
+        Option.match({
           onNone: () =>
-            refuse("The selected Claude Code account was not registered"),
+            refuse(
+              "The selected Claude Code account was not registered when the OpenCode service started. Restart the OpenCode service to refresh the account list.",
+            ),
           onSome: (account) => Effect.succeed(account),
-        },
+        }),
       )
     },
   ),

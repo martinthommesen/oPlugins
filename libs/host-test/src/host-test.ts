@@ -1,11 +1,11 @@
 /**
  * The headless host test of a packed plugin, for OpenCode v2.
  *
- * Installs the requested host CLI and the plugin, packed, into a temporary
+ * It installs the requested host CLI and the packed plugin into a temporary
  * sandbox with its own config, data, cache, and state directories, then
  * checks that the host starts the plugin under its ID. The plugin's
- * `OC_<WORD>_HEADLESS_HOST_VERSION` variable picks another host than the
- * targeted one, and `HEADLESS_KEEP` keeps the sandbox afterwards.
+ * `OC_<WORD>_HEADLESS_HOST_VERSION` picks a host other than the targeted
+ * one, and `HEADLESS_KEEP` keeps the sandbox afterwards.
  */
 import {
   Array as Arr,

@@ -5,18 +5,18 @@ import type { SessionMessage } from "@opencode/schema/session-message"
 type Item = Parameters<typeof ConversationItem.$match>[typeof FIRST]
 
 const FIRST = 0,
-  /* A finished tool call, with its input as JSON text. */
-  finishedCall = (
-    messageId: string,
-    part: SessionMessage.AssistantTool,
-  ): Item =>
+  /* A tool call whose input has finished streaming, with that input as JSON text. */
+  calledTool = (messageId: string, part: SessionMessage.AssistantTool): Item =>
     ConversationItem.ToolCall({
       id: part.id,
       input: JSON.stringify(part.state.input),
       messageId,
       name: part.name,
     }),
-  /* The text and finished tool calls of an assistant message. */
+  /*
+   * The text and tool calls of an assistant message. A call still streaming
+   * its input is left out, because that input is incomplete.
+   */
   fromAssistant = (message: SessionMessage.Assistant): readonly Item[] =>
     pipe(
       message.content,
@@ -28,7 +28,7 @@ const FIRST = 0,
             tool: (tool) =>
               Match.value(tool.state).pipe(
                 Match.discriminator("status")("streaming", () => []),
-                Match.orElse(() => [finishedCall(message.id, tool)]),
+                Match.orElse(() => [calledTool(message.id, tool)]),
               ),
           }),
           Match.exhaustive,
@@ -48,9 +48,9 @@ const FIRST = 0,
       Match.exhaustive,
     ),
   /*
-   * Converts host session messages into conversation items, oldest first,
-   * dropping the kinds the reviewer does not read (reasoning, system
-   * updates, mode switches).
+   * Converts host session messages into conversation items, oldest first.
+   * The reviewer reads user messages, shell commands, assistant text and
+   * tool calls, and compaction summaries; every other kind is dropped.
    */
   fromSessionMessages = (
     messages: readonly SessionMessage.Info[],

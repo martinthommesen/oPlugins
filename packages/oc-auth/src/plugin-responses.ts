@@ -19,8 +19,8 @@ const MAX_RETRY_SECONDS = 60,
     ),
   /*
    * A 401 in the API's own error format, so the SDK reports `message` the way
-   * it reports any provider error. Used when recovery from a 401 ended in a
-   * credential error the user has to act on.
+   * it reports any provider error. Used when unauthorized recovery ended in
+   * a credential error the user has to act on.
    */
   authenticationError = (message: string): Response =>
     new Response(apiError("authentication_error", message), {
@@ -41,7 +41,7 @@ const MAX_RETRY_SECONDS = 60,
     return new Response(
       apiError(
         "rate_limit_error",
-        "Claude token refresh is temporarily unavailable.",
+        "Claude Code token refresh is temporarily unavailable. Try again in a minute.",
       ),
       {
         headers: {

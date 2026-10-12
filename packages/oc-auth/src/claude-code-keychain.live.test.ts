@@ -3,24 +3,16 @@
  * `fake-keychain.test-support.ts` can only imitate. A stub once hid a write
  * that stored an empty password and exited 0, so CI runs this on macOS.
  *
- * Opt-in with OC_AUTH_LIVE_KEYCHAIN=1: it adds throwaway items to the
+ * Opt in with `OC_AUTH_LIVE_KEYCHAIN=1`: it adds throwaway items to the
  * default keychain (named like Claude Code's, with a random suffix no config
  * directory maps to) and deletes them again.
  */
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
-import {
-  Config,
-  Crypto,
-  Effect,
-  Encoding,
-  Exit,
-  Layer,
-  Option,
-  Schema,
-} from "effect"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { Config, Crypto, Effect, Exit, Layer, Option, Schema } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeCodeStores from "./claude-code-stores.ts"
 import Environment from "./environment.ts"
+import { Hex } from "effect/encoding"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
 import nodePlatform from "./node-platform.ts"
@@ -32,6 +24,7 @@ interface Tests {
 
 const ACCOUNT = String.raw`live "test" \ account`,
   EXIT_SUCCESS = 0,
+  FIRST = 0,
   /** The MCP data padding a blob past one interactive line. */
   HeldPadding = Schema.Struct({
     server: Schema.Struct({ token: Schema.String }),
@@ -48,7 +41,7 @@ const ACCOUNT = String.raw`live "test" \ account`,
   OLD_ACCESS = "live-old-access",
   /** The old tokens a throwaway item starts with. */
   OLD_TOKENS = {
-    accessToken: "live-old-access",
+    accessToken: OLD_ACCESS,
     expiresAt: 1000,
     note: "ünïcode",
     refreshToken: "live-old-refresh",
@@ -80,7 +73,7 @@ const ACCOUNT = String.raw`live "test" \ account`,
     Effect.runSyncExit(
       Effect.gen(function* liveRequested() {
         const flag = yield* Config.option(
-          Config.string("OC_AUTH_LIVE_KEYCHAIN"),
+          Config.String("OC_AUTH_LIVE_KEYCHAIN"),
         )
 
         return process.platform === "darwin" && Option.contains(flag, "1")
@@ -105,7 +98,7 @@ const ACCOUNT = String.raw`live "test" \ account`,
       const status = yield* exitOf(args)
 
       if (status !== EXIT_SUCCESS) {
-        return yield* Effect.die(`security ${args[NO_PADDING] ?? ""} failed`)
+        return yield* Effect.die(`security ${args[FIRST] ?? ""} failed`)
       }
 
       return status
@@ -117,19 +110,19 @@ const ACCOUNT = String.raw`live "test" \ account`,
     const platformCrypto = yield* Crypto.Crypto,
       suffix = yield* platformCrypto.randomBytes(ITEM_SUFFIX_BYTES)
 
-    return `Claude Code-credentials-${Encoding.encodeHex(suffix)}`
+    return `Claude Code-credentials-${Hex.encode(suffix)}`
   }),
   /* Write back over `item`, then read what it holds through both paths. */
   observe = Effect.fn("live.observe")(function* observe(item: string) {
-    const accounts = yield* ClaudeCodeStores,
-      result = yield* accounts.writeBack({
+    const credentialStores = yield* ClaudeCodeStores,
+      result = yield* credentialStores.writeBack({
         configDir: Option.none(),
         credentials: REFRESHED,
         expectedAccessToken: OLD_ACCESS,
         source: item,
       }),
       spawner = yield* ChildProcessSpawner.ChildProcessSpawner,
-      stored = yield* accounts.readSource(item, Option.none()),
+      stored = yield* credentialStores.readSource(item, Option.none()),
       verbatim = yield* spawner.string(
         ChildProcess.make(SECURITY, [
           "find-generic-password",
@@ -156,8 +149,8 @@ const ACCOUNT = String.raw`live "test" \ account`,
    * over it, then delete it. `remaining` is the exit status of looking it up
    * once deleted: write-back must update the item, not add a second one.
    */
-  runLive = Effect.fn("live.run")(function* runLive(padding: number) {
-    const hex = Encoding.encodeHex(blobFor(padding)),
+  runLive = Effect.fn("live.runLive")(function* runLive(padding: number) {
+    const hex = Hex.encode(blobFor(padding)),
       item = yield* newItemName,
       observed = yield* Effect.acquireUseRelease(
         mustSucceed([

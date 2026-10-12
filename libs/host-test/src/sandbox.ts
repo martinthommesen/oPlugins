@@ -1,5 +1,4 @@
 import { Console, Effect, Exit, FileSystem, Path, pipe } from "effect"
-import type { Stdio } from "effect"
 import commands from "./command.ts"
 
 /** Where everything lives inside one sandbox. */
@@ -53,24 +52,17 @@ const atRoot = Effect.fn("HostTest.layout")(function* atRoot(
     }
   }),
   /*
-   * The host's account of a failure, which includes the plugin's warnings,
-   * printed because the sandbox is about to be removed. No log may have been
-   * written.
+   * Print the host log, which holds the plugin's records too, before the
+   * sandbox and its log are removed. When the host wrote no log, it prints
+   * nothing.
    */
-  dumpLog = (
-    root: string,
-  ): Effect.Effect<
-    void,
-    never,
-    FileSystem.FileSystem | Path.Path | Stdio.Stdio
-  > =>
-    Effect.gen(function* readLog() {
-      const fs = yield* FileSystem.FileSystem,
-        layout = yield* atRoot(root),
-        text = yield* fs.readFileString(layout.hostLog)
+  dumpLog = Effect.fn("HostTest.dumpLog")(function* dumpLog(root: string) {
+    const fs = yield* FileSystem.FileSystem,
+      layout = yield* atRoot(root),
+      text = yield* fs.readFileString(layout.hostLog)
 
-      yield* commands.printError(`--- opencode.log ---\n${text}`)
-    }).pipe(Effect.ignore),
+    yield* commands.printError(`--- opencode.log ---\n${text}`)
+  }, Effect.ignore()),
   /*
    * Print the host log if the test failed, then remove the sandbox, unless
    * `HEADLESS_KEEP` asks to keep it.
@@ -86,7 +78,9 @@ const atRoot = Effect.fn("HostTest.layout")(function* atRoot(
     yield* dumpLog(root).pipe(Effect.when(Effect.succeed(failed)))
 
     if (keep) {
-      yield* Console.log(`HEADLESS_KEEP set; sandbox preserved at ${root}`)
+      yield* Console.log(
+        `HEADLESS_KEEP is set, so the sandbox stays at ${root}.`,
+      )
 
       return
     }
@@ -104,7 +98,7 @@ const atRoot = Effect.fn("HostTest.layout")(function* atRoot(
   }),
   /*
    * A fresh temporary sandbox named after `prefix`, removed when the
-   * enclosing scope closes.
+   * enclosing scope closes unless `keep` is set.
    */
   open = Effect.fn("HostTest.acquireSandbox")(function* open(
     prefix: string,

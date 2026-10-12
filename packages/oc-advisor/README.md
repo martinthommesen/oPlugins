@@ -1,24 +1,25 @@
 # oc-advisor
 
-An OpenCode V2 plugin that gives agents an advisor: a second model, usually a
-stronger one, that they can consult for a second opinion. It works like Claude
-Code's `/advisor`. You pick the advisor model; the agent decides when to ask.
+oc-advisor is an OpenCode v2 plugin that gives agents an advisor: a second
+model, usually a stronger one, that they can consult for a second opinion. It
+works like Claude Code's `/advisor`. You pick the advisor model, and the agent
+decides when to ask.
 
 Agents are told to consult the advisor:
 
-- before committing to a plan or approach for non-trivial work, and before big
-  or hard-to-reverse decisions;
-- when they are stuck: an error keeps recurring, a fix did not work, or results
+- before committing to a plan for non-trivial work, and before big or
+  hard-to-reverse decisions;
+- when they're stuck: an error keeps recurring, a fix didn't work, or results
   contradict expectations;
 - before declaring a complex task complete.
 
 The advisor receives a size-limited transcript of the session's current context,
-including tool calls and results, plus an optional question from the agent. It
-replies with advice and cannot run tools.
+including tool calls and results, and the agent's question, if it asked one. It
+replies with advice and can't run tools.
 
 ## Install
 
-oc-advisor is not published to npm yet. Build it from an oc-plugins checkout:
+oc-advisor isn't published to npm yet. Build it from an oc-plugins checkout:
 
 ```sh
 pnpm install
@@ -35,36 +36,38 @@ project, and restart OpenCode:
 }
 ```
 
-After pulling changes, run the build again; OpenCode picks the new build up
-on its next start.
+After pulling changes, run the build again. OpenCode loads the new build on its
+next start.
 
-## Use
+## Configure
 
-Choose an advisor model with `/advisor`, using the `provider/model` form shown
-by `/models`. An optional `#variant` selects a model variant.
+### The `/advisor` command
+
+Choose an advisor model with `/advisor`, in the `provider/model` form that
+`/models` shows. An optional `#variant` selects a model variant.
 
 ```text
 /advisor anthropic/claude-opus-5-5#high
 ```
 
-| Command                       | Effect                                            |
-| ----------------------------- | ------------------------------------------------- |
-| `/advisor`                    | Show the advisor model and whether it is on       |
-| `/advisor <provider/model>`   | Set the advisor model and turn the advisor on     |
-| `/advisor on`, `/advisor off` | Turn the advisor on or off, keeping the model     |
-| `/advisor subagents on\|off`  | Let subagent sessions consult the advisor, or not |
+| Command                       | Effect                                                                        |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| `/advisor`                    | Show the advisor model, whether it's on, and whether subagents may consult it |
+| `/advisor <provider/model>`   | Set the advisor model and turn the advisor on                                 |
+| `/advisor on`, `/advisor off` | Turn the advisor on or off, keeping the model                                 |
+| `/advisor subagents on\|off`  | Let subagent sessions consult the advisor, or not                             |
 
-Choices made with `/advisor` are saved in the plugin's storage and apply to
-every session. Replies to `/advisor` appear as messages in the session without
-starting a model turn.
+`/advisor` saves your preferences in the plugin's storage. They apply to every
+session and override the options. Its replies appear as messages in the session
+and don't start a model turn.
 
 You can also ask for a consultation in a prompt, for example "check your plan
 with the advisor before you start".
 
-## Options
+### Options
 
-Options set the defaults that `/advisor` choices override. Pass them with the
-object form of a `plugins` entry in `opencode.json(c)`:
+Options set the defaults that `/advisor` preferences override. Set them in the
+object form of a `plugins` entry in `opencode.jsonc`:
 
 ```jsonc
 {
@@ -77,53 +80,78 @@ object form of a `plugins` entry in `opencode.json(c)`:
 }
 ```
 
-| Option               | Default  | Meaning                                                                    |
-| -------------------- | -------- | -------------------------------------------------------------------------- |
-| `model`              | none     | Advisor model as `provider/model[#variant]`; turns it on                   |
-| `subagents`          | `true`   | Boolean. Whether subagent sessions may consult the advisor                 |
-| `timeout`            | `300`    | Integer, at least `1`. Seconds to wait for the advisor before giving up    |
-| `maxTranscriptChars` | `200000` | Integer, at least `1000`. Characters of conversation sent; newest are kept |
+| Option               | Default  | Meaning                                                                                        |
+| -------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `model`              | none     | Advisor model as `provider/model[#variant]`; setting it turns the advisor on                   |
+| `subagents`          | `true`   | Boolean. Whether subagent sessions may consult the advisor                                     |
+| `timeout`            | `300`    | Integer, at least `1`. Seconds a consultation may take before the agent goes on without advice |
+| `maxTranscriptChars` | `200000` | Integer, at least `1000`. Character limit for the transcript sent to the advisor               |
 
-An invalid option stops the plugin from loading: a value of the wrong type,
-a value out of range, a `model` that isn't of the form
-`provider/model[#variant]`, or an option name not in the table. OpenCode's
-log then shows an error that names each invalid option and the problem,
-listing the known options for an unknown name, and the advisor is
-unavailable until you correct the option and restart OpenCode. No invalid
-option is replaced by its default.
+An invalid option stops the plugin from loading. That covers a value of the
+wrong type or out of range, a `model` that isn't of the form
+`provider/model[#variant]`, and an option name not in the table. No invalid
+option is replaced by its default. [Troubleshooting](#troubleshooting) says how
+to find and fix one.
+
+## Environment variables
+
+oc-advisor reads no environment variables. The variables of the host
+compatibility test are in [Development](#development).
 
 ## How it works
 
-- The plugin registers an `advisor` tool. Before each model request it removes
-  the tool from sessions that may not use it: when the advisor is off, has no
-  model, or the session is a subagent's and subagents are not allowed.
-  Sessions that keep the tool also get a short system-prompt section with the
-  consultation rules listed above, to encourage consultations without being
-  asked. This is guidance; agents still decide when to call the tool.
+- The plugin registers an `advisor` tool. Before each model request, it removes
+  the tool from sessions that may not use it: when the advisor is off or has no
+  model, or when the session is a subagent's and subagents aren't allowed.
+  Sessions whose agent keeps the tool also get a short system-prompt section
+  with the consultation rules above. This encourages consultations without being
+  asked, but agents still decide when to call the tool.
 - A consultation renders the available messages as a transcript within
-  `maxTranscriptChars`. It keeps the first available user message and the
-  newest entries. Long messages, tool inputs and results are shortened.
-- The advisor model answers in a temporary child session. The plugin deletes
-  it in the background so cleanup cannot hold up the consulting agent. Deletion
-  gets one retry and a five-second limit. If cleanup still fails, the plugin
-  logs a warning. Session generation supports provider plugins that hook
-  requests, such as subscription sign-ins. The plugin replaces the child
-  session's system prompt with the advisor's instructions and gives it no tools.
-- If the advisor cannot answer (no model, timeout, provider error), the agent
-  is told why and continues without advice.
-- The plugin's log records go to OpenCode's log. They carry metadata such as
-  event names, session IDs, and model IDs, never the conversation or advice.
+  `maxTranscriptChars`. It keeps the first available user message and the newest
+  entries, and it shortens long messages, tool inputs, and tool results.
+- The advisor model answers in a short-lived consultation session, a child of
+  the consulting session. Because the request runs in a session, provider
+  plugins that hook session requests, such as subscription sign-ins, apply to
+  it. The plugin replaces the consultation session's system prompt with the
+  advisor's instructions and gives it no tools.
+- The plugin deletes the consultation session in the background, so the deletion
+  can't hold up the agent. A deletion gets one retry and five seconds in total.
+  When the plugin stops, it waits for pending deletions for up to those five
+  seconds.
+- The `timeout` covers the whole consultation, from reading the session to the
+  advisor's answer. If the advisor can't answer (no model, timeout, provider
+  error), the agent is told why and continues without advice.
 
 ## Limitations
 
 - Agents whose tools are restricted to a fixed list, such as the built-in
-  `explore` subagent, are only offered the advisor if their configuration
-  allows the `advisor` tool.
-- The advisor sees the conversation, not the agent's system prompt or the
-  files on disk, unless their contents appear in tool results.
+  `explore` subagent, are only offered the advisor if their configuration allows
+  the `advisor` tool.
+- The advisor sees the conversation, not the agent's system prompt or the files
+  on disk, unless their contents appear in tool results.
 - OpenCode 2.0.26 exposes only the active context after compaction to plugins.
   Earlier details survive only if OpenCode includes them in its compaction
-  summary. Include important missing details in the consultation question.
+  summary. The tool description asks agents to put missing details in their
+  question.
+
+## Troubleshooting
+
+| Problem                            | Action                                                                                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The plugin doesn't start           | OpenCode's log names each invalid option and the problem, and lists the known options for an unknown name. Correct the `options`, then restart OpenCode.          |
+| Agents never consult the advisor   | Run `/advisor` to check that a model is set and the advisor is on. For a subagent, check that subagents are allowed and that its agent allows the `advisor` tool. |
+| The advisor doesn't answer in time | Raise the `timeout` option, or choose a faster advisor model.                                                                                                     |
+
+The plugin writes its log records to OpenCode's log. They carry metadata such as
+event names, session IDs, and model IDs, never the conversation or the advice.
+Each of these events is a warning:
+
+| Event                               | Meaning                                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `advisor_consultation_failed`       | A consultation gave no advice. `error` names the reason, with the `operation` or `model` involved             |
+| `advisor_availability_check_failed` | The plugin couldn't tell whether a session is a subagent's, so it hid the advisor from that request           |
+| `advisor_session_cleanup_failed`    | The plugin couldn't delete the consultation session `sessionID`, titled "Advisor". You can delete it yourself |
+| `advisor_preferences_unreadable`    | A saved `/advisor` preference under `key` couldn't be read and was ignored. Set it again with `/advisor`      |
 
 ## Development
 
@@ -134,21 +162,24 @@ pnpm install
 pnpm run check
 ```
 
-## Verify host compatibility
+### Verify host compatibility
 
-Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
-The test installs the pinned CLI and the packed plugin in a temporary
-directory, with their own config, data, cache, and state directories, and
-checks that the host starts the plugin. Package installation may require
-network access.
+Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.27. The
+test installs the pinned CLI and the packed plugin in a temporary directory,
+with their own config, data, cache, and state directories, and checks that the
+host starts the plugin. Package installation may require network access.
 
-To check another V2 host version:
+To check another v2 host version:
 
 ```sh
-OC_ADVISOR_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+OC_ADVISOR_HEADLESS_HOST_VERSION=2.0.27 pnpm run test:host
 ```
 
 Set it to `oldest` to check the oldest version oc-advisor supports, which its
 `package.json` records as `engines.opencode`.
 
 Set `HEADLESS_KEEP=1` to keep the sandbox afterwards.
+
+## License
+
+[MIT](LICENSE)

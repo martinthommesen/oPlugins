@@ -45,7 +45,7 @@ const CONFIGURED = { model: "anthropic/claude-opus-5-5", subagents: false },
     }),
   }),
   /* Runs the hook on a request and returns the request as the hook left it. */
-  handled = Effect.fn("presented")(function* presented(
+  handled = Effect.fn("handled")(function* handled(
     offered: boolean,
   ): Effect.fn.Return<SessionContext, never, Advisor> {
     const advisor = yield* Advisor,
@@ -55,16 +55,7 @@ const CONFIGURED = { model: "anthropic/claude-opus-5-5", subagents: false },
 
     return event
   }),
-  hidesFromSubagent = Effect.gen(function* hidesFromSubagent() {
-    assertHidden(yield* handled(true))
-  }),
-  hidesWhenCheckFails = Effect.gen(function* hidesWhenCheckFails() {
-    assertHidden(yield* handled(true))
-  }),
-  hidesWhenOff = Effect.gen(function* hidesWhenOff() {
-    assertHidden(yield* handled(true))
-  }),
-  hidesWithoutModel = Effect.gen(function* hidesWithoutModel() {
+  hidesTool = Effect.gen(function* hidesTool() {
     assertHidden(yield* handled(true))
   }),
   instructsMainAgent = Effect.gen(function* instructsMainAgent() {
@@ -85,10 +76,7 @@ describe("presentAdvisor", () => {
   })
   test.layer(support.scriptedServices({ subagent: true }, CONFIGURED))(
     (it: Tests) => {
-      it.effect(
-        "hides the advisor from blocked subagents",
-        () => hidesFromSubagent,
-      )
+      it.effect("hides the advisor from blocked subagents", () => hidesTool)
     },
   )
   test.layer(support.scriptedServices({}, CONFIGURED))((it: Tests) => {
@@ -98,14 +86,14 @@ describe("presentAdvisor", () => {
     )
   })
   test.layer(support.scriptedServices({}, {}))((it: Tests) => {
-    it.effect("hides the advisor when no model is set", () => hidesWithoutModel)
+    it.effect("hides the advisor when no model is set", () => hidesTool)
   })
   test.layer(
     support.scriptedServices({}, CONFIGURED, [
       ["preferences.enabled", { enabled: false }],
     ]),
   )((it: Tests) => {
-    it.effect("hides the advisor when it is turned off", () => hidesWhenOff)
+    it.effect("hides the advisor when it is turned off", () => hidesTool)
   })
   test.layer(
     support.scriptedServices(
@@ -115,7 +103,7 @@ describe("presentAdvisor", () => {
   )((it: Tests) => {
     it.effect(
       "hides the advisor when the availability check fails",
-      () => hidesWhenCheckFails,
+      () => hidesTool,
     )
   })
 })

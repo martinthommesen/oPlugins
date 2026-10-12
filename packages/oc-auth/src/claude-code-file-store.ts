@@ -24,46 +24,46 @@ const CREDENTIALS_FILE = ".credentials.json",
     Schema.decodeUnknownOption(Errno)(failure.cause).pipe(
       Option.map((errno) => errno.code),
     ),
-  /* `failure` as the store error the user sees, with its errno code. */
-  failedFile = (failure: FileFailure): ClaudeCodeStoreError =>
-    ClaudeCodeStoreError.make({
-      message: Option.match(errnoOf(failure), {
-        onNone: () => failure.message,
-        onSome: (code) => `${failure.message} (${code})`,
-      }),
+  /* The message of `failure`, with its errno code. */
+  explained = (failure: FileFailure): string =>
+    Option.match(errnoOf(failure), {
+      onNone: () => failure.message,
+      onSome: (code) => `${failure.message} (${code})`,
     }),
+  /* A failed write, as the store error the write-back logs. */
+  failedFile = (failure: FileFailure): ClaudeCodeStoreError =>
+    ClaudeCodeStoreError.make({ message: explained(failure) }),
   /* Whether `name` is a temp blob this store writes. */
   isTempName = (name: string): boolean =>
     name.startsWith(TEMP_PREFIX) && name.endsWith(TEMP_SUFFIX),
+  /* A file that exists but cannot be read, as the store error the user sees. */
+  notReadable = (failure: FileFailure): ClaudeCodeStoreError =>
+    ClaudeCodeStoreError.make({
+      message: `The Claude Code credentials file could not be read: ${explained(failure)}. Check that it is a file you can read, then try again.`,
+    }),
   /*
-   * The stored blob, or none when nothing is stored, matching the Keychain
-   * store, so an absent file reads as a decision rather than as an
-   * unreachable store.
+   * The stored blob, or none when there is no file. Like a missing Keychain
+   * item, a missing file means nothing is stored, so the write-back refuses
+   * it instead of retrying as if the store were unreachable.
    */
-  readBlob = (
-    credPath: string,
-  ): Effect.Effect<
-    Option.Option<string>,
-    ClaudeCodeStoreError,
-    FileSystem.FileSystem
-  > =>
-    Effect.gen(function* read() {
+  readBlob = Effect.fn("ClaudeCodeFileStore.readBlob")(
+    function* readBlob(credPath: string) {
       const fs = yield* FileSystem.FileSystem
 
       return Option.some(yield* fs.readFileString(credPath))
-    }).pipe(
-      Effect.catchTag("PlatformError", (failure: FileFailure) => {
-        const missing = Option.exists(errnoOf(failure), (code) =>
-          MISSING_CODES.has(code),
-        )
+    },
+    Effect.catchTag("PlatformError", (failure: FileFailure) => {
+      const missing = Option.exists(errnoOf(failure), (code) =>
+        MISSING_CODES.has(code),
+      )
 
-        if (missing) {
-          return Effect.succeed(Option.none<string>())
-        }
+      if (missing) {
+        return Effect.succeed(Option.none<string>())
+      }
 
-        return Effect.fail(failedFile(failure))
-      }),
-    ),
+      return Effect.fail(notReadable(failure))
+    }),
+  ),
   /* Remove `path` when it is a temp blob older than the sweep age. */
   sweepOne = Effect.fn("ClaudeCodeFileStore.sweepOne")(
     function* sweepOne(path: string, now: number) {
@@ -81,9 +81,8 @@ const CREDENTIALS_FILE = ".credentials.json",
     (effect) => Effect.ignore(effect),
   ),
   /*
-   * Drop temp blobs a killed process left behind. They hold a full token
-   * pair, so they are not something to leave in the config directory
-   * indefinitely. Sweeping is opportunistic; the write is what matters.
+   * Remove the temp blobs a killed process left behind, since each holds a
+   * full token pair. Failures are ignored: the write has landed by then.
    */
   sweepStaleTemps = Effect.fn("ClaudeCodeFileStore.sweepStaleTemps")(
     function* sweepStaleTemps(dir: string) {
@@ -102,18 +101,19 @@ const CREDENTIALS_FILE = ".credentials.json",
     (effect) => Effect.ignore(effect),
   ),
   /*
-   * Fsync the directory so the rename itself survives a crash. Not
-   * supported on every platform; the rename still lands.
+   * Fsync the directory so the rename itself survives a crash. Not every
+   * platform supports it, and the rename lands either way.
    */
-  syncDirectory = (
-    dir: string,
-  ): Effect.Effect<void, never, FileSystem.FileSystem> =>
-    Effect.gen(function* sync() {
+  syncDirectory = Effect.fn("ClaudeCodeFileStore.syncDirectory")(
+    function* syncDirectory(dir: string) {
       const fs = yield* FileSystem.FileSystem,
         handle = yield* fs.open(dir, { flag: "r" })
 
       yield* handle.sync
-    }).pipe(Effect.scoped, Effect.ignore),
+    },
+    Effect.scoped,
+    (effect) => Effect.ignore(effect),
+  ),
   /*
    * Write `blob` to the new file `tempPath`, private and flushed. A rename
    * is atomic for concurrent readers but says nothing about durability.
@@ -160,22 +160,22 @@ const CREDENTIALS_FILE = ".credentials.json",
         Effect.andThen(syncDirectory(dir)),
         Effect.ensuring(untemp),
       )
-      // After the rename, not before: the window between the token exchange
-      // And the credential landing is the dangerous one, and nothing here
-      // Needs to happen inside it.
+      /*
+       * The sweep runs after the rename, so it adds nothing to the window
+       * between the token exchange and the new tokens landing.
+       */
       yield* sweepStaleTemps(dir)
     },
     Effect.mapError((failure: FileFailure) => failedFile(failure)),
   ),
   /* The credentials file in `configDir`, or in the default config directory. */
-  withinDir = Effect.fn("ClaudeCodeFileStore.make")(function* withinDir(
+  withinDir = Effect.fn("ClaudeCodeFileStore.fileStore")(function* withinDir(
     configDir: Option.Option<string>,
   ) {
     const dir = yield* sources.resolveConfigDir(configDir),
       path = yield* Path.Path
 
     return {
-      /** Log context for every event this store emits. */
       fields: [
         ["source", sources.FILE_SOURCE],
         ["configDir", dir],
@@ -186,5 +186,5 @@ const CREDENTIALS_FILE = ".credentials.json",
     }
   })
 
-/** The credentials file in a Claude config directory. */
+/** The credentials file in a Claude Code config directory. */
 export default Object.freeze({ fileStore: withinDir })

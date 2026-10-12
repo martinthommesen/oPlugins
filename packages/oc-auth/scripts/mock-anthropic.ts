@@ -1,10 +1,6 @@
-import { Context, Effect, Layer, Match, Option, Ref, Struct } from "effect"
-import {
-  HttpServer,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http"
-import type { HttpBody } from "effect/unstable/http"
+import { Context, Effect, Layer, Option, Ref, Struct } from "effect"
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
+import type { HttpBody } from "effect/http"
 import MockAnthropicError from "./mock-anthropic-error.ts"
 import { NodeHttpServer } from "@effect/platform-node"
 import type { Schema } from "effect"
@@ -45,11 +41,13 @@ const BAD_REQUEST = 400,
    * The base URL the plugin is pointed at. The test server listens on every
    * interface; the plugin reaches it over loopback.
    */
-  baseUrlOf = (address: HttpServer.Address): string =>
-    Match.valueTags(address, {
-      TcpAddress: (tcp) => `http://${LOOPBACK}:${String(tcp.port)}/v1`,
-      UnixAddress: (unix) => `${HttpServer.formatAddress(unix)}/v1`,
-    }),
+  baseUrlOf = (address: string): string => {
+    const url = new URL(address)
+
+    url.hostname = LOOPBACK
+
+    return new URL("/v1", url).href
+  },
   /* Fail with `failures`, unless there are none. */
   check = (
     failures: readonly string[],
@@ -217,8 +215,12 @@ const BAD_REQUEST = 400,
 
     yield* server.serve(serveTurn(seen, { file, sentinel }))
 
-    return { baseURL: baseUrlOf(server.address), verify: report(seen) }
+    return {
+      baseURL: baseUrlOf(HttpServer.formatAddress(server.address)),
+      verify: report(seen),
+    }
   })
 
 /** The mock Messages API the offline smoke test points the plugin at. */
+/** @internal */
 export default Object.freeze({ start })

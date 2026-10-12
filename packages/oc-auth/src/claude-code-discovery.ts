@@ -15,25 +15,33 @@ type ReadFailure = Effect.Error<ReturnType<typeof keychainItems.readService>>
 
 /** A Keychain item that holds a usable credential. */
 interface FoundItem {
+  /** The credentials the item holds. */
   readonly credentials: Credentials
+  /** The item's name. */
   readonly source: string
 }
 
 /** A found item with what its config directory says about it. */
 interface PlacedItem extends FoundItem {
+  /** The config directory the item belongs to, when known. */
   readonly configDir: Option.Option<string>
+  /** The account email that config directory records, when known. */
   readonly email: Option.Option<string>
 }
 
 /** What a credential read found in one Keychain item. */
 interface ItemRead {
+  /** The item's credentials, none when it holds none, or why it failed. */
   readonly read: Result.Result<Option.Option<Credentials>, ReadFailure>
+  /** The item's name. */
   readonly source: string
 }
 
 /** Where the config directory of a Keychain item can come from. */
 interface DirIndex {
+  /** The config directory of each item name suffix found. */
   readonly bySuffix: Readonly<Record<string, string>>
+  /** The primary config directory, which the primary item belongs to. */
   readonly primary: string
 }
 
@@ -41,25 +49,14 @@ const Captured = Schema.Tuple([Schema.String, Schema.String]),
   NONE = 0,
   /** The 8-character config-directory hash a non-primary item name ends in. */
   SUFFIX = /-(?<suffix>[0-9a-f]{8})$/u,
-  /* `item` placed in `configDir`, whose account file names `email`. */
-  atDir = (
-    item: FoundItem,
-    configDir: Option.Option<string>,
-    email: Option.Option<string>,
-  ): PlacedItem => ({
-    configDir,
-    credentials: item.credentials,
-    email,
-    source: item.source,
-  }),
   /* The config-directory hash `source` ends in, when it has one. */
   hashSuffix = (source: string): Option.Option<string> =>
     Schema.decodeUnknownOption(Captured)(SUFFIX.exec(source)).pipe(
       Option.map(([, suffix]) => suffix),
     ),
   /*
-   * Every Claude Code item in the Keychain, read at once. One inaccessible
-   * item does not hide the others.
+   * Every Claude Code item in the Keychain, read concurrently. One
+   * inaccessible item does not hide the others.
    */
   itemReads = Effect.gen(function* itemReads() {
     const listed = yield* keychainItems.listServices,
@@ -113,9 +110,14 @@ const Captured = Schema.Tuple([Schema.String, Schema.String]),
       }),
     )
 
-    return atDir(item, configDir, email)
+    return {
+      configDir,
+      credentials: item.credentials,
+      email,
+      source: item.source,
+    } satisfies PlacedItem
   }),
-  /* Every found item as an account, labelled to tell them apart. */
+  /* Every found item as an account, labeled to tell them apart. */
   toAccounts = Effect.fn("ClaudeCodeDiscovery.toAccounts")(function* toAccounts(
     found: readonly FoundItem[],
   ) {
@@ -162,7 +164,7 @@ const Captured = Schema.Tuple([Schema.String, Schema.String]),
 
     return yield* fileAccounts.fileAccount
   }),
-  /* The credentials `source` holds now, or none when it holds none. */
+  /* The credentials now in the store that `source` names, if any. */
   whatSourceHolds = Effect.fn("ClaudeCodeDiscovery.readSource")(
     function* whatSourceHolds(
       source: string,
@@ -197,6 +199,7 @@ const Captured = Schema.Tuple([Schema.String, Schema.String]),
   })
 
 /** Finding the Claude Code accounts on this machine and reading their stores. */
+/** @internal */
 export default Object.freeze({
   readAllAccounts: wholeMachine,
   readSource: whatSourceHolds,

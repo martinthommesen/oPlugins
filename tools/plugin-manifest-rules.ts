@@ -129,7 +129,7 @@ const FIELDS: readonly Field[] = [
       return [
         layoutFiles.at(
           file,
-          `"${dependency.name}" is in "${dependency.field}". Move it to "devDependencies": the bundle includes a library.`,
+          `"${dependency.name}" is in "${dependency.field}". Move it to "devDependencies", because the plugin's bundle includes the library.`,
         ),
       ]
     }
@@ -189,7 +189,10 @@ const FIELDS: readonly Field[] = [
       ),
     )
   },
-  /* A dependency's version: from the catalog, or a range for a peer. */
+  /*
+   * A dependency's version: `workspace:*` for a library, a range for a peer,
+   * and `catalog:` for the rest.
+   */
   checkVersion = (file: string, dependency: Dependency): readonly string[] => {
     if (dependency.name.startsWith(LIBRARY_SCOPE)) {
       return checkLibrary(file, dependency)

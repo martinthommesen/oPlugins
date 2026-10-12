@@ -1,5 +1,6 @@
-import { Effect, Encoding, Fiber, Option, Queue, Stream } from "effect"
+import { Effect, Fiber, Option, Queue, Stream } from "effect"
 import { describe, expect, it } from "@effect/vitest"
+import { Hex } from "effect/encoding"
 import responseRestoration from "./response-restoration.ts"
 import support from "./request-transforms.test-support.ts"
 
@@ -184,7 +185,7 @@ describe("response restoration pass-through", () => {
        * Rewriting runs through TextDecoder, which replaces every invalid byte
        * with U+FFFD. A gzip body from a proxy must come back byte for byte.
        */
-      const bytes = yield* Effect.fromResult(Encoding.decodeHex(GZIP_HEX)),
+      const bytes = yield* Effect.fromResult(Hex.decode(GZIP_HEX)),
         original = new Response(new Uint8Array(bytes), {
           headers: { "content-type": "application/gzip" },
         }),

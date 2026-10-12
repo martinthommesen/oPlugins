@@ -16,42 +16,50 @@ type Credentials = typeof ClaudeCredentials.Type
 type LogEntries = CredentialStore["fields"]
 
 /**
- * `failed` is a decision about the stored blob or the item, which another
- * attempt would repeat. `unavailable` means the store could not be reached,
- * even after a second attempt.
+ * How a write-back ended. `written`: the tokens landed and read back.
+ * `conflict`: the store holds another access token, from a rotation or a
+ * newer login. `failed`: the plugin declined to write, for a reason another
+ * attempt would repeat. `unavailable`: the store could not be reached, even
+ * on a second attempt.
  */
 type WriteBackResult = "conflict" | "failed" | "unavailable" | "written"
 
 /** Refreshed tokens to write back into the store they came from. */
 interface WriteBackRequest {
+  /** The account's config directory, which locates a credentials file. */
   readonly configDir: Option.Option<string>
+  /** The refreshed tokens. */
   readonly credentials: Pick<
     Credentials,
     "accessToken" | "expiresAt" | "refreshToken"
   >
   /** The access token the store held when the refresh started. */
   readonly expectedAccessToken: string
+  /** The `source` that names the store. */
   readonly source: string
 }
 
 /** A blob read just before the write, and the write prepared for it. */
 interface StagedWrite {
+  /** The stored blob, read just before the write. */
   readonly blob: string
+  /** The write, prepared ahead of that read. */
   readonly write: Effect.Success<CredentialStore["prepareWrite"]>
 }
 
 const UNAVAILABLE = "unavailable",
-  /* Log fields from a store's context plus `extra`. */
+  /* A store's log annotations plus `extra`. */
   fieldsOf = (
     fields: LogEntries,
     extra: readonly (readonly [string, string])[],
   ): Readonly<Record<string, string>> =>
     Object.fromEntries([...fields, ...extra]),
   /*
-   * Why a stored blob must not be overwritten. Two opposite causes share
-   * this refusal. Either another account legitimately holds the slot, which
-   * needs no action, or the blob cannot be read at all, which means
-   * corruption and needs a human. Both refuse but log different events.
+   * The result of refusing to overwrite `stored`, which has one of two
+   * opposite causes. A blob with another access token, from a rotation or a
+   * newer login, is a conflict that needs no action. A blob that no longer
+   * parses is corrupt and needs the user, so the write fails. Each cause
+   * logs its own event.
    */
   refuseWrite = Effect.fn("ClaudeCodeWriteBack.refuseWrite")(
     function* refuseWrite(
@@ -78,23 +86,20 @@ const UNAVAILABLE = "unavailable",
     },
   ),
   /*
-   * Why the stored blob must not be refreshed in place, or none when it
-   * still carries the access token we expect.
+   * The result to return instead of writing, or none when the stored blob
+   * still carries the expected access token. The guard catches a login or
+   * rotation that landed between the read that produced the token being
+   * refreshed and the read just before the write. A blob that does not
+   * parse is refused too, since the plugin cannot tell whose credentials it
+   * holds.
    *
-   * Guards write-back against an external switch landing between the read
-   * that produced the token being refreshed and the read just before the
-   * write. An unparseable blob is refused, because a write into state we
-   * cannot identify is what this guard exists to prevent.
-   *
-   * This guard is stricter than the write it guards. It validates through
-   * parseCredentials (field types, mcpOAuth-only rejection), while
-   * updateCredentialBlob rewrites any JSON object. So a blob the write path
-   * would happily update can still be refused here. That gap is
-   * intentional. Reaching this guard means an earlier parseCredentials
-   * succeeded, so a blob that no longer parses changed shape after we read
-   * it (a truncated non-atomic external write, or a hand edit), and
-   * declining to write over it is correct. Anyone tightening
-   * parseCredentials should know it narrows write-back too, not just reads.
+   * The guard is stricter than the write. It parses with `parseCredentials`
+   * (field types, no mcpOAuth-only blob), while `updateCredentialBlob`
+   * rewrites any JSON object. The gap is intended: an earlier
+   * `parseCredentials` of this store succeeded, so a blob that no longer
+   * parses changed shape since (a truncated external write, or a hand
+   * edit), and is not written over. Tightening `parseCredentials` narrows
+   * write-back as well as reads.
    */
   staleVerdict = Effect.fn("ClaudeCodeWriteBack.staleBlobResult")(
     function* staleVerdict(raw: string, expected: string, fields: LogEntries) {
@@ -124,7 +129,7 @@ const UNAVAILABLE = "unavailable",
 
     if (!Option.contains(readBack, written)) {
       return yield* ClaudeCodeStoreError.make({
-        message: "the written credentials did not read back",
+        message: "The written credentials did not read back.",
       })
     }
 
@@ -219,21 +224,21 @@ const UNAVAILABLE = "unavailable",
       ),
     ),
   /*
-   * Guarded write of refreshed tokens into the source they came from. The
-   * blob is read just before the write and the write is declined when it
-   * changed, which preserves unrelated concurrent edits and source
-   * rotations that land before that read.
+   * Write refreshed tokens back into the store they came from, guarded. The
+   * blob is read just before the write, which keeps any other edit made
+   * before that read, and the write is declined when the blob holds another
+   * access token, which keeps a rotation made before that read.
    *
    * This is not atomic. The read and the write are separate operations, and
-   * the Claude CLI does not take this plugin's refresh lock, so a rotation
-   * it makes in between is overwritten. The refresh lock serializes the
-   * plugin's own refreshes, but it is best-effort and can degrade, so they
+   * Claude Code does not take this plugin's refresh lock, so a rotation it
+   * makes in between is overwritten. The refresh lock serializes the
+   * plugin's own refreshes, but it is best effort and can degrade, so they
    * can race here too, though rarely.
    *
-   * An unreachable store gets a second attempt. It reuses the guard token:
-   * re-reading it would compare the source against itself and turn the
-   * retry into an unguarded write over a credential rotated in the gap. A
-   * real rotation returns "conflict" instead.
+   * An unreachable store gets a second attempt with the same expected
+   * token. Taking the token from a fresh read instead would compare the
+   * store with itself, and turn the retry into an unguarded write over a
+   * rotation made in the gap. A real rotation returns "conflict" instead.
    */
   writeTwice = Effect.fn("ClaudeCodeWriteBack.writeBack")(function* writeTwice(
     request: WriteBackRequest,
@@ -252,4 +257,5 @@ const UNAVAILABLE = "unavailable",
   })
 
 /** Writing refreshed tokens back into the Claude Code store they came from. */
+/** @internal */
 export default Object.freeze({ writeBack: writeTwice })

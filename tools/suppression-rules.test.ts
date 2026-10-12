@@ -33,7 +33,7 @@ describe("a tagged error's suppression", () => {
         "const demo = 1",
       ]),
     ).toStrictEqual([
-      `${FILE}:1: "// ${DISABLE_NEXT} unicorn/throw-new-error" suppresses a check. Change the code so the check passes, and remove the comment; AGENTS.md lists the only suppressions allowed.`,
+      `${FILE}:1: "// ${DISABLE_NEXT} unicorn/throw-new-error" suppresses a check. Change the code so the check passes, and remove the comment. AGENTS.md lists the only suppressions allowed.`,
     ])
   })
 })

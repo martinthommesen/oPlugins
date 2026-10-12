@@ -2,8 +2,6 @@ import { Array as Arr, Option, Result, Schema } from "effect"
 import type Snapshot from "./snapshot.ts"
 import layoutFiles from "./layout-files.ts"
 
-type Files = (typeof Snapshot.Type)["files"]
-
 const CONFIG = "release-please-config.json",
   MANIFEST = ".release-please-manifest.json",
   /** How release-please releases one package. */
@@ -63,37 +61,17 @@ const CONFIG = "release-please-config.json",
         },
       ),
     ),
-  /*
-   * `file` decoded with `decode`, or the one problem that stops the checks
-   * from reading it.
-   */
-  decoded = <Value>(
-    files: Files,
-    file: string,
-    decode: (
-      text: string,
-    ) => Result.Result<Value, { readonly message: string }>,
-  ): Result.Result<Value, string> =>
-    Option.match(layoutFiles.textOf(files, file), {
-      onNone: () =>
-        Result.fail(layoutFiles.at(file, "The file is missing. Add it.")),
-      onSome: (text) =>
-        decode(text).pipe(
-          Result.mapError((failure: { readonly message: string }) =>
-            layoutFiles.at(
-              file,
-              `The checks can't read the file: ${failure.message}. Correct it.`,
-            ),
-          ),
-        ),
-    }),
   /* Every problem in the release-please config and manifest. */
   problems = (snapshot: typeof Snapshot.Type): readonly string[] => {
     const expected = snapshot.plugins.map((folder) => `packages/${folder}`)
 
     return [
       ...Result.match(
-        decoded(snapshot.files, CONFIG, Schema.decodeResult(ReleaseConfig)),
+        layoutFiles.decodedAt(
+          snapshot.files,
+          CONFIG,
+          Schema.decodeResult(ReleaseConfig),
+        ),
         {
           onFailure: (problem) => [problem],
           onSuccess: (config) => [
@@ -103,7 +81,11 @@ const CONFIG = "release-please-config.json",
         },
       ),
       ...Result.match(
-        decoded(snapshot.files, MANIFEST, Schema.decodeResult(ReleaseManifest)),
+        layoutFiles.decodedAt(
+          snapshot.files,
+          MANIFEST,
+          Schema.decodeResult(ReleaseManifest),
+        ),
         {
           onFailure: (problem) => [problem],
           onSuccess: (manifest) =>

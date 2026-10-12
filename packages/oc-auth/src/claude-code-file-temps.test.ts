@@ -13,6 +13,7 @@ interface Tests {
 }
 
 const ONE_ASSERTION = 1,
+  PLANTED_FILES = 3,
   THREE_ASSERTIONS = 3,
   TWO_ASSERTIONS = 2
 
@@ -78,7 +79,7 @@ test.layer(support.layer)("guarded file write-back temp files", (it: Tests) => {
     Effect.gen(function* run() {
       expect.assertions(TWO_ASSERTIONS)
 
-      // A directory where the temp file would be renamed to.
+      // A directory at the credentials file's path makes the rename fail.
       const fs = yield* FileSystem.FileSystem,
         holder = yield* files.credentialDir("old"),
         keepFile = fs.writeFileString(`${holder.path}/keep`, ""),
@@ -120,7 +121,7 @@ test.layer(support.layer)("guarded file write-back temp sweep", (it: Tests) => {
           )
 
         expect(result).toBe("written")
-        expect(planted).toHaveLength(THREE_ASSERTIONS)
+        expect(planted).toHaveLength(PLANTED_FILES)
         // The stale temp blob goes; the fresh one and the unrelated file stay.
         expect(survivors).toStrictEqual([false, true, true])
       }),

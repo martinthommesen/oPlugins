@@ -17,7 +17,7 @@ type Tokens = typeof ClaudeCredentials.Type
 
 const LOCK_ADOPT_POLL_MS = 250,
   LOCK_ADOPT_WAIT_MS = 5000,
-  /** Suggested wait when another process's refresh did not land in time. */
+  /** The wait to suggest when another process's refresh did not reach the store in time. */
   REFRESH_IN_PROGRESS_RETRY_MS = 5000,
   /* Adopt `tokens`, fingerprinted `hash`, in place of the credential of `subject`. */
   acceptTokens = Effect.fn("CredentialRefresh.acceptTokens")(
@@ -94,17 +94,14 @@ const LOCK_ADOPT_POLL_MS = 250,
       onSome: (tokens) => adoptDistinct(subject, tokens),
     })
   }),
-  /* Adopt a credential rotated outside OpenCode into the store of `subject`. */
+  /* Adopt a credential rotated outside OpenCode from the store of `subject`. */
   adoptNow = Effect.fn("CredentialRefresh.adoptExternal")(function* adoptNow(
     subject: Subject,
   ) {
     return yield* adoptFrom(subject, yield* actualSource(subject))
   }),
   isAdopted = RefreshResult.$is("Adopted"),
-  /*
-   * Poll the store every 250 ms for 5 seconds, until the credential another
-   * process is refreshing lands.
-   */
+  /* Poll the store every 250 ms for 5 seconds, for the credential another process is refreshing. */
   pollWhileRefreshing = Schedule.spaced(LOCK_ADOPT_POLL_MS).pipe(
     Schedule.while(({ elapsed }) => elapsed < LOCK_ADOPT_WAIT_MS),
   ),
@@ -113,7 +110,7 @@ const LOCK_ADOPT_POLL_MS = 250,
   }),
   /*
    * Wait for the credential another process is refreshing, or say how long
-   * to wait before asking again when it does not land in time.
+   * to wait before asking again when it does not reach the store in time.
    */
   waitForExternal = Effect.fn("CredentialRefresh.waitForExternal")(
     function* waitForExternal(subject: Subject) {

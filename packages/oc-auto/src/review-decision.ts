@@ -13,7 +13,7 @@ type SessionId = PermissionEvaluation["sessionID"]
 
 type Snapshot = Effect.Success<ReturnType<Host["Service"]["session"]>>
 
-type HostFailure = Effect.Error<ReturnType<Host["Service"]["session"]>>
+type HostError = Effect.Error<ReturnType<Host["Service"]["session"]>>
 
 type ReviewTurn = Parameters<
   DenialBreaker["Service"]["recordDenial"]
@@ -26,7 +26,7 @@ type Settled = Parameters<typeof Verdict.$match>[typeof FIRST]
 /** Why a request could not be decided. */
 type Undecided =
   | ContextUnavailable
-  | HostFailure
+  | HostError
   | Effect.Error<ReturnType<Reviewer["Service"]["review"]>>
 
 interface Dependencies {
@@ -46,7 +46,7 @@ interface RootTurn extends ReviewTurn {
 }
 
 const FIRST = 0,
-  /** Subagents nest; this bounds the walk up to the user's own session. */
+  /** Subagents nest, so this bounds the walk up to the user's root session. */
   MAX_SESSION_DEPTH = 8,
   NEXT_LEVEL = 1,
   /* Finds the user's root conversation above a subagent's session. */
@@ -55,12 +55,13 @@ const FIRST = 0,
   ): ((
     sessionId: SessionId,
     depth: number,
-  ) => Effect.Effect<RootConversation, HostFailure | ContextUnavailable>) => {
+  ) => Effect.Effect<RootConversation, HostError | ContextUnavailable>) => {
     const rootConversation = Effect.fn("AutoReview.rootConversation")(
+      // A generator named `rootConversation` would recurse into itself, not into the Effect.
       function* walkRoot(
         sessionId: SessionId,
         depth: number,
-      ): Effect.fn.Return<RootConversation, HostFailure | ContextUnavailable> {
+      ): Effect.fn.Return<RootConversation, HostError | ContextUnavailable> {
         const snapshot = yield* host.session(sessionId)
 
         if (Option.isNone(snapshot.parentId)) {

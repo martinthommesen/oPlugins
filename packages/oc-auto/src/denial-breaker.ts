@@ -1,6 +1,6 @@
 import { Context, Effect, HashMap, Layer, Option, Ref, pipe } from "effect"
 import BreakerDecision from "./breaker-decision.ts"
-import Settings from "./settings.ts"
+import PluginOptions from "./plugin-options.ts"
 
 type Decision = Parameters<typeof BreakerDecision.$match>[typeof FIRST]
 
@@ -10,7 +10,9 @@ interface TurnDenials {
 }
 
 interface ReviewTurn {
+  /** The user's root session, which its subagents share. */
   readonly sessionId: string
+  /** The user message that started the turn. */
   readonly userMessageId: string
 }
 
@@ -38,7 +40,7 @@ const FIRST = 0,
     ),
   /* Counts one more denial in the turn under `key` and decides who gets it. */
   tallyDenial =
-    (settings: Settings["Service"], key: string) =>
+    (options: PluginOptions["Service"], key: string) =>
     (
       current: HashMap.HashMap<string, TurnDenials>,
     ): readonly [Decision, HashMap.HashMap<string, TurnDenials>] => {
@@ -48,8 +50,8 @@ const FIRST = 0,
         updated = HashMap.set(current, key, { consecutive, total })
 
       if (
-        consecutive >= settings.maxConsecutiveDenials ||
-        total >= settings.maxTotalDenials
+        consecutive >= options.maxConsecutiveDenials ||
+        total >= options.maxTotalDenials
       ) {
         return [BreakerDecision.Escalate({ consecutive, total }), updated]
       }
@@ -60,14 +62,14 @@ const FIRST = 0,
   turnKey = (turn: ReviewTurn): string =>
     JSON.stringify([turn.sessionId, turn.userMessageId])
 
-/** Shares denial counts across a root session and its subagents. */
+/** Counts the reviewer's denials in each user turn, up to the denial limits. */
 class DenialBreaker extends Context.Service<DenialBreaker, Interface>()(
   "@martinthommesen/oc-auto/denial-breaker/DenialBreaker",
 ) {
   public static readonly layer = Layer.effect(
     DenialBreaker,
     Effect.gen(function* makeDenialBreaker() {
-      const settings = yield* Settings,
+      const options = yield* PluginOptions,
         turns = yield* Ref.make(HashMap.empty<string, TurnDenials>())
 
       return DenialBreaker.of({
@@ -85,10 +87,7 @@ class DenialBreaker extends Context.Service<DenialBreaker, Interface>()(
         ),
         recordDenial: Effect.fn("DenialBreaker.recordDenial")(
           function* recordDenial(turn: ReviewTurn) {
-            return yield* Ref.modify(
-              turns,
-              tallyDenial(settings, turnKey(turn)),
-            )
+            return yield* Ref.modify(turns, tallyDenial(options, turnKey(turn)))
           },
         ),
       })

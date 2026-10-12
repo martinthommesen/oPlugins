@@ -1,11 +1,11 @@
 import { Context, Effect, Layer } from "effect"
 import AnthropicFetchError from "./anthropic-fetch-error.ts"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 
 /*
- * Send `request` with the runtime's `fetch`. The host hands this plugin and
- * expects back Fetch API objects, so a replay stays one: the response body
- * streams through untouched, and the host can cancel it.
+ * Send `request` with the runtime's `fetch`. The host hands the plugin Fetch
+ * API objects and expects them back, so a replay stays one: its response
+ * body streams through untouched, and the host can cancel it.
  */
 const send = Effect.fn("AnthropicFetch.send")(function* send(request: Request) {
   const fetchFn = yield* FetchHttpClient.Fetch
@@ -20,7 +20,7 @@ const send = Effect.fn("AnthropicFetch.send")(function* send(request: Request) {
   })
 })
 
-/** Replays requests to the Anthropic API after a 401 was recovered from. */
+/** Sends the requests unauthorized recovery replays to the Anthropic API. */
 class AnthropicFetch extends Context.Service<
   AnthropicFetch,
   {

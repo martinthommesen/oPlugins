@@ -26,7 +26,7 @@ describe("the catalog's effect pins", () => {
     expect(
       catalogRules.problems(layout.withFile(WORKSPACE, workspace)),
     ).toStrictEqual([
-      `${WORKSPACE}: The catalog pins "@effect/vitest" to "4.0.0-rc.111", but @opencode/plugin 2.0.26, the host, depends on effect "4.0.0-rc.112". Set it to "4.0.0-rc.112".`,
+      `${WORKSPACE}: The catalog pins "@effect/vitest" to "4.0.0-rc.111", but @opencode/plugin 2.0.26 depends on effect "4.0.0-rc.112". Set it to "4.0.0-rc.112".`,
     ])
   })
 })
@@ -67,6 +67,15 @@ describe("an unreadable catalog", () => {
       ),
     ).toStrictEqual([true])
     expect(problems.some((problem) => problem.includes("\n"))).toBe(false)
+  })
+
+  it("ends the reason before saying what to do", { timeout: 5000 }, () => {
+    expect.hasAssertions()
+    expect(
+      catalogRules.problems(layout.withFile(WORKSPACE, "packages: []\n")),
+    ).toStrictEqual([
+      `${WORKSPACE}: The checks can't read the catalog: Missing key at ["catalog"]. Correct the file.`,
+    ])
   })
 
   it("is missing", { timeout: 5000 }, () => {

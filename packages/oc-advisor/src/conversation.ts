@@ -116,8 +116,9 @@ const ConversationItem = Data.taggedEnum<Item>(),
       ),
     ),
   /*
-   * Converts host session messages into conversation items, dropping the kinds
-   * the advisor does not read (reasoning, system updates, mode switches).
+   * Converts host session messages into conversation items. It drops what
+   * the advisor does not read: reasoning, system messages, idle markers, and
+   * agent, model, and location switches.
    */
   visibleItems = (messages: readonly SessionMessage.Info[]): readonly Item[] =>
     pipe(

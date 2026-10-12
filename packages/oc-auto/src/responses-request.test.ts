@@ -1,6 +1,6 @@
 import { Effect, Match, Redacted, Schema } from "effect"
 import { describe, expect, it } from "@effect/vitest"
-import type { HttpClientRequest } from "effect/unstable/http"
+import type { HttpClientRequest } from "effect/http"
 import responsesRequest from "./responses-request.ts"
 
 const COMPLETION = {

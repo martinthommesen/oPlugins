@@ -59,7 +59,7 @@ test.layer(support.layer)("credentials file reads", (it: Tests) => {
 })
 
 test.layer(support.layer)("credentials file discovery", (it: Tests) => {
-  it.effect("discovers the configured file source on non-macOS platforms", () =>
+  it.effect("discovers the configured credentials file off macOS", () =>
     Effect.gen(function* run() {
       expect.assertions(ONE_ASSERTION)
 
@@ -87,7 +87,7 @@ test.layer(support.layer)("credentials file discovery", (it: Tests) => {
 })
 
 test.layer(support.layer)("guarded file write-back", (it: Tests) => {
-  it.effect("updates the matching source and preserves unrelated data", () =>
+  it.effect("updates the matching store and keeps unrelated data", () =>
     Effect.gen(function* run() {
       expect.assertions(THREE_ASSERTIONS)
 

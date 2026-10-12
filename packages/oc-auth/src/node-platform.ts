@@ -15,4 +15,5 @@ const nodePlatform = Layer.mergeAll(
   NodeCrypto.layer,
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
 
+/** @internal */
 export default nodePlatform

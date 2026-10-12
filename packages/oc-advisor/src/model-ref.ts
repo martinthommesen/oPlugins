@@ -12,8 +12,9 @@ const coversVariant =
           pipe(info.variants, Arr.map(Struct.get("id")), Arr.contains(id)),
       }),
   /*
-   * Checks that a parsed reference, `model` as the user wrote it, names one
-   * of the `available` models the user can select, and returns that model.
+   * Finds the enabled model in `available` that a parsed reference names,
+   * with the variant it asks for. `model` is the reference as the user wrote
+   * it, for the error.
    */
   findModel = (
     ref: Model.Ref,

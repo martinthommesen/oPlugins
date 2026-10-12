@@ -6,7 +6,7 @@ import { Array as Arr, Option } from "effect"
  * unexplained billing rejection, so they are re-added after any override.
  */
 const AUTH_BETAS = ["claude-code-20250219", "oauth-2025-04-20"],
-  /** Header and billing shape checked against the published native CLI bundle. */
+  /** The Claude Code release whose request shape the plugin copies. */
   CC_VERSION = "2.1.295",
   CONTEXT_SUFFIX = /\[1m\]$/u,
   EFFORT_BETA = "effort-2025-11-24",
@@ -73,11 +73,10 @@ const AUTH_BETAS = ["claude-code-20250219", "oauth-2025-04-20"],
   },
   /*
    * Beta flags for a model: the base set (or `override`, the `betaFlags`
-   * option) merged with any flags the caller already
-   * sent (`incoming`, the raw `anthropic-beta` header) and the betas
-   * subscription auth requires, minus the effort beta for models that do not
-   * support it. The exclusion runs after the merge so an inbound header
-   * cannot reintroduce the flag.
+   * option) merged with the flags the caller already sent (`incoming`, the
+   * raw `anthropic-beta` header) and the betas subscription auth requires,
+   * minus the effort beta for models that do not support it. The exclusion
+   * runs after the merge, so an inbound header cannot add the flag back.
    */
   wireBetas = (
     modelId: string,

@@ -14,7 +14,7 @@ interface Tests {
   >
 }
 
-// The account file Claude Code keeps in a config directory.
+/** The account file Claude Code keeps in a config directory. */
 const AccountFile = Schema.fromJsonString(
     Schema.Struct({
       oauthAccount: Schema.Struct({ emailAddress: Schema.String }),
@@ -60,8 +60,9 @@ const AccountFile = Schema.fromJsonString(
     return target
   }),
   /*
-   * Two Pro accounts: the primary item for `~/.claude` and a suffixed one for
-   * `~/.work`, listed suffixed first. What discovery should report for them.
+   * Two Pro accounts, the primary item for `~/.claude` and a suffixed one for
+   * `~/.work`, listed suffixed first; the result is what discovery should
+   * report for them.
    */
   twoAccountMachine = Effect.fn("test.twoAccountMachine")(
     function* twoAccountMachine(home: string) {
@@ -171,50 +172,35 @@ test.layer(support.layer)(
   },
 )
 
-test.layer(support.layer)("keychain source reads", (it: Tests) => {
-  it.effect("reads an account's current credentials through the Keychain", () =>
-    Effect.gen(function* run() {
-      expect.assertions(TWO_ASSERTIONS)
-
-      const [current, missing] = yield* support.onMac(
-        [[PRIMARY, support.credentialBlob("current")]],
-        (stores) =>
-          Effect.all([
-            stores.readSource(PRIMARY, Option.none()),
-            stores.readSource(`${PRIMARY}-deadbeef`, Option.none()),
-          ]),
-      )
-
-      expect(
-        current.pipe(
-          Option.map((found) => [found.accessToken, found.refreshToken]),
-        ),
-      ).toStrictEqual(Option.some(["current", "current-refresh"]))
-      expect(Option.isNone(missing)).toBe(true)
-    }),
-  )
-})
-
-describe("keychain source reads of non-ASCII blobs", () => {
+describe("keychain store reads", () => {
   test.layer(support.layer)((it: Tests) => {
-    it.effect("reads an item whose blob holds non-ASCII text", () =>
-      Effect.gen(function* run() {
-        expect.assertions(ONE_ASSERTION)
+    it.effect(
+      "reads an account's current credentials through the Keychain",
+      () =>
+        Effect.gen(function* run() {
+          expect.assertions(TWO_ASSERTIONS)
 
-        const credentials = yield* support.onMac(
-          [[PRIMARY, NOTED_BLOB]],
-          (stores) => stores.readSource(PRIMARY, Option.none()),
-        )
+          const [current, missing] = yield* support.onMac(
+            [[PRIMARY, support.credentialBlob("current")]],
+            (stores) =>
+              Effect.all([
+                stores.readSource(PRIMARY, Option.none()),
+                stores.readSource(`${PRIMARY}-deadbeef`, Option.none()),
+              ]),
+          )
 
-        expect(
-          credentials.pipe(Option.map((found) => found.accessToken)),
-        ).toStrictEqual(Option.some("current"))
-      }),
+          expect(
+            current.pipe(
+              Option.map((found) => [found.accessToken, found.refreshToken]),
+            ),
+          ).toStrictEqual(Option.some(["current", "current-refresh"]))
+          expect(Option.isNone(missing)).toBe(true)
+        }),
     )
   })
 
   test.layer(support.layer)((it: Tests) => {
-    it.effect("will not read a source that is not a Claude Code item", () =>
+    it.effect("will not read a `source` that names no Claude Code item", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
@@ -230,3 +216,23 @@ describe("keychain source reads of non-ASCII blobs", () => {
     )
   })
 })
+
+test.layer(support.layer)(
+  "keychain store reads of non-ASCII blobs",
+  (it: Tests) => {
+    it.effect("reads an item whose blob holds non-ASCII text", () =>
+      Effect.gen(function* run() {
+        expect.assertions(ONE_ASSERTION)
+
+        const credentials = yield* support.onMac(
+          [[PRIMARY, NOTED_BLOB]],
+          (stores) => stores.readSource(PRIMARY, Option.none()),
+        )
+
+        expect(
+          credentials.pipe(Option.map((found) => found.accessToken)),
+        ).toStrictEqual(Option.some("current"))
+      }),
+    )
+  },
+)

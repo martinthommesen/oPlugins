@@ -12,7 +12,7 @@ type ContextMessage = SessionContext["messages"][number]
 
 type ContextPart = ContextMessage["content"][number]
 
-/* Marks the message this plugin relocated a system prompt into. */
+/* Marks the text part this plugin moved into the first user message. */
 const CONTEXT_METADATA_KEY = "martinthommesen.oc-auth",
   LEADING_NEWLINES = /^\n+/u,
   PARAGRAPH = "\n\n",

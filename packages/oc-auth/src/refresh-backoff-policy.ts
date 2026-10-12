@@ -1,15 +1,11 @@
 import { Option, Schema } from "effect"
 
 /*
- * Transient-vs-terminal classification and the backoff schedule for OAuth
- * token refreshes.
- *
  * The token endpoint (`platform.claude.com/v1/oauth/token`) may rate-limit
- * refresh requests with HTTP 429 `rate_limit_error`. That is transient,
- * because the refresh token is still valid. This module tells a transient
- * failure apart from a genuinely dead refresh token (`invalid_grant`), and
- * computes a cooldown so a rate-limited account is not re-hit until the
- * window has plausibly cleared.
+ * refreshes with HTTP 429 `rate_limit_error`, which leaves the refresh token
+ * valid. This module tells such a transient failure from a dead refresh token
+ * (`invalid_grant`), and picks a cooldown so a rate-limited account is not
+ * asked again before the limit is likely to have reset.
  */
 
 /** Whether a refresh failure says anything against the refresh token itself. */
@@ -33,12 +29,12 @@ const DOUBLING = 2,
   JITTER_SPAN = 0.5,
   /*
    * Consecutive transient failures after which the user is told. Unknown
-   * OAuth errors are classified transient so a recoverable blip never
-   * demands re-authentication. Without the ceiling, a permanent failure with
-   * an unfamiliar code, such as a lapsed subscription, would retry behind a
-   * synthetic 429 and never reach the user. Retries continue past the
-   * ceiling. With the default base cooldown it is reached after about eight
-   * minutes at worst (15 + 30 + 7 × 60 seconds), sooner with jitter.
+   * OAuth errors count as transient, so without this ceiling a permanent
+   * failure with an unfamiliar code, such as a lapsed subscription, would
+   * retry behind a synthetic 429 and never reach the user. Retries go on
+   * past the ceiling. With the default base cooldown it is reached after
+   * about eight minutes at worst (15 + 30 + 7 × 60 seconds), sooner with
+   * jitter.
    */
   MAX_CONSECUTIVE_TRANSIENT = 10,
   /** Hard ceiling for a single cooldown, regardless of consecutive failures. */
@@ -59,9 +55,10 @@ const DOUBLING = 2,
   ]),
   /*
    * Delay before the next refresh attempt. An explicit `retry-after` from the
-   * endpoint wins (still clamped to `MAX_COOLDOWN_MS`); otherwise an
-   * exponential schedule (base · 2^(n-1), capped) with jitter in the
-   * [50%, 100%] band to desynchronize refreshes.
+   * endpoint wins, capped at `MAX_COOLDOWN_MS`, so an hour-long quota reset
+   * does not turn every request away for that hour. Otherwise the delay
+   * doubles from the base with each failure, up to the cap, with jitter in
+   * the [50%, 100%] band so processes do not refresh in step.
    */
   backoffMs = (inputs: BackoffInputs): number => {
     const exponent = Math.max(NO_WAIT, inputs.consecutive - FIRST_FAILURE),
@@ -75,16 +72,11 @@ const DOUBLING = 2,
       Option.match({
         onNone: () =>
           Math.round(scheduled * (JITTER_FLOOR + inputs.jitter * JITTER_SPAN)),
-        /*
-         * Honor the server's hint, but keep it under the documented cap so a
-         * large `Retry-After` (e.g. an hour-long quota reset) can't pin every
-         * request to the full wait budget for that whole window.
-         */
         onSome: (hint) => Math.min(MAX_COOLDOWN_MS, hint),
       }),
     )
   },
-  // A failure is terminal only when its OAuth error code says so.
+  /* A failure is terminal only when its OAuth error code says so. */
   classify = (oauthError: Option.Option<string>): RefreshFailureKind => {
     if (Option.exists(oauthError, Schema.is(TerminalOAuthError))) {
       return "terminal"

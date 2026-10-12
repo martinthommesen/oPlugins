@@ -50,7 +50,7 @@ describe("the release-please manifest", () => {
     ])
   })
 
-  it("is there", { timeout: 5000 }, () => {
+  it("exists", { timeout: 5000 }, () => {
     expect.hasAssertions()
     expect(releaseRules.problems(layout.withoutFile(MANIFEST))).toStrictEqual([
       `${MANIFEST}: The file is missing. Add it.`,

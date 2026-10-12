@@ -13,7 +13,7 @@ type WriteRequest = Parameters<Stores["writeBack"]>[typeof FIRST]
 
 type WriteResult = Effect.Success<ReturnType<Stores["writeBack"]>>
 
-type Attempt = ReturnType<(typeof LockAttempt)["busy" | "cooldown" | "held"]>
+type Attempt = ReturnType<(typeof LockAttempt)["Busy" | "Cooldown" | "Held"]>
 
 type Outcome = Effect.Success<ReturnType<TokenExchange["Service"]["exchange"]>>
 

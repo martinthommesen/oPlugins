@@ -77,7 +77,7 @@ const MIT = "MIT License",
         ),
     })
   },
-  /* Every environment variable named in `text` starts with `prefix`. */
+  /* Every `OC_` variable named in `text` starts with `prefix`. */
   checkLiterals = (
     file: string,
     text: string,
@@ -97,8 +97,8 @@ const MIT = "MIT License",
       ]
     }),
   /*
-   * Every environment variable in the plugin's `src/` and `scripts/` starts
-   * with its prefix: `OC_AUTH_` for oc-auth.
+   * Every `OC_` variable in the plugin's `src/` and `scripts/` starts with
+   * the plugin's own prefix: `OC_AUTH_` for oc-auth.
    */
   checkVariables = (files: Files, folder: string): readonly string[] => {
     const prefix = `OC_${folder.slice(PREFIX.length).toUpperCase().replaceAll("-", "_")}_`,

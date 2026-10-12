@@ -1,12 +1,12 @@
 import { defineConfig } from "tsdown"
 
 /**
- * How oc-auto is bundled: its own code and the libraries it uses go in, and
- * every package stays external, limited to the ones it may import at run
- * time.
+ * How oc-auto is bundled. The bundle holds the plugin's own code and the
+ * libraries it uses. Every package stays external, and the bundle may import
+ * only `effect` at run time.
  */
 export default defineConfig({
-  // The bundle carries OpenAI Codex's Apache-2.0 policy text, and with it its license and notice.
+  // The bundle includes Apache-2.0 policy text from OpenAI Codex, so its license and notice ship too.
   copy: {
     from: ["src/vendor/codex/LICENSE", "src/vendor/codex/NOTICE"],
     to: "dist/vendor/codex",

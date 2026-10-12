@@ -1,25 +1,25 @@
 /**
- * Best-effort cross-process single flight for rotating OAuth refresh tokens.
+ * Lets one OpenCode process at a time spend a store's refresh token. The
+ * token endpoint can rotate the token, so two processes spending it at once
+ * can sign Claude Code out.
  *
- * Lock files are monotonically numbered source-local tickets. Creating the next
- * ticket with O_EXCL is where processes contend, but it does not settle the
- * winner on its own. A post-create supersession check can still withdraw the
- * claim. Released tickets stay as expired tombstones until a successor exists,
- * so ticket numbers never reset and a stale holder can never target its
- * successor's path.
+ * Each lock file is a numbered ticket of one store. Processes contend by
+ * creating the next ticket exclusively (`O_EXCL`), but creating it does not
+ * win the lock on its own: a scan after the create can still withdraw the
+ * claim. A released ticket stays as an expired tombstone until a successor
+ * exists, so ticket numbers never reset and a stale holder never writes to
+ * its successor's file.
  *
- * Coordination is best-effort, not guaranteed. When the lock directory is
- * unusable the service degrades to a lock that serializes nothing, because
- * refusing to refresh would be the worse failure. That degradation is reported
- * as a `refresh_lock_degraded` warning and marked on the lock so callers and
- * tests can tell it apart from a real acquisition.
+ * When the lock directory can't be used, every caller gets a lock that
+ * serializes nothing, because refusing to refresh would be the worse failure.
+ * Each such grant logs a `refresh_lock_degraded` warning, and the lock says
+ * it is `degraded`.
  */
 import {
   Clock,
   Context,
   Crypto,
   Effect,
-  Encoding,
   FileSystem,
   Layer,
   Option,
@@ -28,19 +28,19 @@ import {
   Scope,
 } from "effect"
 import Environment from "./environment.ts"
+import { Hex } from "effect/encoding"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import type { PlatformError } from "effect"
 import PluginOptions from "./plugin-options.ts"
-import type RefreshLockClaim from "./refresh-lock-claim.ts"
 import commit from "./refresh-lock-held.ts"
 import opencodeDataDir from "./opencode-data-dir.ts"
 import pluginLog from "./plugin-log.ts"
 import ticketFiles from "./refresh-lock-ticket-files.ts"
 import tickets from "./refresh-lock-tickets.ts"
 
-type Attempt = ReturnType<(typeof LockAttempt)["busy" | "cooldown" | "held"]>
+type Attempt = ReturnType<(typeof LockAttempt)["Busy" | "Cooldown" | "Held"]>
 
-type Claims = readonly (typeof RefreshLockClaim.Type)[]
+type Claims = Effect.Success<ReturnType<typeof ticketFiles.scan>>
 
 /** Where and for whom one acquisition takes tickets. */
 interface Plan {
@@ -68,7 +68,6 @@ const DEGRADED_LOCK = {
     extend: (): Effect.Effect<boolean> => Effect.succeed(true),
     release: Effect.void,
   },
-  // Ceiling for a lease, so a mistyped TTL cannot block refreshes for days.
   MAX_LOCK_TTL_MS = 120_000,
   NEXT_TICKET = 1n,
   NO_TICKET = 0n,
@@ -139,7 +138,7 @@ const DEGRADED_LOCK = {
       source,
     })
 
-    return LockAttempt.held({ lock: DEGRADED_LOCK })
+    return LockAttempt.Held({ lock: DEGRADED_LOCK })
   }),
   encoder = new TextEncoder(),
   /* `OC_AUTH_REFRESH_LOCK_DIR`, else OpenCode's data directory. */
@@ -152,8 +151,8 @@ const DEGRADED_LOCK = {
     })
   }),
   /*
-   * The file name prefix of the tickets of `source`. It keeps the plugin's
-   * former name, so processes still running an older build share the lock.
+   * The file name prefix of the tickets of `source`. A digest stands in for
+   * `source`, which can hold a path.
    */
   lockPrefix = Effect.fn("RefreshLock.lockPrefix")(function* lockPrefix(
     source: string,
@@ -161,10 +160,10 @@ const DEGRADED_LOCK = {
     const crypto = yield* Crypto.Crypto,
       digest = yield* crypto.digest("SHA-256", encoder.encode(source))
 
-    return `oc-auth-refresh-${Encoding.encodeHex(digest).slice(START, PREFIX_HEX_LENGTH)}-`
+    return `oc-auth-refresh-${Hex.encode(digest).slice(START, PREFIX_HEX_LENGTH)}-`
   }),
   /*
-   * Take the ticket after the highest of the live tickets and `floor`, or
+   * Take the ticket after the highest of the expired tickets and `floor`, or
    * report the live claim that turns up while racing for it. Fails when the
    * directory cannot be used.
    */
@@ -240,10 +239,10 @@ const DEGRADED_LOCK = {
     )
 
 /**
- * The cross-process refresh lock. `acquire` takes the lock for one
- * credential source, in `OC_AUTH_REFRESH_LOCK_DIR` or OpenCode's data
- * directory, leased for the `refreshLockTtlMs` option up to `maxTtlMs`. A
- * held lock is released when the caller's scope closes, if not before.
+ * The cross-process refresh lock. `acquire` takes the lock for one store, in
+ * `OC_AUTH_REFRESH_LOCK_DIR` or OpenCode's data directory, leased for the
+ * `refreshLockTtlMs` option up to `maxTtlMs`. A held lock is released when
+ * the caller's scope closes, if not before.
  */
 class RefreshLock extends Context.Service<
   RefreshLock,

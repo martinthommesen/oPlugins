@@ -1,20 +1,18 @@
 import { Array as Arr, Effect, Option, Ref } from "effect"
-import type { HashMap } from "effect"
 import commands from "./fake-security-commands.test-support.ts"
 
 type Outcome = ReturnType<typeof commands.done>
 
-/** One run of the fake tool: the Keychain's files and the unread stdin. */
-interface Session {
-  readonly files: Ref.Ref<HashMap.HashMap<string, string>>
-  readonly prompts: Ref.Ref<readonly string[]>
-}
+type Session = Parameters<typeof commands.dumpKeychain>[typeof FIRST]
 
 const FIRST = 0,
-  /** Bytes `security -i` reads as one command. */
+  /**
+   * The longest command `security -i` reads from one line. The real tool
+   * counts bytes; this fake counts characters, which is the same for ASCII.
+   */
   INTERACTIVE_CHUNK = 4095,
   NEXT = 1,
-  /* One `security -i` word: quoted runs, escapes, and plain characters. */
+  /** One `security -i` word: quoted runs, escapes, and plain characters. */
   TOKEN = /(?:\\[\s\S]|\\$|"(?:\\[\s\S]|\\$|[^"\\])*(?:"|$)|[^\s"\\])+/gu,
   UNESCAPE = /\\(?<char>[\s\S])|"/gu,
   /* The 4095-character fragments `security -i` splits `line` into. */
@@ -30,9 +28,7 @@ const FIRST = 0,
   /* Split one `security -i` line the way the real tool does. */
   parseLine = (line: string): readonly string[] =>
     (line.match(TOKEN) ?? []).map((word) =>
-      word.replaceAll(UNESCAPE, (_quote: string, char?: string) =>
-        Option.getOrElse(Option.fromUndefinedOr(char), () => ""),
-      ),
+      word.replaceAll(UNESCAPE, (_quote: string, char?: string) => char ?? ""),
     ),
   /* One `security` command, as argv. */
   runCommand = (
@@ -91,7 +87,8 @@ const FIRST = 0,
    * its blob, `<service>.account` for the item's account name,
    * `<service>.exit` to force an exit status, and `dump` for
    * `dump-keychain`. Writes land in `<service>` and record the account used
-   * in `<service>.written-as`.
+   * in `<service>.written-as`. `<service>.drop`, `<service>.drop-once`, and
+   * `<service>.flip` disturb writes, as `fake-security-commands` describes.
    *
    * It mirrors the real tool where the real tool is surprising, because the
    * plugin's write path depends on those details (each was checked against
@@ -106,7 +103,7 @@ const FIRST = 0,
    * - `find-generic-password -w` prints a password holding any byte outside
    *   printable ASCII as bare lowercase hex.
    */
-  runSecurity = Effect.fn("FakeSecurity.run")(function* runSecurity(
+  runSecurity = Effect.fn("FakeSecurity.runSecurity")(function* runSecurity(
     files: Session["files"],
     argv: readonly string[],
     input: string,

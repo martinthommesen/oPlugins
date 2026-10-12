@@ -6,7 +6,7 @@ type Snapshot = Effect.Success<
   ReturnType<RequestTransforms["Service"]["request"]>
 >["snapshot"]
 
-/** What recovering a request from a 401 needs: how it was sent, and with what. */
+/** What unauthorized recovery needs: how a request was sent, and with what. */
 interface RequestState {
   readonly credential: ReturnType<typeof claudeCodeCredential.fromSource>
   readonly snapshot: Snapshot

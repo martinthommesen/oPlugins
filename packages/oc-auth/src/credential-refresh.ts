@@ -41,6 +41,7 @@ type Requirements =
 interface InFlight {
   /** The credential generation the leader is refreshing. */
   readonly credentialKey: string
+  /** The leader's outcome, which every joiner awaits. */
   readonly result: Deferred.Deferred<Refresh, RefreshError>
 }
 
@@ -70,8 +71,8 @@ const aboutCredential = (
     },
   ),
   /*
-   * The leader's `credential`, carrying the joiner's own metadata: its label
-   * stays, and only the fingerprint of what the store holds comes along.
+   * The leader's `credential` with the joiner's own metadata, so the joiner
+   * keeps its label and takes only the leader's fingerprint of the store.
    */
   credentialForJoiner = (
     credential: ClaudeCodeCredential,
@@ -102,43 +103,25 @@ const aboutCredential = (
         RefreshResult.Refreshed({
           credential: credentialForJoiner(credential, subject),
         }),
-      Transient: ({ retryAfterMs }): Refresh =>
-        RefreshResult.Transient({ retryAfterMs }),
-      Unchanged: (): Refresh => RefreshResult.Unchanged(),
+      Transient: (): Refresh => result,
+      Unchanged: (): Refresh => result,
     }),
-  /* `inFlight` without `entry`, unless another refresh replaced it already. */
-  forget = (
-    inFlight: HashMap.HashMap<string, InFlight>,
-    sourceKey: string,
-    entry: InFlight,
-  ): HashMap.HashMap<string, InFlight> => {
-    if (
-      Option.exists(
-        HashMap.get(inFlight, sourceKey),
-        (current) => current.result === entry.result,
-      )
-    ) {
-      return HashMap.remove(inFlight, sourceKey)
-    }
-
-    return inFlight
-  },
   /*
-   * Refresh `subject` as the leader for its store. The refresh runs in the
-   * service's scope, like the shared promise it replaces: a caller that
-   * goes away does not take it, or its joiners' result, down with it.
+   * Refresh `subject` as the leader for its store, `entry` already claimed.
+   * The refresh runs in the service's scope, so a leader whose caller goes
+   * away does not take its joiners' result down with it. Only the leader
+   * removes its entry, so the store still maps to `entry` when it ends.
    */
   lead = Effect.fn("CredentialRefresh.lead")(function* lead(
     state: State,
     subject: Subject,
     entry: InFlight,
   ) {
-    yield* Ref.update(state.inFlight, HashMap.set(subject.sourceKey, entry))
     yield* run.performRefresh(subject).pipe(
       Effect.onExit((exit) =>
-        Ref.update(state.inFlight, (inFlight) =>
-          forget(inFlight, subject.sourceKey, entry),
-        ).pipe(Effect.andThen(Deferred.done(entry.result, exit))),
+        Ref.update(state.inFlight, HashMap.remove(subject.sourceKey)).pipe(
+          Effect.andThen(Deferred.done(entry.result, exit)),
+        ),
       ),
       Effect.forkIn(state.scope),
     )
@@ -146,42 +129,47 @@ const aboutCredential = (
     return yield* Deferred.await(entry.result)
   }),
   /*
-   * A terminal outcome is about the leader's refresh token. A joiner
-   * holding a newer generation of the same source still has its own.
+   * After the leader's refresh token was rejected: a joiner of the same
+   * credential generation fails too, and one holding a newer generation gets
+   * none, so it asks again with its own refresh token.
    */
   newerGeneration = Effect.fn("CredentialRefresh.newerGeneration")(
-    function* newerGeneration(
-      state: State,
-      subject: Subject,
-      leaderKey: string,
-    ) {
-      const entry = yield* entryFor(subject)
-
+    function* newerGeneration(subject: Subject, leaderKey: string) {
       if (leaderKey === subject.credentialKey) {
         return yield* ClaudeAuthTerminalError.make({
           message: ClaudeAuthTerminalError.text,
         })
       }
 
-      return yield* lead(state, subject, entry)
+      return Option.none<Refresh>()
     },
   ),
-  /* Join the refresh `leader` is running for the store of `subject`. */
+  /*
+   * The result of the refresh `leader` is running for the store of
+   * `subject`, or none when `subject` has to ask again.
+   */
   onLeader = Effect.fn("CredentialRefresh.join")(function* onLeader(
-    state: State,
     subject: Subject,
     leader: InFlight,
   ) {
     return yield* Deferred.await(leader.result).pipe(
-      Effect.map((result) => forJoiner(result, subject)),
+      Effect.map((result) => Option.some(forJoiner(result, subject))),
       Effect.catchTag("ClaudeAuthTerminalError", () =>
-        newerGeneration(state, subject, leader.credentialKey),
+        newerGeneration(subject, leader.credentialKey),
       ),
     )
   }),
-  /* Join the refresh in flight for the store of `subject`, or lead one. */
+  /*
+   * Join the refresh in flight for the store of `subject`, or lead one.
+   * A joiner that has to ask again, after the leader's refresh token was
+   * rejected, joins whichever refresh another such joiner started first.
+   */
   shareRefresh = Effect.fn("CredentialRefresh.shareRefresh")(
-    function* shareRefresh(state: State, subject: Subject) {
+    // A generator named `shareRefresh` would retry by recursing into itself, not into the Effect.
+    function* claimOrJoin(
+      state: State,
+      subject: Subject,
+    ): Effect.fn.Return<Refresh, RefreshError, Requirements> {
       const entry = yield* entryFor(subject),
         leader = yield* Ref.modify(
           state.inFlight,
@@ -198,11 +186,15 @@ const aboutCredential = (
               ],
               onSome: (current) => [Option.some(current), inFlight],
             }),
-        )
+        ),
+        shared = yield* Option.match(leader, {
+          onNone: () => lead(state, subject, entry).pipe(Effect.asSome),
+          onSome: (current) => onLeader(subject, current),
+        })
 
-      return yield* Option.match(leader, {
-        onNone: () => lead(state, subject, entry),
-        onSome: (current) => onLeader(state, subject, current),
+      return yield* Option.match(shared, {
+        onNone: () => shareRefresh(state, subject),
+        onSome: (result) => Effect.succeed(result),
       })
     },
   ),

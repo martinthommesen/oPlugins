@@ -54,7 +54,7 @@ describe("a plugin's exports", () => {
 })
 
 describe("a plugin's engines", () => {
-  it("give the oldest host as a range from it", { timeout: 5000 }, () => {
+  it("give the oldest supported host as >=X.Y.Z", { timeout: 5000 }, () => {
     expect.hasAssertions()
     expect(
       problemsWith({ engines: { node: ">=26", opencode: "^2.0.26" } }),
@@ -82,7 +82,7 @@ describe("a plugin's library dependencies", () => {
     expect(
       problemsWith({ dependencies: { "@oc-lib/demo-kit": "workspace:*" } }),
     ).toStrictEqual([
-      `${FILE}: "@oc-lib/demo-kit" is in "dependencies". Move it to "devDependencies": the bundle includes a library.`,
+      `${FILE}: "@oc-lib/demo-kit" is in "dependencies". Move it to "devDependencies", because the plugin's bundle includes the library.`,
     ])
   })
 

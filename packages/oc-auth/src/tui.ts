@@ -44,7 +44,7 @@ type TokenUsage = typeof cache.cacheStats extends (
   ? Usage
   : never
 
-/** The parts of the TUI plugin context this plugin uses, read-only. */
+/** The parts of the CLI plugin context this plugin uses, read-only. */
 interface Host {
   readonly data: {
     readonly session: {
@@ -182,6 +182,7 @@ const coloredText = (color: () => Color): DomNode => {
       title: "Prompt cache",
     })
   },
+  /** The CLI plugin: the sidebar's prompt cache section and `/cache`. */
   tuiPlugin: Plugin.Definition = {
     id: "martinthommesen.oc-auth.cli",
     setup: (context: Host) => {

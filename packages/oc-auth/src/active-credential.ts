@@ -1,7 +1,7 @@
 import { Clock, Context, Effect, Fiber, Layer, Option, Ref } from "effect"
 import CredentialRefresh from "./credential-refresh.ts"
 import type { Scope } from "effect"
-import type claudeCodeCredential from "./claude-code-credential.ts"
+import claudeCodeCredential from "./claude-code-credential.ts"
 
 type ClaudeCodeCredential = ReturnType<typeof claudeCodeCredential.fromSource>
 
@@ -47,29 +47,21 @@ const NEVER_CHECKED = 0,
    * Re-read the store for a rotation made outside OpenCode, and resolve to
    * the credential to use from now on.
    */
-  recheck = (
+  recheck = Effect.fn("ActiveCredential.recheck")(function* recheck(
     state: State,
     credential: ClaudeCodeCredential,
-  ): Effect.Effect<ClaudeCodeCredential, never, CredentialRefresh> =>
-    Effect.gen(function* recheckSource() {
-      const refresh = yield* CredentialRefresh,
-        result = yield* refresh.adopt(
-          Object.freeze({
-            access: credential.access,
-            expires: credential.expires,
-            metadata: credential.metadata,
-            refresh: credential.refresh,
-          }),
-        )
+  ) {
+    const refresh = yield* CredentialRefresh,
+      result = yield* refresh.adopt(claudeCodeCredential.toOAuth(credential))
 
-      return yield* CredentialRefresh.Result.$match(result, {
-        Adopted: ({ credential: adopted }) =>
-          promote(state, credential, adopted).pipe(Effect.as(adopted)),
-        Refreshed: () => Effect.succeed(credential),
-        Transient: () => Effect.succeed(credential),
-        Unchanged: () => Effect.succeed(credential),
-      })
-    }),
+    return yield* CredentialRefresh.Result.$match(result, {
+      Adopted: ({ credential: adopted }) =>
+        promote(state, credential, adopted).pipe(Effect.as(adopted)),
+      Refreshed: () => Effect.succeed(credential),
+      Transient: () => Effect.succeed(credential),
+      Unchanged: () => Effect.succeed(credential),
+    })
+  }),
   /* Record the re-check at `now` and start it beside the request. */
   startRecheck = (
     state: State,

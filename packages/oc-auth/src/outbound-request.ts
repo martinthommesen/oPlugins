@@ -34,10 +34,10 @@ interface TransformedRequest {
 const NO_ALIASES: OriginalByAlias = Object.freeze({}),
   /*
    * `body` with its tool names aliased. A body that is not the expected JSON
-   * is sent un-aliased, which the billing validator may reject over tool
-   * names.
+   * is sent without aliases, and the billing validator may reject it over
+   * its tool names.
    */
-  aliasBody = Effect.fn("RequestTransforms.aliasBody")(function* aliasBody(
+  aliasBody = Effect.fn("OutboundRequest.aliasBody")(function* aliasBody(
     body: Uint8Array<ArrayBuffer>,
   ) {
     return yield* Option.match(requestBodyAliases.alias(body), {
@@ -75,7 +75,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
         ),
     }),
   /* A request from `snapshot`, sent with `credential` as Claude Code sends it. */
-  replayRequest = Effect.fn("RequestTransforms.replay")(function* replay(
+  replayRequest = Effect.fn("OutboundRequest.replay")(function* replay(
     snapshot: RequestSnapshot,
     credential: AccessCredential,
     sessionID: string,
@@ -105,7 +105,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
    * headers and URL, and the body's tool names aliased. The snapshot keeps
    * the rewritten body for replays.
    */
-  transformRequest = Effect.fn("RequestTransforms.request")(function* request(
+  transformRequest = Effect.fn("OutboundRequest.transform")(function* transform(
     event: SessionHttpRequest,
     credential: AccessCredential,
     sessionID: string,

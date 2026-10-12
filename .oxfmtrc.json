@@ -11,6 +11,13 @@
   "arrowParens": "always",
   "bracketSameLine": false,
   "bracketSpacing": true,
+  "overrides": [
+    {
+      "files": ["**/*.md"],
+      "excludeFiles": [".github/**", "**/GLOSSARY.md"],
+      "options": { "proseWrap": "always" }
+    }
+  ],
   "ignorePatterns": [
     "pnpm-lock.yaml",
     "**/CHANGELOG.md",

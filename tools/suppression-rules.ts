@@ -68,7 +68,7 @@ const CODE = /\.[cm]?[jt]sx?$/u,
         layoutFiles.atLine(
           file,
           suppression.line,
-          `"${bareLine(text, suppression.line)}" suppresses a check. Change the code so the check passes, and remove the comment; AGENTS.md lists the only suppressions allowed.`,
+          `"${bareLine(text, suppression.line)}" suppresses a check. Change the code so the check passes, and remove the comment. AGENTS.md lists the only suppressions allowed.`,
         ),
       ]
     })

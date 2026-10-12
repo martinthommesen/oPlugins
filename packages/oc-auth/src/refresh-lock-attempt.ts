@@ -5,8 +5,11 @@ import type { Effect } from "effect"
 interface HeldLock {
   /** True when the lock serializes nothing because coordination is unavailable. */
   readonly degraded: boolean
+  /** Lease the lock for `ms` from now as a cooldown claim, which outlives `release`. */
   readonly defer: (ms: number) => Effect.Effect<void>
+  /** Lease the lock for `ms` from now; false when it no longer belongs to this process. */
   readonly extend: (ms: number) => Effect.Effect<boolean>
+  /** Close the ticket, ending its lease unless `defer` made it a cooldown claim. */
   readonly release: Effect.Effect<void>
 }
 
@@ -16,20 +19,9 @@ type Attempt = Data.TaggedEnum<{
   Held: { readonly lock: HeldLock }
 }>
 
-const LockAttempt = Data.taggedEnum<Attempt>()
-
 /**
- * The outcome of asking for the lock. `Busy` means another process is
- * refreshing this source right now; `Cooldown` means one is waiting out a
- * failed refresh until `until`, so no new credential is on its way.
- *
- * The constructors are the tagged enum's, under lowercase names: `new-cap`
- * exempts only Effect's own namespaces from calling a capitalized function.
+ * The outcome of asking for the refresh lock. `Busy` means another process
+ * is refreshing the store's credential right now; `Cooldown` means one is
+ * waiting out a failed refresh until `until`, so no new credential is coming.
  */
-export default Object.freeze({
-  $is: LockAttempt.$is,
-  $match: LockAttempt.$match,
-  busy: LockAttempt.Busy,
-  cooldown: LockAttempt.Cooldown,
-  held: LockAttempt.Held,
-})
+export default Data.taggedEnum<Attempt>()

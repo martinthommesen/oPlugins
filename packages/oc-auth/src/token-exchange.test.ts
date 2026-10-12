@@ -129,7 +129,7 @@ const AT = 1_767_225_600_000,
 test.layer(exchangeLayer(successfulResponse))(
   "token exchange request",
   (it: ExchangeTests) => {
-    it.effect("uses the platform JSON contract exactly once", () =>
+    it.effect("posts the refresh token once, as JSON", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 

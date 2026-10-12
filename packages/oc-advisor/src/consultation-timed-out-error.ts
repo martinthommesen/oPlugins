@@ -5,7 +5,9 @@ import { Schema } from "effect"
 class ConsultationTimedOut extends Schema.TaggedError<ConsultationTimedOut>()(
   "ConsultationTimedOut",
   {
+    /** The advisor model that did not answer in time. */
     model: Schema.String,
+    /** The deadline, in seconds. */
     seconds: Schema.Finite,
   },
 ) {}

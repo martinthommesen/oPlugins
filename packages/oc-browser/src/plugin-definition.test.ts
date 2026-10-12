@@ -30,7 +30,7 @@ describe("the plugin definition", () => {
   })
 })
 
-describe("the plugin set-up", () => {
+describe("the plugin setup", () => {
   test.layer(CapturedLogs.layer)((it: Tests) => {
     it.effect("records the host's project in the host's log", () =>
       Effect.gen(function* run() {
@@ -54,7 +54,7 @@ describe("the plugin set-up", () => {
 
 describe("the plugin options", () => {
   test.layer(CapturedLogs.layer)((it: Tests) => {
-    it.effect("fails set-up on an unknown option, naming it", () =>
+    it.effect("fails setup on an unknown option, naming it", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
 

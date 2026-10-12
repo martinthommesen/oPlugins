@@ -144,7 +144,7 @@ const AFTER_LONGEST_COOLDOWN_MS = 61_000,
 
 describe("refresh during its own cooldown", () => {
   test.layer(limitedWithoutHint)((it: Tests) => {
-    it.effect("adopts a rotated source even during its own cooldown", () =>
+    it.effect("adopts a rotated credential even during its own cooldown", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
@@ -261,7 +261,7 @@ test.layer(unreliableEndpoint)(
 describe("refresh while the store cannot be read", () => {
   test.layer(lockedKeychain)((it: Tests) => {
     it.effect(
-      "does not spend the refresh token while the source cannot be read",
+      "does not spend the refresh token while the store cannot be read",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()
@@ -280,7 +280,7 @@ describe("refresh while the store cannot be read", () => {
   })
 
   test.layer(lockedKeychain)((it: Tests) => {
-    it.effect("names the unreadable source once retries run out", () =>
+    it.effect("names the unreadable store once retries run out", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin

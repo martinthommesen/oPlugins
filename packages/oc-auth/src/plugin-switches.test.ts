@@ -36,15 +36,14 @@ const FIRST = 0,
     .send(scenario.messages())
     .pipe(Effect.map((request) => request.headers.get("authorization"))),
   /* Switch the host's Anthropic connection to `active`, and let it settle. */
-  changeTo = (
+  changeTo = Effect.fn("test.changeTo")(function* changeTo(
     active: Active,
     credentialID: string,
-  ): Effect.Effect<void, never, FakeConnection | FakeEvents> =>
-    Effect.gen(function* switchConnection() {
-      yield* (yield* FakeConnection).setActive(active)
-      yield* (yield* FakeEvents).switchTo(credentialID)
-      yield* allSettled
-    }),
+  ) {
+    yield* (yield* FakeConnection).setActive(active)
+    yield* (yield* FakeEvents).switchTo(credentialID)
+    yield* allSettled
+  }),
   /* Drop the host's event stream, and wait out the re-subscribe delay. */
   dropAndResubscribe = Effect.gen(function* dropStream() {
     yield* (yield* FakeEvents).drop

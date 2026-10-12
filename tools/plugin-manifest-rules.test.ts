@@ -35,14 +35,14 @@ describe("a plugin's identity", () => {
     )
   })
 
-  it("names the npm name it expects", { timeout: 5000 }, () => {
+  it("has the npm name the plugin name gives", { timeout: 5000 }, () => {
     expect.hasAssertions()
     expect(problemsWith({ name: "oc-demo" })).toStrictEqual([
       `${FILE}: "name" is "oc-demo". Set it to "@martinthommesen/oc-demo".`,
     ])
   })
 
-  it("wants a semver version and the MIT license", { timeout: 5000 }, () => {
+  it("has a semver version and the MIT license", { timeout: 5000 }, () => {
     expect.hasAssertions()
     expect(problemsWith({ license: "ISC", version: "1.0" })).toStrictEqual([
       `${FILE}: "version" is "1.0", which isn't a semver version. Set it to one, such as "0.1.0".`,
@@ -50,7 +50,7 @@ describe("a plugin's identity", () => {
     ])
   })
 
-  it("wants an author", { timeout: 5000 }, () => {
+  it("has an author", { timeout: 5000 }, () => {
     expect.hasAssertions()
     expect(problemsWithout(["author"])).toStrictEqual([
       `${FILE}: "author" is missing. Set it to the maintainer.`,
@@ -114,6 +114,6 @@ describe("an unreadable plugin manifest", () => {
         layout.withoutFile(layout.MANIFEST_FILE),
         "oc-demo",
       ),
-    ).toStrictEqual([`${FILE}: The file is missing. Add the package.json.`])
+    ).toStrictEqual([`${FILE}: The file is missing. Add it.`])
   })
 })

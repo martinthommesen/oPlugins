@@ -1,13 +1,18 @@
-import { Effect, Encoding, Option, Result, Schema } from "effect"
+import { Effect, Option, Result, Schema } from "effect"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import type { Duration } from "effect"
+import { Hex } from "effect/encoding"
 import keychainSecurity from "./keychain-security.ts"
 import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
   ACCOUNT_QUOTED = /"acct"<blob>="(?<name>.*)"[ \t]*$/mu,
-  /** Every Claude Code item in a `dump-keychain` listing. */
+  /**
+   * Every Claude Code item in a `dump-keychain` listing. A hex suffix of any
+   * length matches, so legacy items stay discoverable; only the 8-character
+   * suffixes Claude Code generates map to a config directory.
+   */
   CLAUDE_SERVICE = /"(?<service>Claude Code-credentials(?:-[0-9a-f]+)?)"/gu,
   /** A regular expression match with one capture group. */
   Captured = Schema.Tuple([Schema.String, Schema.String]),
@@ -21,15 +26,15 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
   READ_ERRORS: ReadonlyMap<string, string> = new Map([
     [
       "timeout",
-      "Keychain read timed out. This can happen on macOS Tahoe. Try restarting Keychain Access.",
+      "Reading the macOS Keychain timed out, which can happen on macOS Tahoe. Restart Keychain Access, then try again.",
     ],
     [
       "locked",
-      "macOS Keychain is locked. Please unlock it or run: security unlock-keychain ~/Library/Keychains/login.keychain-db",
+      "The macOS Keychain is locked. Unlock it, or run `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then try again.",
     ],
     [
       "denied",
-      "Keychain access was denied. Please grant access when prompted by macOS.",
+      "macOS Keychain access was denied. Allow access when macOS asks, then try again.",
     ],
   ]),
   READ_TIMEOUT = "2 seconds",
@@ -43,7 +48,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
    * Every call on the write path, including the account lookup that
    * precedes the write, gets a far larger budget than a standalone read. A
    * read that times out costs a retry; a write that times out after the
-   * token exchange already consumed the source's refresh token leaves the
+   * token exchange already consumed the store's refresh token leaves the
    * store holding a dead credential.
    */
   WRITE_PATH_TIMEOUT = "15 seconds",
@@ -60,7 +65,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
       return output
     }
 
-    return Result.getOrElse(Encoding.decodeHexString(output), () => output)
+    return Result.getOrElse(Hex.decodeString(output), () => output)
   },
   /* Quote an argument for `security -i`, which honors quotes and backslashes. */
   interactiveArg = (value: string): string =>
@@ -90,9 +95,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
    */
   parseKeychainAccount = (output: string): Option.Option<string> =>
     decodeCaptured(ACCOUNT_HEX.exec(output)).pipe(
-      Option.flatMap(([, hex]) =>
-        Result.getSuccess(Encoding.decodeHexString(hex)),
-      ),
+      Option.flatMap(([, hex]) => Result.getSuccess(Hex.decodeString(hex))),
       Option.orElse(() =>
         decodeCaptured(ACCOUNT_QUOTED.exec(output)).pipe(
           Option.map(([, name]) => name),
@@ -153,7 +156,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
    * The Claude Code items in the Keychain, the primary one first. When they
    * cannot be listed, only the primary item is offered: nearly everyone has
    * it, so it is still worth trying. That is logged as a warning, because
-   * accounts missing from /connect look like a bug.
+   * accounts missing from `/connect` look like a bug.
    */
   visibleServices = keychainSecurity
     .security({
@@ -162,9 +165,6 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
       timeout: DISCOVERY_TIMEOUT,
     })
     .pipe(
-      // Any-length hex suffix so legacy entries stay discoverable. The
-      // Suffix-to-config-dir mapping still only applies to the 8-char
-      // Hashes the Claude CLI generates.
       Effect.map((dump) => orderedServices(dump)),
       Effect.tap((services) =>
         pluginLog.debug("keychain_list", { servicesFound: services }),
@@ -239,7 +239,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
    */
   writePassword = Effect.fn("KeychainItems.addGenericPassword")(
     function* writePassword(service: string, account: string, blob: string) {
-      const hex = Encoding.encodeHex(blob),
+      const hex = Hex.encode(blob),
         line = `add-generic-password -s ${interactiveArg(service)} -a ${interactiveArg(account)} -U -X ${hex}\n`,
         size = codec.encode(line).length
 
@@ -275,6 +275,7 @@ const ACCOUNT_HEX = /"acct"<blob>=0x(?<hex>[0-9A-Fa-f]+)/u,
   )
 
 /** The Claude Code items in the macOS Keychain, through `security`. */
+/** @internal */
 export default Object.freeze({
   READ_TIMEOUT,
   WRITE_PATH_TIMEOUT,

@@ -16,7 +16,7 @@ type Services = Layer.Success<ReturnType<typeof services.layer>>
 type Entries = readonly (readonly [string, Schema.Json])[]
 
 const FIRST = 0,
-  /** A host call failing because the OpenCode server cannot be reached. */
+  /** A failed parent lookup, as when the host can't be reached. */
   SERVER_UNAVAILABLE = HostError.make({
     cause: "server unavailable",
     operation: "session.get",

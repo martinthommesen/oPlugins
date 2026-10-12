@@ -33,19 +33,21 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
     "  /advisor on | off            turn the advisor on or off",
     "  /advisor subagents on | off  let subagents consult the advisor, or not",
   ].join("\n"),
-  allowSubagents = Effect.fn("setSubagents")(function* setSubagents(
-    allowed: boolean,
+  allowSubagents = Effect.fn("AdvisorCommand.setSubagents")(
+    function* setSubagents(allowed: boolean) {
+      const preferences = yield* PreferenceStore
+
+      yield* preferences.update({ subagents: allowed })
+
+      return Bool.match(allowed, {
+        onFalse: () => "Subagents can no longer consult the advisor.",
+        onTrue: () => "Subagents can now consult the advisor.",
+      })
+    },
+  ),
+  chooseModel = Effect.fn("AdvisorCommand.setModel")(function* setModel(
+    model: string,
   ) {
-    const preferences = yield* PreferenceStore
-
-    yield* preferences.update({ subagents: allowed })
-
-    return Bool.match(allowed, {
-      onFalse: () => "Subagents can no longer consult the advisor.",
-      onTrue: () => "Subagents can now consult the advisor.",
-    })
-  }),
-  chooseModel = Effect.fn("setModel")(function* setModel(model: string) {
     const host = yield* Host,
       preferences = yield* PreferenceStore,
       ref = yield* modelRef.parseModelRef(model)
@@ -56,7 +58,10 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
 
     return `Advisor set to ${model}.`
   }),
-  /* Describes the advisor configuration for the user in a short status report. */
+  /*
+   * The report `/advisor` shows: the model, whether it is on, whether
+   * subagents may consult it, and the usage.
+   */
   describeStatus = (preferences: Preferences): string => {
     const mode = Bool.match(preferences.enabled, {
         onFalse: () => "off",
@@ -75,14 +80,14 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
       "\n",
     )
   },
-  disable = Effect.fn("disable")(function* disable() {
+  disable = Effect.fn("AdvisorCommand.disable")(function* disable() {
     const preferences = yield* PreferenceStore
 
     yield* preferences.update({ enabled: false })
 
     return "Advisor turned off."
   }),
-  enable = Effect.fn("enable")(function* enable() {
+  enable = Effect.fn("AdvisorCommand.enable")(function* enable() {
     const preferences = yield* PreferenceStore,
       { model } = yield* preferences.current
 
@@ -95,8 +100,8 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
     return `Advisor turned on (${model.value}).`
   }),
   /*
-   * Reads arguments that are not a keyword as a model reference, which must be
-   * a single word.
+   * Reads arguments that are not a keyword: no word asks for the status, and
+   * a single word is a model reference.
    */
   modelCommand = (words: readonly string[], input: string): Action =>
     Arr.match(words, {
@@ -116,7 +121,6 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
       normalized = Str.toLowerCase(pipe(args, Arr.join(" ")))
 
     return Match.value(normalized).pipe(
-      Match.when("", () => AdvisorCommand.Status()),
       Match.when("status", () => AdvisorCommand.Status()),
       Match.when("on", () => AdvisorCommand.SetEnabled({ enabled: true })),
       Match.when("off", () => AdvisorCommand.SetEnabled({ enabled: false })),
@@ -129,7 +133,7 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
       Match.orElse(() => modelCommand(args, input)),
     )
   },
-  report = Effect.fn("status")(function* status() {
+  report = Effect.fn("AdvisorCommand.status")(function* status() {
     const preferences = yield* PreferenceStore
 
     return describeStatus(yield* preferences.current)
@@ -140,7 +144,9 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
   ): Effect.Effect<string, never, Host | PreferenceStore> =>
     AdvisorCommand.$match(command, {
       Invalid: ({ input }) =>
-        Effect.succeed(`Unrecognized arguments: ${input}\n\n${USAGE}`),
+        Effect.succeed(
+          `The /advisor command doesn't accept "${input}". Use one of the forms below.\n\n${USAGE}`,
+        ),
       SetEnabled: ({ enabled }) =>
         Bool.match(enabled, { onFalse: disable, onTrue: enable }),
       SetModel: ({ model }) =>
@@ -148,14 +154,14 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
           Effect.catchTags({
             HostError: (failure: { readonly operation: string }) =>
               Effect.succeed(
-                `Could not list the available models (${failure.operation} failed).`,
+                `Couldn't list the available models because ${failure.operation} failed. Run the command again.`,
               ),
             InvalidModel: (failure: {
               readonly model: string
               readonly reason: string
             }) =>
               Effect.succeed(
-                `Cannot use ${failure.model} as the advisor: ${failure.reason}. Use the provider/model form shown by /models.`,
+                `Can't use ${failure.model} as the advisor: ${failure.reason}. Use the provider/model form that /models shows.`,
               ),
           }),
         ),

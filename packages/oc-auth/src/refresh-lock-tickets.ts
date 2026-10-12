@@ -2,7 +2,7 @@ import { Array as Arr, BigInt as Big, Option } from "effect"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import type RefreshLockClaim from "./refresh-lock-claim.ts"
 
-type Attempt = ReturnType<(typeof LockAttempt)["busy" | "cooldown" | "held"]>
+type Attempt = ReturnType<(typeof LockAttempt)["Busy" | "Cooldown" | "Held"]>
 
 type Claim = typeof RefreshLockClaim.Type
 
@@ -22,10 +22,10 @@ const DIGITS = /^\d+$/u,
     }
 
     if (!live.every((claim) => claim.cooldown)) {
-      return Option.some(LockAttempt.busy())
+      return Option.some(LockAttempt.Busy())
     }
 
-    return Option.some(LockAttempt.cooldown({ until }))
+    return Option.some(LockAttempt.Cooldown({ until }))
   },
   /* The highest ticket among `claims`, or `floor` when that is higher. */
   highestTicket = (claims: readonly Claim[], floor: bigint): bigint =>

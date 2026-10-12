@@ -4,7 +4,7 @@ import AutoReview from "./auto-review.ts"
 import DenialBreaker from "./denial-breaker.ts"
 import HangingHost from "./hanging-host.test-support.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
-import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
+import PluginOptions from "./plugin-options.ts"
 import Reviewer from "./reviewer.ts"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
@@ -19,18 +19,14 @@ interface Tests {
 /* A one-second deadline over a host that never answers and records being interrupted. */
 const deadlineServices = (): Layer.Layer<
   AutoReview | HangingHost,
-  PluginOptionsError
+  Layer.Error<ReturnType<typeof PluginOptions.fromOptions>>
 > => {
-  const settings = support.settingsFrom({ timeout: "1 second" }),
+  const options = PluginOptions.fromOptions({ timeout: "1 second" }),
     stalledReviewer = Reviewer.of({ review: () => Effect.never }),
-    strikes = DenialBreaker.layer.pipe(Layer.provide(settings))
+    strikes = DenialBreaker.layer.pipe(Layer.provide(options))
 
   return AutoReview.layer.pipe(
-    Layer.provide([
-      Layer.succeed(Reviewer, stalledReviewer),
-      strikes,
-      settings,
-    ]),
+    Layer.provide([Layer.succeed(Reviewer, stalledReviewer), strikes, options]),
     Layer.provideMerge(HangingHost.layer),
   )
 }

@@ -1,8 +1,9 @@
-import { Effect, Encoding, Option, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import type ClaudeCodeStores from "./claude-code-stores.ts"
 import FakeKeychain from "./fake-keychain.test-support.ts"
+import { Hex } from "effect/encoding"
 import type { Vitest } from "@effect/vitest"
 import sources from "./claude-code-sources.ts"
 import support from "./claude-code-stores.test-support.ts"
@@ -17,7 +18,7 @@ interface Tests {
 type Stores = ClaudeCodeStores["Service"]
 
 const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
-  /** Account names that print as hex, or that the shell would split. */
+  /** Account names `security` prints as hex, or `security -i` would split. */
   AWKWARD_ACCOUNTS = ['has"quote', String.raw`back\slash`, "ünïcode", "sp ace"],
   /** The argv of every `security` invocation, as JSON. */
   ArgvLog = Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
@@ -86,14 +87,8 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
    * Each write seeds the item and its account afresh, so earlier writes to
    * the same Keychain leave nothing it reads.
    */
-  writtenUnder = (
-    account: string,
-  ): Effect.Effect<
-    readonly [string, Option.Option<string>],
-    never,
-    Layer.Success<typeof support.layer>
-  > =>
-    Effect.gen(function* run() {
+  writtenUnder = Effect.fn("test.writtenUnder")(
+    function* writtenUnder(account: string) {
       const keychain = yield* FakeKeychain,
         result = yield* support.onMac(
           [
@@ -104,7 +99,10 @@ const ACCOUNT = `${sources.PRIMARY_SERVICE}.account`,
         )
 
       return [result, yield* keychain.read(WRITTEN_AS)] as const
-    }).pipe(Effect.scoped, Effect.orDie)
+    },
+    Effect.scoped,
+    Effect.orDie,
+  )
 
 test.layer(support.layer)("keychain write-back", (it: Tests) => {
   it.effect("writes refreshed tokens back to the item's existing account", () =>
@@ -162,10 +160,9 @@ test.layer(support.layer)(
 
         expect(result).toBe("written")
         expect(
-          SECRETS.flatMap((secret) => [
-            secret,
-            Encoding.encodeHex(secret),
-          ]).filter((needle) => visible.includes(needle)),
+          SECRETS.flatMap((secret) => [secret, Hex.encode(secret)]).filter(
+            (needle) => visible.includes(needle),
+          ),
         ).toStrictEqual([])
       }),
     )
@@ -255,8 +252,10 @@ describe("keychain write-back under the item's account", () => {
             refreshPrimary,
           )
 
-        // An item without an account cannot be updated in place, and asking
-        // Again will not give it one.
+        /*
+         * An item without an account cannot be updated in place, and asking
+         * again will not give it one.
+         */
         expect(result).toBe("failed")
         expect(
           support.accessTokenIn(yield* keychain.read(PRIMARY)),

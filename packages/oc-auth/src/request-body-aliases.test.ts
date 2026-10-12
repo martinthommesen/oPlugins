@@ -127,7 +127,7 @@ const FIVE_ASSERTIONS = 5,
 
 test.layer(Layer.empty)("request body tool references", (it: PureTests) => {
   it.effect(
-    "aliases deferred tool references while preserving modern model settings",
+    "aliases deferred tool references and keeps the body's other fields",
     () =>
       Effect.gen(function* run() {
         expect.assertions(THREE_ASSERTIONS)

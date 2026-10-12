@@ -182,9 +182,9 @@ test.layer(Layer.empty)("account labels", (it: PureTests) => {
   )
 })
 
-test.layer(layer)("source fingerprints and keys", (it: Tests) => {
+test.layer(layer)("store fingerprints and keys", (it: Tests) => {
   it.effect(
-    "creates stable non-secret source fingerprints and config suffixes",
+    "creates non-secret token fingerprints, config suffixes, and store keys",
     () =>
       Effect.gen(function* run() {
         expect.assertions(THREE_ASSERTIONS)

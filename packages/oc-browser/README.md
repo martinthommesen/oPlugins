@@ -1,66 +1,84 @@
 # oc-browser
 
-oc-browser is an OpenCode v2 plugin and Chrome extension that will let
-OpenCode drive your browser.
+oc-browser is an OpenCode v2 plugin and Chrome extension that will let OpenCode
+drive your browser.
 
-This is a scaffold. The plugin starts and logs that it started, the TUI
-plugin adds one palette command, and the extension's service worker only
-logs that it started. No browser control exists yet. The agreed design is
-in [`docs/design.md`](docs/design.md).
-
-## Requirements
-
-- OpenCode 2.0.26
-- Node 26 and pnpm 12, to lint, build, and test from a checkout
-- Google Chrome 120 or newer, or another Chromium-based browser
+This is a scaffold, and no browser control exists yet. The agreed design is in
+[`docs/design.md`](docs/design.md).
 
 ## Install
 
-oc-browser is not published to npm. Build it from an oc-plugins checkout:
+You need:
 
-```sh
-pnpm install
-pnpm --filter @martinthommesen/oc-browser run build
-```
+- OpenCode 2.0.27 or newer
+- Node 26 and pnpm 12, to build oc-browser from a checkout
+- Google Chrome 120 or newer
 
-Then add the built plugin to the plural `plugins` field in
-`opencode.jsonc`, and restart OpenCode:
+oc-browser isn't published to npm. Install it from an oc-plugins checkout:
 
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/path/to/oc-plugins/packages/oc-browser/dist"],
-}
-```
+1. Build it:
 
-To load the extension, open `chrome://extensions`, turn on Developer mode,
-choose **Load unpacked**, and select `packages/oc-browser/dist/extension`.
+   ```sh
+   pnpm install
+   pnpm --filter @martinthommesen/oc-browser run build
+   ```
 
-After pulling changes, run the build again. OpenCode picks the new
-build up on its next start. For the extension, click the reload button on
-its card in `chrome://extensions`.
+2. Add the built plugin to the plural `plugins` field in `opencode.jsonc`, and
+   restart OpenCode:
 
-## Options
+   ```jsonc
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "plugins": ["/path/to/oc-plugins/packages/oc-browser/dist"],
+   }
+   ```
+
+3. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
+   and select `packages/oc-browser/dist/extension`.
+
+After you pull changes, build again. OpenCode loads the new build on its next
+start. To reload the extension, click the reload button on its card in
+`chrome://extensions`.
+
+## Configure
 
 oc-browser has no options yet. Any option set in the object form of its
-`plugins` entry is unknown, and an unknown option stops the plugin from
-loading: OpenCode's log then shows an error that names the option and says
-that oc-browser has no options.
+`plugins` entry is unknown, and an unknown option stops the plugin from loading.
 
 ## Environment variables
 
-oc-browser reads no environment variables.
+oc-browser reads no environment variables. The host test reads two, as
+[Verify host compatibility](#verify-host-compatibility) describes.
 
-## Logs
+## How it works
 
-oc-browser writes its log records to OpenCode's log, not to a file of its
-own. Records at info level and above carry only metadata, such as event
-names and the project directory.
+- The server plugin checks its options and logs `plugin_started`.
+- The CLI plugin adds a palette command, **Show oc-browser status**, which shows
+  the toast "oc-browser is loaded".
+- The extension's service worker logs `service_worker_started` to its own
+  console.
+
+The server plugin's log records go to OpenCode's log, not to a file of their
+own. Records at info level and above carry only metadata, such as event names
+and the project ID.
+
+## Limitations
+
+oc-browser can't control the browser yet. [`docs/design.md`](docs/design.md)
+describes what v1 will do.
+
+## Troubleshooting
+
+- If OpenCode doesn't load oc-browser, look in OpenCode's log for an error that
+  names an option and says that oc-browser has no options. Remove the option
+  from oc-browser's `plugins` entry, and restart OpenCode.
+- If Chrome can't load the extension, check that you selected the built folder,
+  `dist/extension`, not `extension`.
 
 ## Development
 
-From the repository root, `pnpm run check` lints, type-checks, and tests
-every package, oc-browser included. In `packages/oc-browser`:
+From the repository root, `pnpm run check` runs every check on every package,
+oc-browser included. In `packages/oc-browser`:
 
 ```sh
 pnpm run typecheck   # the plugin project, then the extension project
@@ -69,22 +87,22 @@ pnpm test
 pnpm run build       # dist/ for the plugin, dist/extension/ for Chrome
 ```
 
-Read the root `AGENTS.md` and `LINTING.md`, then this package's
-`AGENTS.md`, before writing code: the lint policy forces an unusual but
-uniform module shape.
+Read the root `AGENTS.md` and `LINTING.md`, then this package's `AGENTS.md`,
+before you write code. The lint policy forces an unusual but uniform module
+shape.
 
-## Verify host compatibility
+### Verify host compatibility
 
-Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.26.
-The test installs the pinned CLI and the packed plugin in a temporary
-directory, with their own config, data, cache, and state directories, and
-checks that the host starts the plugin. Package installation may require
-network access. CI runs this test on Linux and macOS.
+Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.27. The
+test installs the pinned CLI and the packed plugin in a temporary directory,
+with their own config, data, cache, and state directories, and checks that the
+host starts the plugin. It downloads OpenCode, so it needs network access. CI
+runs it on Linux and macOS.
 
-To check another V2 host version:
+To check another v2 host version:
 
 ```sh
-OC_BROWSER_HEADLESS_HOST_VERSION=2.0.25 pnpm run test:host
+OC_BROWSER_HEADLESS_HOST_VERSION=2.0.27 pnpm run test:host
 ```
 
 Set it to `oldest` to check the oldest version oc-browser supports, which its

@@ -19,7 +19,6 @@ const ALIASED_SSE =
     'event: content_block_start\ndata: {"type":"tool_use","name":"mcp_Shell"}\n\n',
   OK = 200,
   SHELL_BODY = JSON.stringify({ tools: [{ name: "shell" }] }),
-  UNAUTHORIZED = 401,
   /* A response streaming a tool call under its wire alias. */
   aliased = (): Response => new Response(ALIASED_SSE),
   /* A response's body, as text. */
@@ -29,9 +28,7 @@ const ALIASED_SSE =
   /* A rig that refreshes to `second` and replays to an aliased stream. */
   replaying = scenario.onHost(
     scenario.ours("first"),
-    Object.freeze({
-      accounts: PluginRig.quiet.accounts,
-      adopt: PluginRig.quiet.adopt,
+    Struct.assign(PluginRig.quiet, {
       fetch: () => Effect.succeed(new Response(ALIASED_SSE, { status: OK })),
       refresh: () => Effect.succeed(scenario.refreshed("second")),
     }),
@@ -98,7 +95,7 @@ test.layer(replaying)("tool names after a 401 recovery", (it: Tests) => {
 
       const answered = yield* scenario.respond(
         yield* scenario.send(scenario.messages(SHELL_BODY)),
-        new Response("unauthorized", { status: UNAUTHORIZED }),
+        scenario.unauthorized(),
       )
 
       expect(answered.status).toBe(OK)

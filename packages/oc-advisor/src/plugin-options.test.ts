@@ -1,6 +1,5 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect"
 import { assert, describe, it } from "@effect/vitest"
-import type { PluginOptions } from "@opencode/plugin/options"
 import PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import plugin from "./index.ts"
 import support from "./advisor.test-support.ts"
@@ -13,19 +12,18 @@ const FIRST = 0,
   TIMEOUT = 60,
   TOO_SHORT = 0,
   TRANSCRIPT_CHARS = 50_000,
-  /* A host call that registers something, as set-up's calls do. */
+  /* A host call that registers something, as setup's calls do. */
   acceptRegistration = (): Effect.Effect<typeof REGISTRATION> =>
     Effect.succeed(REGISTRATION),
-  /* A host call set-up must not make. */
-  dieIfCalled = (): Effect.Effect<never> =>
-    Effect.die("set-up called the host"),
-  /* The message set-up fails with when the options have `problems`. */
+  /* A host call setup must not make. */
+  dieIfCalled = (): Effect.Effect<never> => Effect.die("setup called the host"),
+  /* The message setup fails with when the options have `problems`. */
   failureNaming = (problems: string): Option.Option<string> =>
     Option.some(
       `oc-advisor did not start because its options in opencode.jsonc are invalid. ${problems} Correct the options, then restart OpenCode.`,
     ),
   /* A host with `options` that accepts registrations and fails any other call. */
-  hostWith = (options: PluginOptions): PluginHost => ({
+  hostWith = (options: PluginHost["options"]): PluginHost => ({
     command: { transform: acceptRegistration },
     model: { list: dieIfCalled },
     options,
@@ -41,9 +39,9 @@ const FIRST = 0,
     storage: support.memoryStorage(),
     tool: { transform: acceptRegistration },
   }),
-  /* The message of the `PluginOptionsError` set-up dies with on `options`, if it does. */
+  /* The message of the `PluginOptionsError` setup dies with on `options`, if it does. */
   invalidOptionsMessage = (
-    options: PluginOptions,
+    options: PluginHost["options"],
   ): Effect.Effect<Option.Option<string>> =>
     plugin.effect(hostWith(options)).pipe(
       Effect.scoped,
@@ -115,14 +113,11 @@ describe("plugin options", () => {
     "start the plugin when they are valid",
     () => startsWithValidOptions,
   )
+  it.effect("fail setup on an option of the wrong type", () => rejectsWrongType)
+  it.effect("fail setup on an out-of-range value", () => rejectsOutOfRange)
+  it.effect("fail setup on an unknown option name", () => rejectsUnknownOption)
   it.effect(
-    "fail set-up on an option of the wrong type",
-    () => rejectsWrongType,
-  )
-  it.effect("fail set-up on an out-of-range value", () => rejectsOutOfRange)
-  it.effect("fail set-up on an unknown option name", () => rejectsUnknownOption)
-  it.effect(
-    "fail set-up on a malformed model reference",
+    "fail setup on a malformed model reference",
     () => rejectsMalformedModel,
   )
   it.effect("name every problem at once", () => namesEveryProblem)

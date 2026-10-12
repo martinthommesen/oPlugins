@@ -38,13 +38,13 @@ describe("billing version suffix test vectors", () => {
 
 describe("billing version suffix sampling", () => {
   test.layer(NodeCrypto.layer)((it: Tests) => {
-    it.effect("pads short messages with '0' for OOB indices", () =>
+    it.effect("pads indices past the end of a short message with '0'", () =>
       Effect.gen(function* run() {
         expect.assertions(TWO_ASSERTIONS)
 
         /*
-         * "hey" is length 3, so indices 4, 7 and 20 all pad to "0", the same
-         * sample any other sub-index-4 message produces.
+         * "hey" is 3 characters long, so indices 4, 7, and 20 all pad to "0",
+         * as they do for any message shorter than 5 characters.
          */
         const hey = yield* signing.versionSuffix("hey", "2.1.37")
 
@@ -55,7 +55,7 @@ describe("billing version suffix sampling", () => {
   })
 
   test.layer(NodeCrypto.layer)((it: Tests) => {
-    it.effect("samples correct character indices from long message", () =>
+    it.effect("samples indices 4, 7, and 20 of a long message", () =>
       Effect.gen(function* run() {
         expect.assertions(ONE_ASSERTION)
         /*
@@ -75,7 +75,7 @@ describe("billing version suffix sampling", () => {
   })
 
   test.layer(NodeCrypto.layer)((it: Tests) => {
-    it.effect("handles empty string (all indices pad to '0')", () =>
+    it.effect("pads every index of an empty message with '0'", () =>
       Effect.gen(function* run() {
         expect.assertions(ONE_ASSERTION)
         expect(yield* signing.versionSuffix("", "2.1.90")).toBe("b39")
@@ -86,7 +86,7 @@ describe("billing version suffix sampling", () => {
 
 describe("billing header value", () => {
   test.layer(NodeCrypto.layer)((it: Tests) => {
-    it.effect("produces correct header for the first user text", () =>
+    it.effect("builds the header from the first user text", () =>
       Effect.gen(function* run() {
         expect.assertions(THREE_ASSERTIONS)
 
@@ -103,7 +103,7 @@ describe("billing header value", () => {
 
   test.layer(NodeCrypto.layer)((it: Tests) => {
     it.effect(
-      "handles missing user message with the CLI's fixed cch placeholder",
+      "uses the CLI's fixed cch placeholder when there is no user message",
       () =>
         Effect.gen(function* run() {
           expect.assertions(ONE_ASSERTION)
@@ -115,7 +115,7 @@ describe("billing header value", () => {
   })
 
   test.layer(NodeCrypto.layer)((it: Tests) => {
-    it.effect("uses provided entrypoint", () =>
+    it.effect("uses the given entrypoint", () =>
       Effect.gen(function* run() {
         expect.assertions(ONE_ASSERTION)
         expect(yield* signing.billingHeader("hey", "2.1.112", "cli")).toContain(

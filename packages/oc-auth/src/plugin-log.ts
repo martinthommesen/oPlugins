@@ -6,9 +6,9 @@ type Fields = typeof redact extends (fields: infer Value) => object
   : never
 
 /**
- * What a warning may carry: metadata such as event names, ids, sources,
- * counts, sizes, durations, status codes, model ids, and booleans. Never
- * content such as messages, paths, or anything a credential holds.
+ * What a warning may carry: metadata such as IDs, credential store names,
+ * counts, sizes, durations, status codes, and booleans. Never content such
+ * as messages, paths, or anything a credential holds.
  */
 type Metadata = Readonly<Record<string, boolean | number | string>>
 

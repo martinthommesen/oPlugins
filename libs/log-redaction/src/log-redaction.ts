@@ -1,4 +1,4 @@
-import { Array as Arr, Predicate } from "effect"
+import { Array as Arr, Predicate, String as Str } from "effect"
 
 /** A value a log record field may hold. */
 type LogValue =
@@ -46,9 +46,9 @@ const LEADING_JWT = /^eyJ[\w-]{10,}/u,
   ): value is readonly LogValue[] => Arr.isArray(value),
   guardNested = (value: LogValue): value is readonly LogValue[] | LogFields =>
     Predicate.isObjectOrArray(value),
-  /* A token keeps a short prefix, enough to tell tokens apart, and loses the rest. */
+  /* `token` cut to a short prefix, enough to tell tokens apart. */
   hidden = (token: string): string =>
-    `${token.slice(ROOT_DEPTH, TOKEN_PREFIX_LENGTH)}...REDACTED`,
+    `${Str.takeLeft(token, TOKEN_PREFIX_LENGTH)}...REDACTED`,
   /*
    * `value` with every token in it hidden. A string that starts with a JWT
    * is hidden whole, because `TOKEN_PATTERN` stops at a standard base64
@@ -67,7 +67,7 @@ const LEADING_JWT = /^eyJ[\w-]{10,}/u,
   },
   /*
    * `value` with secrets removed. A field named like a secret is replaced
-   * outright. Past `MAX_DEPTH` a structure is dropped rather than passed
+   * whole. Past `MAX_DEPTH` a structure is dropped rather than passed
    * through, because an unvisited object could hold a key that should be
    * redacted.
    */
@@ -89,19 +89,23 @@ const LEADING_JWT = /^eyJ[\w-]{10,}/u,
     }
 
     return Object.fromEntries(
-      Object.entries(value).map((entry: readonly [string, LogValue]) => [
-        entry[ROOT_DEPTH],
-        hideValue(entry[ROOT_DEPTH], entry[NEXT_LEVEL], depth + NEXT_LEVEL),
-      ]),
+      Object.entries(value).map(
+        ([name, field]: readonly [string, LogValue]) => [
+          name,
+          hideValue(name, field, depth + NEXT_LEVEL),
+        ],
+      ),
     )
   },
   /* `fields` with every secret removed, at any depth up to the limit. */
   redact = (fields: LogFields): LogFields =>
     Object.fromEntries(
-      Object.entries(fields).map((entry: readonly [string, LogValue]) => [
-        entry[ROOT_DEPTH],
-        hideValue(entry[ROOT_DEPTH], entry[NEXT_LEVEL], ROOT_DEPTH),
-      ]),
+      Object.entries(fields).map(
+        ([name, field]: readonly [string, LogValue]) => [
+          name,
+          hideValue(name, field, ROOT_DEPTH),
+        ],
+      ),
     )
 
 /** A log record's fields with every secret removed. */

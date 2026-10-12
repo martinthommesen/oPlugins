@@ -1,6 +1,6 @@
 import { Effect, Fiber, Match, Option, Ref } from "effect"
 import type { Layer, Scope } from "effect"
-import { expect, it as test } from "@effect/vitest"
+import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeAuthTerminalError from "./claude-auth-terminal-error.ts"
 import type { Vitest } from "@effect/vitest"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
@@ -15,22 +15,35 @@ interface Tests {
 
 type Asked = Readonly<Parameters<typeof support.refresh>[typeof FIRST]>
 
+type Refresh = Effect.Success<ReturnType<typeof support.refresh>>
+
 const FIRST = 0,
   IN_PROGRESS_RETRY_MS = 5000,
   NO_EXCHANGES = 0,
   ONE_EXCHANGE = 1,
   TWO_EXCHANGES = 2,
+  /* Each refresh's access token, for comparing outcomes. */
+  accessOf = (results: readonly Refresh[]): Option.Option<string>[] =>
+    results.map((result) => support.summary(result).access),
+  /* A newer credential generation of the same store. */
+  currentGeneration = support.imported(
+    support.account(support.PRIMARY, "current-access"),
+  ),
   /*
-   * A leader refreshing `stale`, whose token turns out dead, joined by
-   * `current`, a newer generation of the same store. The leader's failure
-   * and the joiner's result.
+   * A leader refreshing `stale`, whose token turns out dead, joined by each
+   * of `joiners`. The leader's failure and the joiners' results.
    */
   deadLeader = Effect.fn("test.deadLeader")(function* deadLeader(
     stale: Asked,
-    current: Asked,
+    joiners: readonly Asked[],
   ) {
     const racing = Effect.all(
-        [Effect.flip(support.refresh(stale)), support.refresh(current)],
+        [
+          Effect.flip(support.refresh(stale)),
+          Effect.forEach(joiners, (joiner) => support.refresh(joiner), {
+            concurrency: "unbounded",
+          }),
+        ],
         { concurrency: "unbounded" },
       ),
       started = yield* Effect.forkChild(racing)
@@ -101,9 +114,8 @@ test.layer(otherBusy)(
   },
 )
 
-test.layer(leaderDies)(
-  "refresh joining a leader whose token died",
-  (it: Tests) => {
+describe("refresh joining a leader whose token died", () => {
+  test.layer(leaderDies)((it: Tests) => {
     it.effect(
       "lets a newer generation refresh itself after joining a dead leader",
       () =>
@@ -111,19 +123,39 @@ test.layer(leaderDies)(
           expect.hasAssertions()
           yield* support.begin
 
-          const [leader, joiner] = yield* deadLeader(
-            yield* original,
-            yield* support.imported(
-              support.account(support.PRIMARY, "current-access"),
-            ),
-          )
+          const [leader, joiners] = yield* deadLeader(yield* original, [
+            yield* currentGeneration,
+          ])
 
           expect(leader).toBeInstanceOf(ClaudeAuthTerminalError)
-          expect(support.summary(joiner).access).toStrictEqual(
-            Option.some("new-access"),
-          )
+          expect(accessOf(joiners)).toStrictEqual([Option.some("new-access")])
           expect(yield* exchangesSoFar).toHaveLength(TWO_EXCHANGES)
         }),
     )
-  },
-)
+  })
+
+  test.layer(leaderDies)((it: Tests) => {
+    it.effect(
+      "shares one refresh between newer generations that joined a dead leader",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const current = yield* currentGeneration,
+            [leader, joiners] = yield* deadLeader(yield* original, [
+              current,
+              current,
+            ])
+
+          expect(leader).toBeInstanceOf(ClaudeAuthTerminalError)
+          expect(accessOf(joiners)).toStrictEqual([
+            Option.some("new-access"),
+            Option.some("new-access"),
+          ])
+          // One exchange for the dead leader, and one the joiners share.
+          expect(yield* exchangesSoFar).toHaveLength(TWO_EXCHANGES)
+        }),
+    )
+  })
+})

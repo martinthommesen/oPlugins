@@ -1,5 +1,5 @@
 import { Context, Duration, Effect, Layer, Schema } from "effect"
-import type { PluginOptions } from "@opencode/plugin/options"
+import type { Plugin } from "@opencode/plugin/effect"
 import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
 import pluginOptions from "@oc-lib/plugin-options/plugin-options.ts"
 
@@ -8,7 +8,7 @@ interface Interface {
   readonly baseUrl: string
   /** Extra policy text appended to the security policy section. */
   readonly extraPolicy: string
-  /** Model used when the primary model is unavailable to the account. */
+  /** Reviewer model used once the backend rejects the primary model. */
   readonly fallbackModel: string
   /** Consecutive denials in one turn before the user is asked instead. */
   readonly maxConsecutiveDenials: number
@@ -16,8 +16,9 @@ interface Interface {
   readonly maxTotalDenials: number
   /** Reviewer model requested first. */
   readonly model: string
+  /** Reasoning effort requested from the reviewer model. */
   readonly reasoningEffort: (typeof REASONING_EFFORTS)[number]
-  /** Deadline for one review, including the fallback attempt. */
+  /** Deadline for one review, including context loading and fallback. */
   readonly timeout: Duration.Duration
 }
 
@@ -91,12 +92,12 @@ const BackendUrl = Schema.URLFromString.check(
     reasoningEffort: ReasoningEffort,
     timeout: Timeout,
   }),
-  /* The plugin options in the host's options, decoded. */
+  /* Decodes the plugin options the host hands over. */
   decodeOptions = pluginOptions.decode(ValidOptions, "oc-auto")
 
 /** The plugin's options, validated, with their defaults. */
-class Settings extends Context.Service<Settings, Interface>()(
-  "@martinthommesen/oc-auto/settings",
+class PluginOptions extends Context.Service<PluginOptions, Interface>()(
+  "@martinthommesen/oc-auto/plugin-options/PluginOptions",
 ) {
   /** The reasoning efforts the backend accepts. */
   public static readonly reasoningEfforts = REASONING_EFFORTS
@@ -106,14 +107,14 @@ class Settings extends Context.Service<Settings, Interface>()(
    * typo stops the plugin from loading instead of passing unnoticed.
    */
   public static readonly fromOptions = (
-    options: PluginOptions,
-  ): Layer.Layer<Settings, PluginOptionsError> =>
+    options: Plugin.Context["options"],
+  ): Layer.Layer<PluginOptions, PluginOptionsError> =>
     Layer.effect(
-      Settings,
-      Effect.gen(function* readSettings() {
+      PluginOptions,
+      Effect.gen(function* readOptions() {
         const decoded = yield* decodeOptions(options)
 
-        return Settings.of({
+        return PluginOptions.of({
           baseUrl: decoded.baseUrl.href,
           extraPolicy: decoded.extraPolicy,
           fallbackModel: decoded.fallbackModel,
@@ -127,4 +128,4 @@ class Settings extends Context.Service<Settings, Interface>()(
     )
 }
 
-export default Settings
+export default PluginOptions

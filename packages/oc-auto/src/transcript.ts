@@ -112,29 +112,29 @@ const CalledTool = Schema.Struct({ input: Schema.String, name: Schema.String }),
    * Trusted entries are never dropped, so when they alone exceed the budget
    * the review cannot go ahead.
    */
-  fitWithinBudget = Effect.fn("Transcript.fitBudget")(function* fitBudget(
-    entries: readonly Entry[],
-  ) {
-    const fixed = pipe(
-        entries,
-        Arr.filter((entry) => entry.trusted),
-      ),
-      fixedChars = pipe(fixed, Arr.map(entryLength), Num.sumAll),
-      spare = TRANSCRIPT_BUDGET_CHARS - SECTION_OVERHEAD_CHARS - fixedChars,
-      untrusted = pipe(
-        entries,
-        Arr.filter((entry) => !entry.trusted),
-      )
+  fitWithinBudget = Effect.fn("Transcript.fitWithinBudget")(
+    function* fitWithinBudget(entries: readonly Entry[]) {
+      const fixed = pipe(
+          entries,
+          Arr.filter((entry) => entry.trusted),
+        ),
+        fixedChars = pipe(fixed, Arr.map(entryLength), Num.sumAll),
+        spare = TRANSCRIPT_BUDGET_CHARS - SECTION_OVERHEAD_CHARS - fixedChars,
+        untrusted = pipe(
+          entries,
+          Arr.filter((entry) => !entry.trusted),
+        )
 
-    if (spare < NO_CHARS) {
-      return yield* ContextUnavailable.make({
-        reason:
-          "The user's messages exceed the reviewer context limit. They were not truncated.",
-      })
-    }
+      if (spare < NO_CHARS) {
+        return yield* ContextUnavailable.make({
+          reason:
+            "The user's messages exceed the reviewer context limit. They were not truncated.",
+        })
+      }
 
-    return new Set([...fixed, ...fitNewest(untrusted, spare)])
-  }),
+      return new Set([...fixed, ...fitNewest(untrusted, spare)])
+    },
+  ),
   /* A user message's text, cut only when an agent wrote it. */
   messageText = (speaker: Speaker, text: string): string => {
     if (speaker === "user") {
@@ -143,7 +143,7 @@ const CalledTool = Schema.Struct({ input: Schema.String, name: Schema.String }),
 
     return clip(MAX_ENTRY_CHARS, text)
   },
-  /* One conversation item as a labelled transcript entry. */
+  /* One conversation item as a labeled transcript entry. */
   quoteItem =
     (speaker: Speaker) =>
     (item: Item): Entry =>

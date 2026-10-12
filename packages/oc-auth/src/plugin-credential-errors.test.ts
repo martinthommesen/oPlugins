@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Schema, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import ClaudeAuthRefreshExhaustedError from "./claude-auth-refresh-exhausted-error.ts"
@@ -18,8 +18,12 @@ interface Tests {
 
 type Script = typeof PluginRig.quiet
 
-const EXHAUSTED_MESSAGE =
-    "Claude Code token refresh has failed 10 times in a row (network error). Check your network connection; the plugin keeps retrying.",
+const CONSECUTIVE_FAILURES = 10,
+  /** What the user is told after ten network errors in a row. */
+  EXHAUSTED_MESSAGE = ClaudeAuthRefreshExhaustedError.textFor(
+    CONSECUTIVE_FAILURES,
+    "network error",
+  ),
   /** The API's own error shape, as the SDK reads it. */
   ErrorBody = Schema.fromJsonString(
     Schema.Struct({
@@ -34,12 +38,7 @@ const EXHAUSTED_MESSAGE =
   ): ReturnType<typeof scenario.onHost> =>
     scenario.onHost(
       scenario.ours("first"),
-      Object.freeze({
-        accounts: PluginRig.quiet.accounts,
-        adopt: PluginRig.quiet.adopt,
-        fetch: PluginRig.quiet.fetch,
-        refresh: () => failure,
-      }),
+      Struct.assign(PluginRig.quiet, { refresh: () => failure }),
     ),
   exhaustedHost = didFail(
     Effect.fail(
@@ -68,7 +67,7 @@ describe("401 recovery that ends in a credential error", () => {
 
             const answered = yield* scenario.respond(
                 yield* scenario.send(scenario.messages()),
-                new Response("unauthorized", { status: UNAUTHORIZED }),
+                scenario.unauthorized(),
               ),
               body = yield* transformsSupport
                 .bodyText(answered)

@@ -54,6 +54,12 @@ const { AdvisorCommand } = command,
     assert.strictEqual(blocked, "Subagents can no longer consult the advisor.")
     assert.include(status, "Subagents: not allowed")
   }),
+  rejectsArguments = Effect.gen(function* rejectsArguments() {
+    const [reply] = yield* answers(["two words"])
+
+    assert.include(reply, `doesn't accept "two words"`)
+    assert.include(reply, "Usage:")
+  }),
   rejectsModels = Effect.gen(function* rejectsModels() {
     const [unknown, variant, malformed, status] = yield* answers([
       "openai/gpt-0",
@@ -108,6 +114,13 @@ describe("runCommand", () => {
 
   test.layer(support.scriptedServices({}, {}))((it: Tests) => {
     it.effect("rejects models the user cannot select", () => rejectsModels)
+  })
+
+  test.layer(support.scriptedServices({}, {}))((it: Tests) => {
+    it.effect(
+      "shows the usage for arguments it does not accept",
+      () => rejectsArguments,
+    )
   })
 
   test.layer(support.scriptedServices({}, {}))((it: Tests) => {

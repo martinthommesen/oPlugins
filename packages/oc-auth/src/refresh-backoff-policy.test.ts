@@ -54,7 +54,7 @@ describe("refresh failure classification", () => {
       }),
   )
 
-  it.effect("treats a revoked/invalid refresh token as terminal", () =>
+  it.effect("treats a revoked or invalid refresh token as terminal", () =>
     Effect.sync(() => {
       expect.assertions(FOUR_ASSERTIONS)
 
@@ -69,14 +69,12 @@ describe("refresh failure classification", () => {
     }),
   )
 
-  it.effect(
-    "defaults unknown 4xx to transient (never a spurious hard error)",
-    () =>
-      Effect.sync(() => {
-        expect.assertions(ONE_ASSERTION)
+  it.effect("treats an unknown OAuth error code as transient", () =>
+    Effect.sync(() => {
+      expect.assertions(ONE_ASSERTION)
 
-        expect(policy.classify(Option.some("something_new"))).toBe("transient")
-      }),
+      expect(policy.classify(Option.some("something_new"))).toBe("transient")
+    }),
   )
 })
 

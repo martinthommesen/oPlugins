@@ -18,8 +18,11 @@ const Joined = SchemaTransformation.transform({
   }),
   /** One record a plugin logged: its level, its event, and its annotations. */
   LogRecord = Schema.Struct({
+    /** The log annotations in effect when the record was logged. */
     annotations: Schema.Record(Schema.String, Schema.Json),
+    /** Effect's name for the record's log level, such as `Info` or `Warn`. */
     level: Schema.String,
+    /** The parts the record was logged with, joined by spaces: its event. */
     message: Schema.Array(Schema.String).pipe(
       Schema.decodeTo(Schema.String, Joined),
     ),
@@ -27,8 +30,8 @@ const Joined = SchemaTransformation.transform({
   LogRecords = Schema.Array(LogRecord)
 
 /**
- * A plugin's log for tests: a logger that keeps every record, at every
- * level, for inspection, in place of the default console logger.
+ * The test logger. It keeps every record a plugin logs, at every level, in
+ * place of the console logger.
  */
 class CapturedLogs extends Context.Service<
   CapturedLogs,

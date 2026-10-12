@@ -8,6 +8,7 @@ interface TokenUsage {
   readonly cache: { readonly read: number; readonly write: number }
 }
 
+/** How some prompt tokens split between cache reads, cache writes, and input. */
 interface CacheStats {
   /** Prompt tokens served from the cache. */
   readonly read: number
@@ -23,6 +24,7 @@ interface CacheStats {
   readonly missRate: number
 }
 
+/** The parts of an OpenCode message that cache statistics read. */
 interface MessageLike {
   readonly type: string
   readonly tokens?: TokenUsage
@@ -36,7 +38,7 @@ const COMPACT = new Intl.NumberFormat("en-US", {
   PERCENT = 100,
   PERCENT_DIGITS = 1,
   WHOLE = 1,
-  // A token count, with negative and non-finite counts as zero.
+  /* A token count, with negative and non-finite counts as zero. */
   asCount = (value: number): number => {
     if (!Number.isFinite(value)) {
       return NO_TOKENS
@@ -44,7 +46,7 @@ const COMPACT = new Intl.NumberFormat("en-US", {
 
     return Math.max(NO_TOKENS, value)
   },
-  // The statistics for these counts of prompt tokens.
+  /* The statistics for these counts of prompt tokens. */
   buildStats = (
     counts: Pick<CacheStats, "read" | "uncached" | "write">,
   ): CacheStats => {

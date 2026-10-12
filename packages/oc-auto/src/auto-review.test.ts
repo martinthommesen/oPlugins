@@ -1,8 +1,11 @@
-import { Array as Arr, Effect } from "effect"
+import { Array as Arr, Effect, HashMap } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
+import MalformedAssessment from "./malformed-assessment-error.ts"
 import type { Vitest } from "@effect/vitest"
 import fixtures from "./auto-review.test-support.ts"
+
+type Script = Parameters<typeof fixtures.autoReviewWith>[typeof FIRST]
 
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
@@ -12,14 +15,18 @@ interface Tests {
 }
 
 const {
-  ROOT,
-  CHILD,
-  askIn,
-  autoReviewWith,
-  evaluateAll,
-  reviewerSays,
-  unavailable,
-} = fixtures
+    ROOT,
+    CHILD,
+    askIn,
+    autoReviewWith,
+    evaluateAll,
+    reviewerSays,
+    unavailable,
+  } = fixtures,
+  FIRST = 0,
+  /* A reviewer whose answer holds no assessment. */
+  malformed: Script = () =>
+    Effect.fail(MalformedAssessment.make({ text: "I think it is fine." }))
 
 describe("auto-review verdicts", () => {
   test.layer(autoReviewWith(reviewerSays("allow")))((it: Tests) => {
@@ -136,4 +143,42 @@ describe("auto-review fallbacks", () => {
       }),
     )
   })
+})
+
+describe("auto-review failure notes", () => {
+  test.layer(autoReviewWith(malformed))((it: Tests) => {
+    it.effect("tells the user when the reviewer's answer is unreadable", () =>
+      Effect.gen(function* unreadable() {
+        expect.hasAssertions()
+
+        const evaluation = askIn(ROOT)
+
+        yield* evaluateAll([evaluation])
+
+        expect(evaluation.effect).toBe("ask")
+        expect(evaluation.message).toContain(
+          "The reviewer's answer was not a valid assessment.",
+        )
+      }),
+    )
+  })
+
+  test.layer(autoReviewWith(reviewerSays("allow"), HashMap.empty()))(
+    (it: Tests) => {
+      it.effect("names the host call that failed", () =>
+        Effect.gen(function* hostFailure() {
+          expect.hasAssertions()
+
+          const evaluation = askIn(ROOT)
+
+          yield* evaluateAll([evaluation])
+
+          expect(evaluation.effect).toBe("ask")
+          expect(evaluation.message).toContain(
+            "OpenCode failed to answer the plugin's session.get call.",
+          )
+        }),
+      )
+    },
+  )
 })

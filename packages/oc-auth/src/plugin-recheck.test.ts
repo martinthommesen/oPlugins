@@ -1,4 +1,4 @@
-import { Effect, Match } from "effect"
+import { Effect, Match, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import CredentialRefresh from "./credential-refresh.ts"
@@ -27,12 +27,7 @@ const CACHE_WINDOW_MS = 30_000,
   TWO = 2,
   /* A rig whose store adoption answers per `adopt`. */
   adopting = (adopt: Script["adopt"]): Script =>
-    Object.freeze({
-      accounts: PluginRig.quiet.accounts,
-      adopt,
-      fetch: PluginRig.quiet.fetch,
-      refresh: PluginRig.quiet.refresh,
-    }),
+    Struct.assign(PluginRig.quiet, { adopt }),
   /* A store that Claude Code rotated to `second`. */
   adoptsSecond = (): ReturnType<Script["adopt"]> =>
     Effect.succeed(scenario.adopted("second")),
@@ -63,10 +58,10 @@ const CACHE_WINDOW_MS = 30_000,
   ),
   rotatingHost = scenario.onHost(scenario.ours("first"), rotatesOnSecond)
 
-describe("the request path's source re-check", () => {
+describe("the request path's credential store re-check", () => {
   test.layer(rotatingHost)((it: Tests) => {
     it.effect(
-      "re-checks the source once per cache window on the request path",
+      "re-checks the credential store once per window on the request path",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()

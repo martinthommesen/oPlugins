@@ -1,9 +1,9 @@
 /**
- * The OpenCode host build this release targets, which the plugin's
- * compatibility error names. The host smoke test targets the workspace
- * catalog's `@opencode/plugin`, so bumping the host is one edit here plus
- * the catalog.
+ * The OpenCode version this release targets, which the plugin's
+ * compatibility error names. The host smoke test targets the
+ * `@opencode/plugin` version in the workspace catalog, so bumping the host
+ * takes an edit here and one in the catalog.
  */
-const HOST_VERSION = "2.0.26"
+const HOST_VERSION = "2.0.27"
 
 export default HOST_VERSION

@@ -1,6 +1,6 @@
 import type { Crypto, Duration, FileSystem, Path } from "effect"
 import { Effect, Option } from "effect"
-import type { ChildProcessSpawner } from "effect/unstable/process"
+import type { ChildProcessSpawner } from "effect/process"
 import type ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import ClaudeCodeWriteRefusedError from "./claude-code-write-refused-error.ts"
 import Environment from "./environment.ts"
@@ -19,7 +19,7 @@ type StoreServices =
 
 /** One credential store: the credentials file or one Keychain item. */
 interface CredentialStore {
-  /** Log context for every event this store emits. */
+  /** The log annotations of every record about this store. */
   readonly fields: readonly (readonly [string, string])[]
   /**
    * Do whatever a write needs that can be slow, and return the write
@@ -39,20 +39,23 @@ interface CredentialStore {
   >
 }
 
+/* The Keychain item `source` names, each read bounded by `readTimeout`. */
 const keychainStore = (
     source: string,
     readTimeout: Duration.Input,
   ): CredentialStore => ({
     fields: [["source", source]],
-    // `add-generic-password -U` keys on service plus account. Guessing the
-    // Account would create a second item instead of updating this one.
+    /*
+     * `add-generic-password -U` keys on service plus account, so a guessed
+     * account would create a second item instead of updating this one.
+     */
     prepareWrite: keychainItems.accountName(source).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () =>
             Effect.fail(
               ClaudeCodeWriteRefusedError.make({
-                message: `Keychain item "${source}" is missing or has no account name`,
+                message: `Keychain item "${source}" is missing or has no account name.`,
               }),
             ),
           onSome: (account) =>
@@ -87,10 +90,8 @@ const keychainStore = (
       return Option.none<CredentialStore>()
     }
 
+    // Only a Claude Code item's name reaches the `security` tool.
     if (!sources.isKnownCredentialSource(source)) {
-      // `source` round-trips through OpenCode's credential store, so it is
-      // Not trusted to still name a Claude Code item by the time it comes
-      // Back.
       yield* pluginLog.debug("store_rejected_source", { source })
 
       return Option.none<CredentialStore>()
@@ -99,5 +100,5 @@ const keychainStore = (
     return Option.some(keychainStore(source, readTimeout))
   })
 
-/** Choosing the credential store a source names. */
+/** Choosing the credential store a `source` names. */
 export default Object.freeze({ storeFor })

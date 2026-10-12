@@ -86,12 +86,12 @@ body:
     attributes:
       label: Redacted logs
       description: |
-        Reproduce with `OBROWSE_DEBUG=1`, then include relevant plugin entries from
-        `~/.local/share/opencode/obrowse-debug.log` and relevant v2 service entries
-        from `~/.local/share/opencode/log/opencode.log`.
+        Reproduce with OpenCode logging at debug level (its `--log-level`
+        flag), then include the relevant records from
+        `~/.local/share/opencode/log/opencode.log`.
 
         Review and redact URLs, page contents, cookies, prompts, and other
-        sensitive values before submitting.
+        sensitive values before you submit.
       render: json
     validations:
       required: false

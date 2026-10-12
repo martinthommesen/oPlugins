@@ -9,4 +9,5 @@ const headlessServices = ClaudeCodeStores.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 )
 
+/** @internal */
 export default headlessServices

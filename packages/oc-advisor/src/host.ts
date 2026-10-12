@@ -4,10 +4,6 @@ import HostError from "./host-error.ts"
 import type { Session } from "@opencode/schema/session"
 import conversation from "./conversation.ts"
 
-type ConversationItem = ReturnType<
-  typeof conversation.fromSessionMessages
->[number]
-
 type SessionApi = Pick<
   Plugin.Context["session"],
   "context" | "create" | "generate" | "get" | "remove" | "synthetic"
@@ -16,8 +12,10 @@ type SessionApi = Pick<
 type ModelApi = Pick<Plugin.Context["model"], "list">
 
 /*
- * The host's session operations the advisor uses, failing with `Failure`:
- * whatever the host fails with, which `Host` maps to `HostError`.
+ * The host's session operations the advisor uses, failing with `Failure`.
+ * The host's own operations fail with `unknown`, which the Effect
+ * diagnostics reject in any error channel, so this code is generic in the
+ * failure until `asHostError` maps it to `HostError`.
  */
 type HostSession<Failure> = {
   readonly [Name in keyof SessionApi]: (
@@ -25,7 +23,7 @@ type HostSession<Failure> = {
   ) => Effect.Effect<Effect.Success<ReturnType<SessionApi[Name]>>, Failure>
 }
 
-/** The host APIs the advisor uses. */
+/** The parts of the host's plugin context the advisor uses. */
 interface HostContext<Failure> {
   readonly model: {
     readonly [Name in keyof ModelApi]: (
@@ -37,8 +35,9 @@ interface HostContext<Failure> {
 
 interface Interface {
   /**
-   * Answers a prompt with the given model, in a short-lived child session of
-   * the consulting session so the provider's session hooks apply.
+   * Answers a prompt with the given model, in a short-lived consultation
+   * session under the consulting session, so the provider's session hooks
+   * apply.
    */
   readonly consult: (
     sessionId: Session.ID,
@@ -47,21 +46,24 @@ interface Interface {
   ) => Effect.Effect<string, HostError>
   /** Whether a session was created to answer a consultation. */
   readonly isConsultation: (sessionId: Session.ID) => Effect.Effect<boolean>
-  /** The models the user can select. */
+  /** The host's models, each marked enabled or not. */
   readonly models: Effect.Effect<readonly Model.Info[], HostError>
   /** Shows a message in a session without starting a model turn. */
   readonly notify: (
     sessionId: Session.ID,
     text: string,
   ) => Effect.Effect<void, HostError>
-  /** The session that started a subagent's session, if it is one. */
+  /** A session's parent session, if it has one, as a subagent's session does. */
   readonly parent: (
     sessionId: Session.ID,
   ) => Effect.Effect<Option.Option<Session.ID>, HostError>
   /** A session's conversation, oldest first. */
   readonly transcript: (
     sessionId: Session.ID,
-  ) => Effect.Effect<readonly ConversationItem[], HostError>
+  ) => Effect.Effect<
+    ReturnType<typeof conversation.fromSessionMessages>,
+    HostError
+  >
 }
 
 /** Records which sessions exist to answer a consultation. */
@@ -80,19 +82,15 @@ const CLEANUP_RETRIES = 1,
     ): Effect.Effect<Value, HostError, Requirements> =>
       Effect.mapError(self, (cause) => HostError.make({ cause, operation })),
   /*
-   * Deletes a consultation session with bounded cleanup and one retry,
-   * keeping it tracked if deletion fails. The warning names the session
-   * only: the host's error may quote the conversation.
+   * Deletes a consultation session with one retry and a deadline, and stops
+   * tracking it only once it is gone. The warning names the session only,
+   * because the host's error may quote the conversation.
    */
   cleanupSession =
-    <Failure>(
-      session: HostSession<Failure>,
-      tracker: Tracker,
-    ): Tracker["remove"] =>
-    (id) =>
+    <Failure>(session: HostSession<Failure>, tracker: Tracker) =>
+    (id: Session.ID): Effect.Effect<void> =>
       session.remove({ sessionID: id }).pipe(
         Effect.retry({ times: CLEANUP_RETRIES }),
-        Effect.interruptible,
         Effect.timeout(`${CLEANUP_TIMEOUT_SECONDS} seconds`),
         Effect.andThen(tracker.remove(id)),
         Effect.tapError(() =>
@@ -104,14 +102,14 @@ const CLEANUP_RETRIES = 1,
       ),
   /*
    * Builds `consult` on the host's session API. `tracker` records the
-   * sessions it creates; `close` starts their cleanup without delaying the
-   * caller.
+   * sessions it creates, and `close` starts their cleanup without delaying
+   * the caller.
    */
   consultation =
     <Failure>(
       session: HostSession<Failure>,
       tracker: Tracker,
-      close: Tracker["remove"],
+      close: (id: Session.ID) => Effect.Effect<void>,
     ): Interface["consult"] =>
     (sessionId, prompt, model) => {
       const ask = ({ id }: Session.Info): Effect.Effect<string, HostError> =>
@@ -125,7 +123,12 @@ const CLEANUP_RETRIES = 1,
           .create({ model, parentID: sessionId, title: "Advisor" })
           .pipe(asHostError("session.create"))
 
-      // Keep tracking and release registration atomic after creation succeeds.
+      /*
+       * `acquireUseRelease` alone would make a stalled creation
+       * uninterruptible. Restoring `open` lets the deadline interrupt it,
+       * while tracking a created session and registering its release stay
+       * uninterruptible.
+       */
       return Effect.uninterruptibleMask((restore) =>
         Effect.acquireUseRelease(
           restore(open).pipe(Effect.tap(({ id }) => tracker.add(id))),
@@ -159,7 +162,7 @@ const CLEANUP_RETRIES = 1,
       ),
   })
 
-/** OpenCode server capabilities the advisor uses, behind a service tag. */
+/** The host operations the advisor uses, behind a service tag. */
 class Host extends Context.Service<Host, Interface>()(
   "@martinthommesen/oc-advisor/host",
 ) {
@@ -183,6 +186,7 @@ class Host extends Context.Service<Host, Interface>()(
           wipe = cleanupSession(context.session, tracker)
 
         return Host.of({
+          // Uninterruptible, so closing the plugin waits for pending deletions.
           consult: consultation(context.session, tracker, (id) =>
             wipe(id).pipe(
               Effect.forkIn(scope, { uninterruptible: true }),

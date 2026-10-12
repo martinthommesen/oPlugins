@@ -56,10 +56,10 @@ const BetaFlags = Schema.String.check(
   Options = Schema.Struct(OptionFields),
   /*
    * The options in the host's raw options, decoded. Any problem fails,
-   * naming every offending option: a mistyped name or value must not be
-   * silently replaced by a default.
+   * naming every offending option, so a default never replaces a mistyped
+   * name or value.
    */
-  settingsFrom = pluginOptions.decode(Options, "oc-auth")
+  optionsFrom = pluginOptions.decode(Options, "oc-auth")
 
 /**
  * The plugin's options from `opencode.jsonc`, decoded once when it starts.
@@ -76,7 +76,7 @@ class PluginOptions extends Context.Service<
     Layer.effect(
       PluginOptions,
       Effect.gen(function* decode() {
-        return PluginOptions.of(yield* settingsFrom(raw))
+        return PluginOptions.of(yield* optionsFrom(raw))
       }),
     )
 }

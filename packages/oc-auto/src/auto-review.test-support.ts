@@ -5,13 +5,17 @@ import ConversationItem from "./conversation-item.ts"
 import DenialBreaker from "./denial-breaker.ts"
 import FakeReviewer from "./fake-reviewer.test-support.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
-import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
+import PluginOptions from "./plugin-options.ts"
 import type Reviewer from "./reviewer.ts"
 import support from "./testing.test-support.ts"
 
 type Script = Parameters<typeof FakeReviewer.layer>[typeof FIRST]
 
 type Sessions = Parameters<typeof support.fakeHost>[typeof SECOND]
+
+type PluginOptionsError = Layer.Error<
+  ReturnType<typeof PluginOptions.fromOptions>
+>
 
 const CHILD = support.sessionId("ses_child"),
   DENIAL_LIMIT = 2,
@@ -51,11 +55,13 @@ const CHILD = support.sessionId("ses_child"),
     snapshots: Sessions = SESSIONS,
   ): Layer.Layer<AutoReview | FakeReviewer | Reviewer, PluginOptionsError> => {
     const host = support.fakeHost(Option.none(), snapshots),
-      settings = support.settingsFrom({ maxConsecutiveDenials: DENIAL_LIMIT }),
-      strikes = DenialBreaker.layer.pipe(Layer.provide(settings))
+      options = PluginOptions.fromOptions({
+        maxConsecutiveDenials: DENIAL_LIMIT,
+      }),
+      strikes = DenialBreaker.layer.pipe(Layer.provide(options))
 
     return AutoReview.layer.pipe(
-      Layer.provide([strikes, host, settings]),
+      Layer.provide([strikes, host, options]),
       Layer.provideMerge(FakeReviewer.layer(script)),
     )
   },

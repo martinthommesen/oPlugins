@@ -5,7 +5,7 @@ import support from "./claude-code-stores.test-support.ts"
 
 type Stores = ClaudeCodeStores["Service"]
 
-// The token pair a credentials file holds.
+/* The token pair a credentials file holds. */
 const ClaudeAiOauth = Schema.Struct({
     accessToken: Schema.String,
     expiresAt: Schema.Finite,

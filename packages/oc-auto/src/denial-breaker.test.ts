@@ -2,9 +2,9 @@ import { Effect, Layer } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import BreakerDecision from "./breaker-decision.ts"
 import DenialBreaker from "./denial-breaker.ts"
+import PluginOptions from "./plugin-options.ts"
 import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
-import support from "./testing.test-support.ts"
 
 /** The `it` of a `test.layer` block: `it.effect`, given a breaker. */
 interface Tests {
@@ -19,7 +19,7 @@ const FIRST_DENIAL = 1,
   THIRD_DENIAL = 3,
   TOTAL_LIMIT = 4,
   /* Escalates at three denials in a row or four in total. */
-  breakerLimits = support.settingsFrom({
+  breakerLimits = PluginOptions.fromOptions({
     maxConsecutiveDenials: THIRD_DENIAL,
     maxTotalDenials: TOTAL_LIMIT,
   }),

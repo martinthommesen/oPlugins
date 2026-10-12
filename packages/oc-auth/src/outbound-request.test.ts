@@ -35,7 +35,7 @@ const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
     headers: Readonly<Record<string, string>> = {},
   ): ReturnType<typeof support.httpEvent> =>
     support.httpEvent(messagesPost(body, headers), model),
-  /* The request a SDK sends: a POST of `BODY` with a custom header. */
+  /* The request an SDK sends: a POST of `BODY` with a custom header. */
   sdkEvent = (): ReturnType<typeof support.httpEvent> =>
     support.httpEvent(
       new Request(`${MESSAGES_URL}?existing=1`, {
@@ -47,18 +47,13 @@ const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
       "claude-sonnet-4-5",
     ),
   /* `event`'s request, transformed with an `access` token. */
-  transform = (
+  transform = Effect.fn("test.transform")(function* transform(
     event: ReturnType<typeof support.httpEvent>,
-  ): Effect.Effect<
-    Effect.Success<ReturnType<RequestTransforms["Service"]["request"]>>,
-    Effect.Error<ReturnType<RequestTransforms["Service"]["request"]>>,
-    RequestTransforms
-  > =>
-    Effect.gen(function* transformEvent() {
-      const api = yield* RequestTransforms
+  ) {
+    const api = yield* RequestTransforms
 
-      return yield* api.request(event, { access: "access" })
-    })
+    return yield* api.request(event, { access: "access" })
+  })
 
 describe("outbound request replays", () => {
   test.layer(support.layer())((it: Tests) => {

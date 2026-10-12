@@ -27,8 +27,9 @@ const instructConsultations =
       )
     },
   /*
-   * Offers the advisor only to sessions that may consult it. Sessions that may
-   * not lose the tool; sessions whose agent has the tool are told when to use it.
+   * Offers the advisor only to sessions that may consult it. It removes the
+   * tool from every other session, and tells agents that have the tool when
+   * to use it.
    */
   presentAdvisor =
     (advisor: Advisor["Service"]) =>
@@ -67,9 +68,8 @@ const instructConsultations =
             onTrue: () => instruct,
           }),
         ),
-        Effect.asVoid,
       )
     }
 
-/** The session hooks that offer the advisor and answer consultations. */
+/** The session hooks that offer the advisor and instruct the advisor model. */
 export default Object.freeze({ instructConsultations, presentAdvisor })

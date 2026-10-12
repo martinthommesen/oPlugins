@@ -2,7 +2,7 @@ import { Effect, Option, Path } from "effect"
 
 import Environment from "./environment.ts"
 
-/*
+/**
  * OpenCode's data directory: `$XDG_DATA_HOME/opencode` when that variable is
  * an absolute path, else `~/.local/share/opencode`.
  */

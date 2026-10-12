@@ -25,8 +25,9 @@ const failureReason = (failure: ReviewFailure): string =>
       AuthUnavailable: ({ reason }) => reason,
       ContextUnavailable: ({ reason }) => reason,
       HostError: ({ operation }) =>
-        `OpenCode could not provide the session (${operation}).`,
-      MalformedAssessment: () => "The reviewer's answer was not valid JSON.",
+        `OpenCode failed to answer the plugin's ${operation} call.`,
+      MalformedAssessment: () =>
+        "The reviewer's answer was not a valid assessment.",
       ModelUnavailable: ({ model, status }) =>
         `The reviewer model ${model} is unavailable (HTTP ${status}).`,
       RequestFailed: ({ operation }) =>
@@ -34,7 +35,7 @@ const failureReason = (failure: ReviewFailure): string =>
       ReviewTimedOut: ({ timeout }) =>
         `The review did not finish within ${timeout}.`,
     }),
-  /* The reason the user is told, as a debug record: redacted, never above debug. */
+  /* Logs the reason the user is told, redacted, at debug level only. */
   noteReason = (failure: ReviewFailure): Effect.Effect<void> => {
     const fields = redact({ reason: failureReason(failure) })
 
@@ -82,4 +83,4 @@ const failureReason = (failure: ReviewFailure): string =>
     )
 
 /** What the user is told, and what the log records, when a review fails. */
-export default Object.freeze({ failureReason, undecided, userDecides })
+export default Object.freeze({ userDecides })

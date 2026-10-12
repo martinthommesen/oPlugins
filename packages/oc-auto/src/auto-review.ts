@@ -2,9 +2,9 @@ import { Context, Duration, Effect, Layer } from "effect"
 import DenialBreaker from "./denial-breaker.ts"
 import Host from "./host.ts"
 import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
+import PluginOptions from "./plugin-options.ts"
 import ReviewTimedOut from "./review-timed-out-error.ts"
 import Reviewer from "./reviewer.ts"
-import Settings from "./settings.ts"
 import reviewDecision from "./review-decision.ts"
 import reviewFailure from "./review-failure.ts"
 import verdictOutcome from "./verdict-outcome.ts"
@@ -24,7 +24,7 @@ class AutoReview extends Context.Service<AutoReview, Interface>()(
   public static readonly layer = Layer.effect(
     AutoReview,
     Effect.gen(function* makeAutoReview() {
-      const deadline = (yield* Settings).timeout,
+      const deadline = (yield* PluginOptions).timeout,
         decide = reviewDecision.verdictWith({
           breaker: yield* DenialBreaker,
           host: yield* Host,

@@ -1,9 +1,9 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { Effect, Option, Stdio, Stream } from "effect"
 import HostTestError from "./host-test-error.ts"
 import type { PlatformError } from "effect"
 
-/** One command to run, where, and how its environment differs from ours. */
+/** One command to run, its directory, and its changes to the environment. */
 interface Invocation {
   readonly args: readonly string[]
   readonly command: string
@@ -30,7 +30,7 @@ const SUCCESS = 0,
     }),
   /*
    * The exit code of `handle`, or none when it outlived the timeout and was
-   * killed. Its output streams end when it does, so they stay readable.
+   * killed. Killing it ends its output streams, so collecting them finishes.
    */
   exitWithin = (
     handle: ChildProcessSpawner.ChildProcessHandle,
@@ -53,8 +53,8 @@ const SUCCESS = 0,
     yield* Stream.make(text).pipe(Stream.run(stdio.stderr()))
   }),
   /*
-   * Run a command and return its stdout. A command that fails or times out
-   * has its output written to stderr before the failure.
+   * Run a command and return its stdout. When the command fails or times
+   * out, write its output to stderr, then fail.
    */
   run = Effect.fn("HostTest.run")(function* run(invocation: Invocation) {
     const childProcesses = yield* ChildProcessSpawner.ChildProcessSpawner,
@@ -78,9 +78,10 @@ const SUCCESS = 0,
     yield* printError(`${stdout}${stderr}`)
 
     return yield* HostTestError.make({
-      message: `${invocation.command} ${invocation.args.join(" ")} ${describe(code)}`,
+      message: `${invocation.command} ${invocation.args.join(" ")} ${describe(code)}. Read its output above for the cause.`,
     })
   }, Effect.scoped)
 
 /** Running the commands the host test drives. */
+/** @internal */
 export default Object.freeze({ describe, printError, run })

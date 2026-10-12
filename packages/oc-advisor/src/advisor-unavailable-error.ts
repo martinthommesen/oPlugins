@@ -5,6 +5,7 @@ import { Schema } from "effect"
 class AdvisorUnavailable extends Schema.TaggedError<AdvisorUnavailable>()(
   "AdvisorUnavailable",
   {
+    /** Why the session may not consult it, such as "the advisor is turned off". */
     reason: Schema.String,
   },
 ) {}

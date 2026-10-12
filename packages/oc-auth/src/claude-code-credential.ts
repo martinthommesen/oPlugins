@@ -21,19 +21,17 @@ type OAuthParts = Pick<
  * `toOAuth` turns it into the credential the host stores.
  */
 interface ClaudeCodeCredential {
+  /** The OAuth access token. */
   readonly access: string
+  /** When `access` expires, in epoch milliseconds. */
   readonly expires: number
+  /** The metadata that ties the credential to its Claude Code store. */
   readonly metadata: ClaudeMetadata
+  /** The OAuth refresh token. */
   readonly refresh: string
 }
 
 const CLAUDE_CODE_METHOD = "claude-code",
-  /** What a credential this plugin imported looks like to the host. */
-  ClaudeCodeOAuth = Schema.Struct({
-    metadata: Metadata,
-    methodID: Schema.Literal(CLAUDE_CODE_METHOD),
-    type: Schema.Literal("oauth"),
-  }),
   /** A host credential value this plugin imported, decoded to the parts it uses. */
   HostClaudeCode = Schema.Struct({
     access: Schema.String,
@@ -73,7 +71,7 @@ const CLAUDE_CODE_METHOD = "claude-code",
         refresh: credential.refresh,
       })),
     ),
-  /* A credential holding `tokens`, tagged with `metadata`. */
+  /* A credential holding `tokens` from a store, tagged with `metadata`. */
   fromSource = (
     tokens: Tokens,
     metadata: ClaudeMetadata,
@@ -83,12 +81,6 @@ const CLAUDE_CODE_METHOD = "claude-code",
     metadata,
     refresh: tokens.refreshToken,
   }),
-  // Whether a host credential value is one this plugin imported.
-  importedHere = Schema.is(ClaudeCodeOAuth),
-  /* Whether `credential` is one this plugin imported from Claude Code. */
-  isClaudeCodeCredential = <Value extends Credential.Value>(
-    credential: Value | undefined,
-  ): credential is Extract<Value, Credential.OAuth> => importedHere(credential),
   /* This plugin's metadata on `credential`, or none when it carries none. */
   readMetadata = (
     credential: Pick<Credential.OAuth, "metadata">,
@@ -119,7 +111,6 @@ export default Object.freeze({
   decodeHostValue,
   fromOAuth,
   fromSource,
-  isClaudeCodeCredential,
   readMetadata,
   toOAuth,
   withSourceTokenHash,

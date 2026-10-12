@@ -13,9 +13,9 @@ import PluginOptions from "./plugin-options.ts"
 import policy from "./refresh-backoff-policy.ts"
 
 /*
- * What is known about one key. Transient state is kept per source and
- * terminal state per credential generation, so the two never share a key in
- * practice. With one map they cannot hold conflicting state for a key anyway.
+ * What is known about one key: a terminal failure, or a streak of transient
+ * ones. Transient state is kept per store and terminal state per credential
+ * generation, so a key never needs both.
  */
 type BackoffState =
   | { readonly _tag: "Terminal" }
@@ -35,6 +35,7 @@ interface Backoff {
 }
 
 const NEXT = 1,
+  NO_FAILURES = 0,
   NO_WAIT = 0,
   State = Data.taggedEnum<BackoffState>(),
   /* The transient state recorded for `key`, if that is what it holds. */
@@ -68,7 +69,7 @@ const NEXT = 1,
     key: string,
   ): number =>
     Option.match(activeTransient(states, key), {
-      onNone: () => NO_WAIT,
+      onNone: () => NO_FAILURES,
       onSome: (state) => state.consecutive,
     }),
   /* Whether the last failure recorded for `key` was transient or terminal. */
@@ -88,12 +89,9 @@ const NEXT = 1,
         ),
       ),
     ),
-  makeTerminal = State.Terminal,
-  makeTransient = State.Transient,
   /*
-   * Record a transient refresh failure for `key` and return the cooldown
-   * duration applied. The cooldown escalates with consecutive transient
-   * failures and is exposed via `cooldownRemainingMs`.
+   * Record a transient refresh failure for `key`, and return the cooldown it
+   * starts. Each failure in a row lengthens the cooldown.
    */
   noteTransient = Effect.fn("RefreshBackoff.noteTransient")(
     function* noteTransient(
@@ -118,7 +116,7 @@ const NEXT = 1,
           HashMap.set(
             states,
             key,
-            makeTransient({ consecutive, until: now + ms }),
+            State.Transient({ consecutive, until: now + ms }),
           ),
         ]
       })
@@ -173,7 +171,7 @@ class RefreshBackoff extends Context.Service<
         failureKind: (key) => failureKind(tracker, key),
         noteTerminal: (key) =>
           Ref.update(tracker.states, (states) =>
-            HashMap.set(states, key, makeTerminal()),
+            HashMap.set(states, key, State.Terminal()),
           ),
         noteTransient: (key, retryAfterMs) =>
           noteTransient(tracker, key, retryAfterMs),

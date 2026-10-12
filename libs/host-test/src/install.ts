@@ -21,10 +21,7 @@ interface PluginInstall {
 }
 
 const NO_CHANGES = {},
-  /**
-   * What `pnpm pack --json` reports. pnpm, unlike npm, replaces the
-   * workspace's `catalog:` versions with real ones in the packed manifest.
-   */
+  /** The part of `pnpm pack --json`'s report the host test reads. */
   PackResult = Schema.fromJsonString(
     Schema.Struct({ filename: Schema.String }),
   ),
@@ -43,8 +40,8 @@ const NO_CHANGES = {},
   ): ReturnType<typeof commands.run> =>
     commands.run({ args, command, cwd: checkout, env: NO_CHANGES }),
   /*
-   * Install the requested host CLI into `cli` and check that it reports
-   * that version. Returns the `opencode` executable.
+   * Install the requested host CLI into `cli`, check that it reports that
+   * version, and return the path of its `opencode` executable.
    */
   installHost = Effect.fn("HostTest.installHost")(function* installHost(
     request: HostInstall,
@@ -68,7 +65,7 @@ const NO_CHANGES = {},
 
     if (version !== required) {
       return yield* HostTestError.make({
-        message: `Expected ${required}, found ${version}`,
+        message: `The installed OpenCode CLI reports "${version}" instead of "${required}". Ask for an exact host version, X.Y.Z, not a tag or a range.`,
       })
     }
 
@@ -76,13 +73,15 @@ const NO_CHANGES = {},
   }),
   /*
    * Pack the plugin into `packed`, install the tarball into `install`, and
-   * return the URL of the installed plugin's server entry.
+   * return the URL of the installed plugin's server entry. It packs with
+   * pnpm because pnpm, unlike npm, replaces the workspace's `catalog:`
+   * versions with real ones in the packed manifest.
    */
   installPlugin = Effect.fn("HostTest.installPlugin")(function* installPlugin(
     request: PluginInstall,
   ) {
-    const fsPath = yield* Path.Path,
-      pluginEntry = fsPath.join(
+    const path = yield* Path.Path,
+      pluginEntry = path.join(
         request.install,
         ...entrySegments(request.npmName),
       ),
@@ -99,13 +98,14 @@ const NO_CHANGES = {},
         "--ignore-scripts",
         "--prefix",
         request.install,
-        fsPath.resolve(request.packed, report.filename),
-      ]).pipe(Effect.andThen(fsPath.toFileUrl(pluginEntry)))
+        path.resolve(request.packed, report.filename),
+      ]).pipe(Effect.andThen(path.toFileUrl(pluginEntry)))
 
     return url.href
   })
 
 /** Installing the host CLI and the packed plugin into the sandbox. */
+/** @internal */
 export default Object.freeze({
   entrySegments,
   host: installHost,

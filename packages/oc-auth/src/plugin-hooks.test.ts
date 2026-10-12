@@ -17,7 +17,7 @@ interface Tests {
   >
 }
 
-/* Past the source cache window, so the request path's re-check is live. */
+/* Past the cache window, so the request path re-checks the credential store. */
 const AFTER_CACHE_WINDOW = 30_000,
   ANTHROPIC_ONLY = '{"providerID":"anthropic"}',
   BILLING_HEADER = /^x-anthropic-billing-header:/u,

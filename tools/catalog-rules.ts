@@ -7,7 +7,7 @@ type Files = (typeof Snapshot.Type)["files"]
 
 const EFFECT = "effect",
   EFFECT_SCOPE = "@effect/",
-  HOST = "@opencode/plugin",
+  HOST_PACKAGE = "@opencode/plugin",
   /** What the checks read from the installed host package's `package.json`. */
   HostManifest = Schema.fromJsonString(
     Schema.Struct({
@@ -23,7 +23,7 @@ const EFFECT = "effect",
   asHost = Schema.decodeResult(HostManifest),
   /* Why the checks can't read the catalog: `reason`. */
   asUnreadable = (reason: string): string =>
-    `The checks can't read the catalog: ${reason} Correct the file.`,
+    `The checks can't read the catalog: ${reason}. Correct the file.`,
   asWorkspace = Schema.decodeUnknownResult(Workspace),
   /*
    * The catalog's entries that must equal the host's effect pin: `effect`
@@ -41,8 +41,8 @@ const EFFECT = "effect",
     text: string,
   ): Result.Result<Readonly<Record<string, string>>, string> => {
     const document = parseDocument(text),
-      errors = document.errors.map(
-        (error: { readonly message: string }) => error.message,
+      errors = document.errors.map((error: { readonly message: string }) =>
+        error.message.trim(),
       )
 
     if (Arr.isReadonlyArrayNonEmpty(errors)) {
@@ -66,7 +66,7 @@ const EFFECT = "effect",
       layoutFiles.reportIf(
         version !== pin,
         WORKSPACE,
-        `The catalog pins "${name}" to "${version}", but ${HOST} ${hostVersion}, the host, depends on effect "${pin}". Set it to "${pin}".`,
+        `The catalog pins "${name}" to "${version}", but ${HOST_PACKAGE} ${hostVersion} depends on effect "${pin}". Set it to "${pin}".`,
       ),
     ),
   /* The installed host at `file` is the catalog's, and pins effect. */
@@ -83,13 +83,13 @@ const EFFECT = "effect",
         ),
       ],
       onSuccess: (host) => {
-        const pinned = Rec.get(catalog, HOST)
+        const pinned = Rec.get(catalog, HOST_PACKAGE)
 
         if (!Option.contains(pinned, host.version)) {
           return [
             layoutFiles.at(
               file,
-              `The installed ${HOST} is "${host.version}", but the catalog pins ${layoutFiles.quoted(pinned)}. Run pnpm install.`,
+              `The installed ${HOST_PACKAGE} is "${host.version}", but the catalog pins ${layoutFiles.quoted(pinned)}. Run pnpm install.`,
             ),
           ]
         }
@@ -98,7 +98,7 @@ const EFFECT = "effect",
           onNone: () => [
             layoutFiles.at(
               file,
-              `${HOST} doesn't depend on effect, so the checks can't read the host's pin. Pin effect by hand, and update this check.`,
+              `${HOST_PACKAGE} doesn't depend on effect, so the checks can't read the host's pin. Pin effect by hand, and update this check.`,
             ),
           ],
           onSome: (pin) => checkEffectPins(catalog, host.version, pin),
@@ -114,7 +114,7 @@ const EFFECT = "effect",
     plugins: readonly string[],
   ): Option.Option<readonly [string, string]> =>
     Arr.findFirst(plugins, (folder) => {
-      const file = `packages/${folder}/node_modules/${HOST}/package.json`
+      const file = `packages/${folder}/node_modules/${HOST_PACKAGE}/package.json`
 
       return layoutFiles
         .textOf(files, file)
@@ -137,7 +137,7 @@ const EFFECT = "effect",
           onNone: () => [
             layoutFiles.at(
               WORKSPACE,
-              `No plugin has ${HOST} installed, so the checks can't read the effect version the host pins. Run pnpm install.`,
+              `No plugin has ${HOST_PACKAGE} installed, so the checks can't read the effect version the host pins. Run pnpm install.`,
             ),
           ],
           onSome: ([file, text]) => checkHost(entries, file, text),

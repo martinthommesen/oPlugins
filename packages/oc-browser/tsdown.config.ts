@@ -2,9 +2,9 @@ import { defineConfig } from "tsdown"
 
 /**
  * How oc-browser is bundled. The plugin bundles its own code and the
- * libraries it uses and keeps every package external, limited to the ones
- * it may import at run time. The extension runs in Chrome, so it bundles
- * everything and imports nothing.
+ * libraries it uses, and leaves every package external; the build fails if
+ * it imports a package outside `onlyImport`. The extension runs in Chrome,
+ * where it can import no package, so it bundles everything.
  */
 export default defineConfig([
   {

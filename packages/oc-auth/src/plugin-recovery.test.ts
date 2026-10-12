@@ -1,4 +1,4 @@
-import { Effect, Exit, Match, Scope } from "effect"
+import { Effect, Exit, Match, Scope, Struct } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import FakeConnection from "./fake-connection.test-support.ts"
 import type { Layer } from "effect"
@@ -17,12 +17,6 @@ interface Tests {
 
 type Script = typeof PluginRig.quiet
 
-/** A 401 whose body records whether it was released. */
-interface Releasable {
-  readonly released: () => number
-  readonly response: Response
-}
-
 const FIRST_CALL = 1,
   OK = 200,
   ONE = 1,
@@ -33,13 +27,7 @@ const FIRST_CALL = 1,
   answering = (
     refresh: Script["refresh"],
     fetch: Script["fetch"] = PluginRig.quiet.fetch,
-  ): Script =>
-    Object.freeze({
-      accounts: PluginRig.quiet.accounts,
-      adopt: PluginRig.quiet.adopt,
-      fetch,
-      refresh,
-    }),
+  ): Script => Struct.assign(PluginRig.quiet, { fetch, refresh }),
   /* A replayed request's body and authorization header. */
   bodyAndAuth = (
     request: Request,
@@ -52,22 +40,6 @@ const FIRST_CALL = 1,
         ),
       ),
   quietHost = scenario.onHost(FakeConnection.oauth("access")),
-  /* A 401 that counts how many times its body is released. */
-  releasable = (): Releasable => {
-    let released = ZERO
-
-    return {
-      released: () => released,
-      response: new Response(
-        new ReadableStream({
-          cancel: (): void => {
-            released += ONE
-          },
-        }),
-        { status: UNAUTHORIZED },
-      ),
-    }
-  },
   /* Each replayed request's body and authorization header. */
   replayed = PluginRig.pipe(
     Effect.flatMap((rig) => rig.sent),
@@ -118,10 +90,7 @@ const FIRST_CALL = 1,
           ),
         ),
     ),
-  ),
-  /* The plain 401 the API answered with. */
-  unauthorized = (): Response =>
-    new Response("unauthorized", { status: UNAUTHORIZED })
+  )
 
 test.layer(twoStepHost)("401 recovery by adoption and refresh", (it: Tests) => {
   it.effect(
@@ -135,7 +104,10 @@ test.layer(twoStepHost)("401 recovery by adoption and refresh", (it: Tests) => {
             scenario.messages("complete-body"),
           ),
           sent = yield* transformsSupport.bodyText(outbound.clone()),
-          withRecovery = yield* scenario.respond(outbound, unauthorized())
+          withRecovery = yield* scenario.respond(
+            outbound,
+            scenario.unauthorized(),
+          )
 
         expect(sent).toBe("complete-body")
         expect(withRecovery.status).toBe(OK)
@@ -154,7 +126,7 @@ test.layer(rotatedHost)("401 recovery by adoption alone", (it: Tests) => {
       expect.hasAssertions()
       yield* fakeHost.setUp
 
-      const held = releasable(),
+      const held = scenario.releasable(),
         reply = yield* scenario.respond(
           yield* scenario.send(scenario.messages()),
           held.response,
@@ -187,7 +159,7 @@ describe("401 recovery that cannot replay", () => {
 
           const answered = yield* scenario.respond(
             yield* scenario.send(scenario.messages()),
-            unauthorized(),
+            scenario.unauthorized(),
           )
 
           // Replaying the identical bearer token would just earn a second 401.
@@ -212,9 +184,9 @@ describe("401 recovery that cannot replay", () => {
 
         yield* Scope.close(caller, Exit.void)
 
-        expect((yield* scenario.respond(outbound, unauthorized())).status).toBe(
-          UNAUTHORIZED,
-        )
+        expect(
+          (yield* scenario.respond(outbound, scenario.unauthorized())).status,
+        ).toBe(UNAUTHORIZED)
         expect(yield* (yield* PluginRig).refreshes).toBe(ZERO)
       }),
     )

@@ -3,23 +3,23 @@ import AutoReview from "./auto-review.ts"
 import ChatGptAuth from "./chatgpt-auth.ts"
 import CodexResponses from "./codex-client.ts"
 import DenialBreaker from "./denial-breaker.ts"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import Host from "./host.ts"
 import type { Plugin } from "@opencode/plugin/effect"
+import PluginOptions from "./plugin-options.ts"
 import Reviewer from "./reviewer.ts"
 import type { Scope } from "effect"
-import Settings from "./settings.ts"
-
-type PluginContext = Plugin.Context
 
 type HostContext = Parameters<typeof Host.fromPlugin>[typeof FIRST]
 
-type PluginOptionsError = Layer.Error<ReturnType<typeof Settings.fromOptions>>
+type PluginOptionsError = Layer.Error<
+  ReturnType<typeof PluginOptions.fromOptions>
+>
 
 /** The parts of the host's plugin context this plugin uses. */
 interface PluginHost extends HostContext {
-  readonly options: PluginContext["options"]
-  readonly permission: Pick<PluginContext["permission"], "hook">
+  readonly options: Plugin.Context["options"]
+  readonly permission: Pick<Plugin.Context["permission"], "hook">
 }
 
 const FIRST = 0,
@@ -27,20 +27,18 @@ const FIRST = 0,
   composeServices = (
     context: PluginHost,
   ): Layer.Layer<AutoReview, PluginOptionsError> => {
+    // Each layer's name sorts after the names of the layers it uses.
     const host = Host.fromPlugin(context),
-      settings = Settings.fromOptions(context.options),
+      options = PluginOptions.fromOptions(context.options),
       signIn = ChatGptAuth.layer.pipe(Layer.provide(host)),
-      /* The denial breaker. */
-      strikes = DenialBreaker.layer.pipe(Layer.provide(settings)),
-      /* The Codex backend client. */
+      strikes = DenialBreaker.layer.pipe(Layer.provide(options)),
       upstream = CodexResponses.layer.pipe(
-        Layer.provide([signIn, settings, FetchHttpClient.layer]),
+        Layer.provide([signIn, options, FetchHttpClient.layer]),
       ),
-      /* The reviewer that vets each request. */
-      vetting = Reviewer.layer.pipe(Layer.provide([upstream, settings]))
+      vetting = Reviewer.layer.pipe(Layer.provide([upstream, options]))
 
     return AutoReview.layer.pipe(
-      Layer.provide([strikes, host, vetting, settings]),
+      Layer.provide([strikes, host, vetting, options]),
     )
   },
   /* Routes the host's permission prompts through the reviewer. */

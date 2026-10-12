@@ -1,9 +1,9 @@
 import type ChatGptAuth from "./chatgpt-auth.ts"
 import type { Effect } from "effect"
-import { HttpClientRequest } from "effect/unstable/http"
+import { HttpClientRequest } from "effect/http"
+import PluginOptions from "./plugin-options.ts"
 import RequestFailed from "./request-failed-error.ts"
 import { Schema } from "effect"
-import Settings from "./settings.ts"
 
 interface Completion {
   /** Groups one session's reviews for the backend's prompt cache. */
@@ -30,7 +30,7 @@ const ContentText = Schema.Struct({
     model: Schema.String,
     prompt_cache_key: Schema.String,
     reasoning: Schema.Struct({
-      effort: Schema.Literals(Settings.reasoningEfforts),
+      effort: Schema.Literals(PluginOptions.reasoningEfforts),
     }),
     store: Schema.Literal(false),
     stream: Schema.Literal(true),
@@ -39,7 +39,7 @@ const ContentText = Schema.Struct({
   buildRequest = (
     completion: Completion,
     token: Effect.Success<ChatGptAuth["Service"]["current"]>,
-    effort: Settings["Service"]["reasoningEffort"],
+    effort: PluginOptions["Service"]["reasoningEffort"],
   ): Effect.Effect<HttpClientRequest.HttpClientRequest, RequestFailed> =>
     HttpClientRequest.post("/responses").pipe(
       HttpClientRequest.bearerToken(token.accessToken),
@@ -69,4 +69,5 @@ const ContentText = Schema.Struct({
     )
 
 /** Builds the requests sent to the Codex Responses backend. */
+/** @internal */
 export default Object.freeze({ build: buildRequest })

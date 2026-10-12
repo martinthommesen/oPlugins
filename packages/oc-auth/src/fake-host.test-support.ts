@@ -74,7 +74,7 @@ const FIRST = 0,
   /* Set the plugin up on the fake host. */
   setUp = Effect.gen(function* setUp() {
     yield* claudeAuth.setUp(yield* hostWith({}))
-    // Let the work set-up forks, such as following events, start.
+    // Let the work that setup forks, such as following events, start.
     yield* Effect.yieldNow.pipe(Effect.repeat({ times: SETTLE_YIELDS }))
   })
 

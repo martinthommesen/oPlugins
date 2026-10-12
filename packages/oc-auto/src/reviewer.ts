@@ -1,11 +1,9 @@
 import { Context, Duration, Effect, Layer, Ref } from "effect"
 import CodexResponses from "./codex-client.ts"
+import PluginOptions from "./plugin-options.ts"
 import ReviewTimedOut from "./review-timed-out-error.ts"
-import Settings from "./settings.ts"
 import assessment from "./assessment.ts"
 import prompt from "./prompt.ts"
-
-type Complete = CodexResponses["Service"]["complete"]
 
 interface ReviewRequest {
   /** Groups one session's reviews for the backend's prompt cache. */
@@ -17,13 +15,14 @@ interface ReviewRequest {
 }
 
 interface Review {
+  /** The reviewer's assessment of the planned action. */
   readonly assessment: typeof assessment.Assessment.Type
   /** The model that produced the assessment. */
   readonly model: string
 }
 
 type AssessError =
-  | Effect.Error<ReturnType<Complete>>
+  | Effect.Error<ReturnType<CodexResponses["Service"]["complete"]>>
   | Effect.Error<ReturnType<typeof assessment.parse>>
 
 interface Interface {
@@ -36,9 +35,9 @@ interface Interface {
 interface Dependencies {
   readonly codex: CodexResponses["Service"]
   readonly instructions: string
+  readonly options: PluginOptions["Service"]
   /** Avoids retrying a rejected primary model until the plugin reloads. */
   readonly primaryUnavailable: Ref.Ref<boolean>
-  readonly settings: Settings["Service"]
 }
 
 /* Asks `model` for an assessment of `request`. */
@@ -62,11 +61,12 @@ const assessWith = (
       return { assessment: yield* assessment.parse(text), model }
     }),
   /*
-   * Reviews with the primary model, falling back for good once the backend
-   * rejects it, all within the review deadline.
+   * Reviews with the primary model within the review deadline. Once the
+   * backend rejects that model, this and every later review use the
+   * fallback model.
    */
   reviewWith = (dependencies: Dependencies): Interface["review"] => {
-    const { primaryUnavailable, settings } = dependencies,
+    const { options, primaryUnavailable } = dependencies,
       assess = assessWith(dependencies),
       fallBack = Effect.fn("Reviewer.fallBack")(function* fallBack(
         request: ReviewRequest,
@@ -75,25 +75,25 @@ const assessWith = (
 
         yield* Effect.logWarning("reviewer_model_unavailable").pipe(
           Effect.annotateLogs({
-            fallbackModel: settings.fallbackModel,
-            model: settings.model,
+            fallbackModel: options.fallbackModel,
+            model: options.model,
           }),
         )
 
-        return yield* assess(settings.fallbackModel, request)
+        return yield* assess(options.fallbackModel, request)
       }),
       firstChoice = Effect.fn("Reviewer.firstChoice")(function* firstChoice(
         request: ReviewRequest,
       ) {
-        if (settings.fallbackModel === settings.model) {
-          return yield* assess(settings.model, request)
+        if (options.fallbackModel === options.model) {
+          return yield* assess(options.model, request)
         }
 
         if (yield* Ref.get(primaryUnavailable)) {
-          return yield* assess(settings.fallbackModel, request)
+          return yield* assess(options.fallbackModel, request)
         }
 
-        return yield* assess(settings.model, request).pipe(
+        return yield* assess(options.model, request).pipe(
           Effect.catchTag("ModelUnavailable", () => fallBack(request)),
         )
       })
@@ -103,11 +103,11 @@ const assessWith = (
     ) {
       return yield* firstChoice(request).pipe(
         Effect.timeoutOrElse({
-          duration: settings.timeout,
+          duration: options.timeout,
           orElse: () =>
             Effect.fail(
               ReviewTimedOut.make({
-                timeout: Duration.format(settings.timeout),
+                timeout: Duration.format(options.timeout),
               }),
             ),
         }),
@@ -115,7 +115,7 @@ const assessWith = (
     })
   }
 
-/** Sends permission requests to the reviewer model and parses its verdict. */
+/** Sends permission requests to the reviewer model and parses its assessment. */
 class Reviewer extends Context.Service<Reviewer, Interface>()(
   "@martinthommesen/oc-auto/reviewer",
 ) {
@@ -123,15 +123,15 @@ class Reviewer extends Context.Service<Reviewer, Interface>()(
     Reviewer,
     Effect.gen(function* makeReviewer() {
       const codex = yield* CodexResponses,
-        primaryUnavailable = yield* Ref.make(false),
-        settings = yield* Settings
+        options = yield* PluginOptions,
+        primaryUnavailable = yield* Ref.make(false)
 
       return Reviewer.of({
         review: reviewWith({
           codex,
-          instructions: prompt.reviewerInstructions(settings.extraPolicy),
+          instructions: prompt.reviewerInstructions(options.extraPolicy),
+          options,
           primaryUnavailable,
-          settings,
         }),
       })
     }),

@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Fiber, Layer, Schema, pipe } from "effect"
-import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { HttpClientRequest, HttpClientResponse } from "effect/http"
 import { describe, expect, it as test } from "@effect/vitest"
 import RequestFailed from "./request-failed-error.ts"
 import type { Scope } from "effect"
@@ -149,11 +149,11 @@ describe("response stream finalization", () => {
         Effect.gen(function* openConnection() {
           expect.hasAssertions()
 
-          let cancelled = false
+          let canceled = false
 
           const body = new ReadableStream<Uint8Array>({
               cancel(): void {
-                cancelled = true
+                canceled = true
               },
               start(
                 controller: Readonly<
@@ -181,7 +181,7 @@ describe("response stream finalization", () => {
           yield* TestClock.adjust("1 second")
 
           expect(yield* Fiber.join(reading)).toBe('{"outcome":"allow"}')
-          expect(cancelled).toBe(true)
+          expect(canceled).toBe(true)
         }),
     )
   })

@@ -3,7 +3,6 @@ import {
   Clock,
   Context,
   Effect,
-  Encoding,
   Layer,
   Match,
   Option,
@@ -13,6 +12,7 @@ import {
   pipe,
 } from "effect"
 import AuthUnavailable from "./auth-unavailable-error.ts"
+import { Base64Url } from "effect/encoding"
 import type { Credential } from "@opencode/plugin/effect"
 import Host from "./host.ts"
 import type HostError from "./host-error.ts"
@@ -50,7 +50,7 @@ const AuthClaim = Schema.Struct({
       token.split("."),
       Arr.get(JWT_PAYLOAD_SEGMENT),
       Option.flatMap((segment) =>
-        Result.getSuccess(Encoding.decodeBase64UrlString(segment)),
+        Result.getSuccess(Base64Url.decodeString(segment)),
       ),
       Option.flatMap(decodeClaims),
       Option.flatMap((claims) =>
@@ -67,7 +67,8 @@ const AuthClaim = Schema.Struct({
     ),
   noAccount = (): AuthUnavailable =>
     AuthUnavailable.make({
-      reason: "The ChatGPT sign-in does not name a ChatGPT account.",
+      reason:
+        "The ChatGPT sign-in does not name a ChatGPT account. Reconnect OpenAI with /connect.",
     }),
   notConnected = (): AuthUnavailable =>
     AuthUnavailable.make({
@@ -77,11 +78,11 @@ const AuthClaim = Schema.Struct({
     Effect.fail(
       AuthUnavailable.make({
         reason:
-          'OpenAI is connected with an API key. Auto-review needs "Sign in with ChatGPT".',
+          'OpenAI is connected with an API key, but Auto-review needs "Sign in with ChatGPT". Run /connect and choose OpenAI.',
       }),
     ),
   /* The token an unexpired ChatGPT sign-in authenticates with. */
-  oauthToken = Effect.fn("ChatGptAuth.fromOAuth")(function* fromOAuth(
+  oauthToken = Effect.fn("ChatGptAuth.oauthToken")(function* oauthToken(
     oauth: Credential.OAuth,
   ) {
     const accountId = Option.firstSomeOf([

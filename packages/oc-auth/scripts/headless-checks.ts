@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Schema } from "effect"
 import type { PlatformError, Stdio } from "effect"
-import type { ChildProcessSpawner } from "effect/unstable/process"
+import type { ChildProcessSpawner } from "effect/process"
 import HostTestError from "@oc-lib/host-test/host-test-error.ts"
 import commands from "@oc-lib/host-test/command.ts"
 

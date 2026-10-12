@@ -10,7 +10,7 @@ import prompt from "./prompt.ts"
 
 type Advice = Effect.Success<ReturnType<Advisor["Service"]["consult"]>>
 
-/** Why a consultation gave no advice, as far as the log is told. */
+/** The fields of a consultation failure that the log may carry. */
 type ConsultationFailure =
   | Readonly<Pick<AdvisorUnavailable, "_tag">>
   | Readonly<Pick<ConsultationTimedOut, "_tag" | "model" | "seconds">>
@@ -18,6 +18,7 @@ type ConsultationFailure =
   | Readonly<Pick<InvalidModel, "_tag" | "model">>
 
 const ToolInput = Schema.Struct({
+    /** The agent's question for the advisor, if it has one. */
     question: Schema.optionalKey(
       Schema.String.annotate({
         description:

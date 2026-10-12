@@ -15,10 +15,6 @@ import type HostError from "./host-error.ts"
 import { Session } from "@opencode/schema/session"
 import type conversation from "./conversation.ts"
 
-type ConversationItem = ReturnType<
-  typeof conversation.fromSessionMessages
->[number]
-
 /** Script entries a test replaces; the rest come from the default script. */
 interface HostOverrides {
   readonly models?: readonly Model.Info[]
@@ -28,13 +24,11 @@ interface HostOverrides {
   readonly subagent?: boolean
   /** The advisor model's answer to any consultation. */
   readonly reply?: Effect.Effect<string, HostError>
-  readonly transcript?: readonly ConversationItem[]
+  readonly transcript?: ReturnType<typeof conversation.fromSessionMessages>
 }
 
 /** What a fake host was asked to do. */
 interface HostRecord {
-  /** Messages shown to the user. */
-  readonly notices: Ref.Ref<readonly string[]>
   /** Prompts sent to the advisor model. */
   readonly prompts: Ref.Ref<readonly string[]>
 }
@@ -76,8 +70,7 @@ const DEFAULT_REPLY = Effect.succeed("Use a dedicated password hash."),
         ),
       isConsultation: () => Effect.succeed(false),
       models: Effect.succeed(offeredModels(overrides)),
-      notify: (_sessionId, text) =>
-        Ref.update(record.notices, Arr.append(text)),
+      notify: () => Effect.void,
       parent: () =>
         overrides.parentLookup ?? Effect.succeed(parentOf(overrides)),
       transcript: () => Effect.succeed(overrides.transcript ?? []),
@@ -94,7 +87,6 @@ class FakeHost extends Context.Service<FakeHost, HostRecord>()(
     Layer.effectContext(
       Effect.gen(function* fakeHost() {
         const record = FakeHost.of({
-          notices: yield* Ref.make<readonly string[]>([]),
           prompts: yield* Ref.make<readonly string[]>([]),
         })
 

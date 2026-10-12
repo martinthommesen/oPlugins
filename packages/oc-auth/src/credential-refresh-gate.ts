@@ -18,9 +18,9 @@ const NO_WAIT = 0,
     message: ClaudeAuthTerminalError.text,
   }),
   /*
-   * Why a refresh must not proceed for this credential right now: a terminal
-   * failure already recorded for exactly this token, or an active cooldown for
-   * its source. None when the refresh may go ahead.
+   * Why a refresh of `subject` must not go ahead now: a terminal failure
+   * latched for its credential generation, which fails, or a cooldown for its
+   * store. None when the refresh may go ahead.
    */
   refreshBlocked = Effect.fn("CredentialRefresh.refreshBlocked")(
     function* refreshBlocked(subject: Subject) {
@@ -40,8 +40,9 @@ const NO_WAIT = 0,
     },
   ),
   /*
-   * The refresh token was rejected: adopt a winner if one landed in the
-   * meantime, else latch the failure for this credential generation.
+   * The refresh token was rejected: adopt a credential Claude Code or another
+   * process wrote to the store meanwhile, else latch the failure for this
+   * credential generation.
    */
   rejected = Effect.fn("CredentialRefresh.rejected")(function* rejected(
     subject: Subject,
@@ -86,5 +87,5 @@ const NO_WAIT = 0,
   /* Whether `result` carries a credential adopted from the store. */
   wasAdopted = RefreshResult.$is("Adopted")
 
-/** What stops a refresh: a latched terminal failure, or a cooldown. */
+/** The checks that stop a refresh, and the latch for a rejected refresh token. */
 export default Object.freeze({ rejected, unlessBlocked, wasAdopted })

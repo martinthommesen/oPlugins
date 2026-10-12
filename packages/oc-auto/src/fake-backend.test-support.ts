@@ -1,10 +1,6 @@
 import { Array as Arr, Context, Effect, Layer, Option, Ref } from "effect"
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientResponse,
-} from "effect/unstable/http"
-import type { HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http"
+import type { HttpClientRequest } from "effect/http"
 
 type Responder = (request: HttpClientRequest.HttpClientRequest) => Response
 
@@ -50,4 +46,5 @@ class FakeBackend extends Context.Service<
     )
 }
 
+/** @internal */
 export default FakeBackend

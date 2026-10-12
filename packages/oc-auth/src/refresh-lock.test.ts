@@ -84,7 +84,7 @@ describe("refresh lock contention", () => {
             second = yield* support.takeLock(dir, TTL_MS, NOW)
 
           expect(support.isHeld(first)).toBe(true)
-          expect(second).toStrictEqual(LockAttempt.busy())
+          expect(second).toStrictEqual(LockAttempt.Busy())
         }),
     )
   })
@@ -112,8 +112,8 @@ describe("refresh lock expiry", () => {
         expect.assertions(THREE_ASSERTIONS)
 
         /*
-         * The holder "crashes" without releasing; the lock file lingers. A later
-         * acquirer looking from far enough in the future treats it as stale.
+         * The holder stops without releasing, so its ticket stays. A later
+         * caller, far enough in the future, treats it as stale.
          */
         const dir = yield* support.sandbox,
           holder = yield* support.takeLock(dir, TTL_MS, NOW),

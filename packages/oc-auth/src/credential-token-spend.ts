@@ -13,9 +13,7 @@ type Subject = Effect.Success<ReturnType<typeof keys.subjectOf>>
 
 type Tokens = ReturnType<typeof TokenExchange.Outcome.Ok>["credentials"]
 
-type HeldLock = (typeof LockAttempt.held extends (args: infer Args) => object
-  ? Args
-  : never)["lock"]
+type HeldLock = ReturnType<typeof LockAttempt.Held>["lock"]
 
 type Outcome = Effect.Success<ReturnType<TokenExchange["Service"]["exchange"]>>
 

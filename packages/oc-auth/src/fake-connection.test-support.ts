@@ -60,7 +60,7 @@ const FIRST = 0,
         ),
       ),
   asMethodID = Brand.nominal<Credential.OAuth["methodID"]>(),
-  /* An OpenCode credential this plugin imported from `source`, holding `access`. */
+  /* An OpenCode credential this plugin imported from the primary store, holding `access`. */
   imported = (access: string, expires: number): Credential.OAuth =>
     claudeCodeCredential.toOAuth(
       claudeCodeCredential.fromSource(

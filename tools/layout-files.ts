@@ -15,19 +15,21 @@ const LINE_BREAKS = /\s*\n\s*/gu,
   atLine = (file: string, line: number, message: string): string =>
     at(`${file}:${String(line)}`, message),
   decodeManifest = Schema.decodeResult(PackageManifest),
-  /* The text of `file`, or none when the repository lacks it. */
-  fileText = (files: Files, file: string): Option.Option<string> =>
-    Rec.get(files, file),
   /*
-   * The `package.json` at `file`, decoded, or the one problem that stops the
-   * checks from reading it.
+   * `file` decoded with `decode`, or the one problem that stops the checks
+   * from reading it.
    */
-  manifestAt = (files: Files, file: string): Result.Result<Manifest, string> =>
-    Option.match(fileText(files, file), {
-      onNone: () =>
-        Result.fail(at(file, "The file is missing. Add the package.json.")),
+  decodedAt = <Value>(
+    files: Files,
+    file: string,
+    decode: (
+      text: string,
+    ) => Result.Result<Value, { readonly message: string }>,
+  ): Result.Result<Value, string> =>
+    Option.match(Rec.get(files, file), {
+      onNone: () => Result.fail(at(file, "The file is missing. Add it.")),
       onSome: (text) =>
-        decodeManifest(text).pipe(
+        decode(text).pipe(
           Result.mapError((failure: { readonly message: string }) =>
             at(
               file,
@@ -36,6 +38,12 @@ const LINE_BREAKS = /\s*\n\s*/gu,
           ),
         ),
     }),
+  /* The text of `file`, or none when the repository lacks it. */
+  fileText = (files: Files, file: string): Option.Option<string> =>
+    Rec.get(files, file),
+  /* The `package.json` at `file`, decoded, or the problem that stops it. */
+  manifestAt = (files: Files, file: string): Result.Result<Manifest, string> =>
+    decodedAt(files, file, decodeManifest),
   /* A value as a problem quotes it, or `missing` when it's absent. */
   quoted = (value: Option.Option<string>): string =>
     Option.match(value, {
@@ -62,6 +70,7 @@ const LINE_BREAKS = /\s*\n\s*/gu,
 export default Object.freeze({
   at,
   atLine,
+  decodedAt,
   manifestAt,
   quoted,
   quotedField,

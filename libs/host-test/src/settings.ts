@@ -20,14 +20,14 @@ interface Inputs {
 
 const HOST_OLDEST = "oldest",
   HOST_TARGET = "target",
-  /** The oldest host a plugin supports, as `engines.opencode` gives it. */
+  /** The form of an `engines.opencode` that gives the oldest supported host. */
   OLDEST_RANGE = /^>=\d+\.\d+\.\d+$/u,
   OLDEST_RANGE_PREFIX = ">=",
-  /* The part of the plugin's own manifest the host test reads. */
+  /** The part of the plugin's own manifest the host test reads. */
   OwnManifest = Schema.fromJsonString(
     Schema.Struct({ engines: Schema.Struct({ opencode: Schema.String }) }),
   ),
-  /* The part of `@opencode/plugin`'s manifest the host test reads. */
+  /** The part of `@opencode/plugin`'s manifest the host test reads. */
   PluginManifest = Schema.fromJsonString(
     Schema.Struct({ version: Schema.String }),
   ),
@@ -37,21 +37,19 @@ const HOST_OLDEST = "oldest",
    * one, `oldest` for the oldest the plugin supports, and anything else for
    * that version.
    */
-  asRequested = (requested: Option.Option<string>): HostRequest =>
-    Option.match(requested, {
-      onNone: () => Requested.Target(),
-      onSome: (version) => {
-        if (version === HOST_TARGET) {
-          return Requested.Target()
-        }
+  asRequested = (requested: Option.Option<string>): HostRequest => {
+    const version = Option.getOrElse(requested, () => HOST_TARGET)
 
-        if (version === HOST_OLDEST) {
-          return Requested.Oldest()
-        }
+    if (version === HOST_TARGET) {
+      return Requested.Target()
+    }
 
-        return Requested.Exact({ version })
-      },
-    }),
+    if (version === HOST_OLDEST) {
+      return Requested.Oldest()
+    }
+
+    return Requested.Exact({ version })
+  },
   /*
    * The targeted host version: the version of `@opencode/plugin` that the
    * plugin at `checkout` is built against, which the workspace catalog pins.
@@ -81,9 +79,9 @@ const HOST_OLDEST = "oldest",
   inputs = (hostVersionVariable: string): Config.Config<Inputs> =>
     Config.all({
       hostVersion: Config.option(
-        Config.nonEmptyString(hostVersionVariable),
+        Config.NonEmptyString(hostVersionVariable),
       ).pipe(Config.map(asRequested)),
-      keep: Config.option(Config.nonEmptyString("HEADLESS_KEEP")).pipe(
+      keep: Config.option(Config.NonEmptyString("HEADLESS_KEEP")).pipe(
         Config.map(Option.isSome),
       ),
     }),
@@ -140,8 +138,8 @@ const HOST_OLDEST = "oldest",
 
 /**
  * The host test's settings, from its variables, the plugin's manifest, and
- * the workspace catalog. The constructors are the requests', under
- * lowercase names: `new-cap` exempts only Effect's own namespaces.
+ * the workspace catalog. The request constructors have lowercase names here
+ * because `new-cap` accepts a PascalCase call only on a PascalCase owner.
  */
 export default Object.freeze({
   asRequested,

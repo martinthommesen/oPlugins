@@ -82,15 +82,15 @@ describe("refresh lock cooldowns", () => {
            * will not come: it is told how long the cooldown has left instead.
            */
           expect(pending).toStrictEqual(
-            LockAttempt.cooldown({ until: support.base + COOLDOWN_MS }),
+            LockAttempt.Cooldown({ until: support.base + COOLDOWN_MS }),
           )
         }),
     )
   })
 })
 
-test.layer(support.layer)("refresh lock sources", (it: Tests) => {
-  it.effect("keeps locks for different sources independent", () =>
+test.layer(support.layer)("refresh lock stores", (it: Tests) => {
+  it.effect("keeps locks for different stores independent", () =>
     Effect.gen(function* run() {
       expect.assertions(FIVE_ASSERTIONS)
 
@@ -104,7 +104,7 @@ test.layer(support.layer)("refresh lock sources", (it: Tests) => {
       expect(support.isHeld(second)).toBe(true)
       expect((yield* support.held(first)).degraded).toBe(false)
       expect((yield* support.held(second)).degraded).toBe(false)
-      // Each source holds its own ticket.
+      // Each store has its own ticket.
       expect(tickets.filter((file) => file.endsWith(".lock"))).toHaveLength(
         TWO_TICKETS,
       )
@@ -178,8 +178,8 @@ test.layer(support.layer)("refresh lock degradation", (it: Tests) => {
         expect.assertions(FIVE_ASSERTIONS)
 
         /*
-         * Point at a path whose parent is a file, so mkdir/open cannot create
-         * the lock. The lock must never block a refresh, so it grants a no-op.
+         * Point at a path whose parent is a file, so no ticket can be created
+         * there. The lock must never block a refresh, so it grants a no-op.
          */
         const dir = yield* support.sandbox,
           fs = yield* FileSystem.FileSystem,
@@ -188,8 +188,8 @@ test.layer(support.layer)("refresh lock degradation", (it: Tests) => {
           reported = yield* (yield* CapturedLogs).named("refresh_lock_degraded")
 
         /*
-         * Uncoordinated refreshes can burn the shared refresh token, so each
-         * degraded grant is a warning, with its cause only at debug level.
+         * Uncoordinated refreshes can spend the shared refresh token twice, so
+         * each degraded grant is a warning, with its cause only at debug level.
          */
         expect(
           reported.filter((record) => record.level === "Warn"),

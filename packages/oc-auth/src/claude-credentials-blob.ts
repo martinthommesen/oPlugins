@@ -23,7 +23,10 @@ const ASTRAL_START = 65_536,
   /** Any JSON object, its values kept as they were. */
   JsonRecord = Schema.Record(Schema.String, Schema.Unknown),
   JsonRecordFromString = Schema.fromJsonString(JsonRecord),
-  /* Characters `security` would hand back as hex. */
+  /**
+   * Characters `JSON.stringify` leaves as they are and `security` would
+   * print as hex: DEL and everything outside ASCII.
+   */
   NON_ASCII = /[\u{7F}-\u{10FFFF}]/gu,
   NO_CODE_POINT = 0,
   SURROGATE_HIGH = 55_296,
@@ -35,7 +38,10 @@ const ASTRAL_START = 65_536,
     expiresAt: ClaudeCredentials.fields.expiresAt,
     refreshToken: ClaudeCredentials.fields.refreshToken,
   }),
-  /* The UTF-16 code units of one code point. */
+  /*
+   * The UTF-16 code units of one code point. The lint rules allow only
+   * `codePointAt`, so a code point outside the BMP is split by hand.
+   */
   codeUnits = (codePoint: number): readonly number[] => {
     if (codePoint < ASTRAL_START) {
       return [codePoint]
@@ -102,27 +108,27 @@ const ASTRAL_START = 65_536,
    * root, or none when it holds no usable token pair (an mcpOAuth-only
    * blob, say).
    */
-  parseCredentials = Effect.fn("ClaudeCredentialsBlob.parse")(function* parse(
-    raw: string,
-  ) {
-    const blob = decodeObject(raw),
-      data = blob.pipe(Option.flatMap((root) => credentialObject(root)))
+  parseCredentials = Effect.fn("ClaudeCredentialsBlob.parseCredentials")(
+    function* parseCredentials(raw: string) {
+      const blob = decodeObject(raw),
+        data = blob.pipe(Option.flatMap((root) => credentialObject(root)))
 
-    if (Option.isNone(blob) || Option.isNone(data)) {
-      return Option.none<Credentials>()
-    }
+      if (Option.isNone(blob) || Option.isNone(data)) {
+        return Option.none<Credentials>()
+      }
 
-    yield* pluginLog.debug(
-      "credentials_parsed",
-      describe(blob.value, data.value),
-    )
+      yield* pluginLog.debug(
+        "credentials_parsed",
+        describe(blob.value, data.value),
+      )
 
-    return pairOf(data.value)
-  }),
+      return pairOf(data.value)
+    },
+  ),
   /*
    * `value` as JSON, escaped to ASCII so a Keychain item stays printable.
-   * `security` hands back anything else as hex, which the Claude CLI may
-   * not expect.
+   * `security` hands back anything else as hex, which Claude Code may not
+   * expect.
    */
   printableJson = (value: JsonObject): string =>
     JSON.stringify(value).replaceAll(NON_ASCII, (char) => escapeChar(char)),
@@ -136,7 +142,7 @@ const ASTRAL_START = 65_536,
     ]),
   /*
    * `existing` with its tokens replaced and everything else kept, or none
-   * when it is not a credential object this can safely edit.
+   * when it is not a credential object the plugin can safely edit.
    */
   updatedBlob = (existing: string, tokens: Tokens): Option.Option<string> =>
     decodeObject(existing).pipe(

@@ -44,9 +44,9 @@ const TRAILING_PERIOD = /\.$/u,
     })
 
 /**
- * A plugin's options in `opencode.jsonc` are invalid, so the plugin did not
- * start. The message names every offending option and what is wrong with
- * it, and never the value it was given.
+ * A plugin's options in `opencode.jsonc` are invalid, so the plugin didn't
+ * start. The message names every invalid or unknown option and what's wrong
+ * with it, and never the value it was given.
  */
 // oxlint-disable-next-line unicorn/throw-new-error -- `Schema.TaggedError` builds a class; nothing is thrown here.
 class PluginOptionsError extends Schema.TaggedError<PluginOptionsError>()(

@@ -5,7 +5,7 @@ const DEFAULT_MODEL = "anthropic/claude-sonnet-5-5",
   OFFLINE_FLAG = "--offline",
   /** The variables the smoke test reads, beside the host test's own. */
   inputs = Config.all({
-    customModel: Config.string("OC_AUTH_HEADLESS_CUSTOM_MODEL").pipe(
+    customModel: Config.String("OC_AUTH_HEADLESS_CUSTOM_MODEL").pipe(
       Config.map((value) => value === "1"),
       Config.withDefault(false),
     ),
@@ -14,13 +14,13 @@ const DEFAULT_MODEL = "anthropic/claude-sonnet-5-5",
      * effort beta, so the smoke run covers what a version or beta change can
      * break.
      */
-    model: Config.nonEmptyString("OC_AUTH_HEADLESS_MODEL").pipe(
+    model: Config.NonEmptyString("OC_AUTH_HEADLESS_MODEL").pipe(
       Config.withDefault(DEFAULT_MODEL),
     ),
     /** The inherited `PATH`, which the sandbox's `bin` is put in front of. */
-    path: Config.string("PATH").pipe(Config.withDefault("")),
+    path: Config.String("PATH").pipe(Config.withDefault("")),
     refreshConfigDir: Config.option(
-      Config.nonEmptyString("OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR"),
+      Config.NonEmptyString("OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR"),
     ),
   }),
   /*

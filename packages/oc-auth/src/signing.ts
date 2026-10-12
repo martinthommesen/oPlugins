@@ -1,4 +1,5 @@
-import { Crypto, Effect, Encoding } from "effect"
+import { Crypto, Effect } from "effect"
+import { Hex } from "effect/encoding"
 
 const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:",
   BILLING_SALT = "59cf53e54c78",
@@ -11,15 +12,15 @@ const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:",
   SUFFIX_START = 0,
   byteEncoder = new TextEncoder(),
   /*
-   * The characters at indices 4, 7 and 20 of `messageText`, each padded with
-   * "0" when the message is shorter.
+   * The characters at indices 4, 7, and 20 of `messageText`, each "0" when
+   * the message is too short to have it.
    */
   charSample = (messageText: string): string =>
     SAMPLE_INDICES.map((index) => messageText.at(index) ?? PADDING).join(""),
   /*
-   * The 3-char version suffix: the sampled characters hashed with the billing
-   * salt and version string. SHA-256 cannot fail on a working platform, so a
-   * failure is a defect rather than a request error.
+   * The 3-character version suffix: the sampled characters hashed with the
+   * billing salt and version string. SHA-256 cannot fail on a working
+   * platform, so a failure is a defect rather than a request error.
    */
   computeSuffix = Effect.fn("Signing.versionSuffix")(function* computeSuffix(
     messageText: string,
@@ -35,13 +36,13 @@ const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:",
         )
         .pipe(Effect.orDie)
 
-    return Encoding.encodeHex(digest).slice(SUFFIX_START, SUFFIX_END)
+    return Hex.encode(digest).slice(SUFFIX_START, SUFFIX_END)
   }),
   /*
-   * The complete billing header string for insertion into system[0]. `text`
-   * is the first user message's first text block, as Claude Code's own
-   * extraction selects it.
-   * Format: x-anthropic-billing-header: cc_version=V.S; cc_entrypoint=E; cch=00000;
+   * The billing header to insert into `system[0]`, in the form
+   * `x-anthropic-billing-header: cc_version=V.S; cc_entrypoint=E; cch=00000;`.
+   * `text` is the first text block of the first user message, the one Claude
+   * Code itself picks.
    */
   headerValue = Effect.fn("Signing.billingHeader")(function* headerValue(
     text: string,

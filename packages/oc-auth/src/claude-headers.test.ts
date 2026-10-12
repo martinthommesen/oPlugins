@@ -21,7 +21,7 @@ const EFFORT = "effort-2025-11-24",
   /* The anthropic-beta flags in `headers`. */
   betasOf = (headers: Headers): readonly string[] =>
     String(headers.get("anthropic-beta")).split(","),
-  /* The plugin's `options`, on a machine with a home. */
+  /* The plugin's `options`, on a machine whose home holds nothing. */
   environmentOf = (
     options: Plugin.Context["options"] = {},
   ): Layer.Layer<Environment | PluginOptions> =>
@@ -29,26 +29,25 @@ const EFFORT = "effort-2025-11-24",
       Layer.orDie,
     ),
   /* The Claude Code headers for a request carrying `original`, for `model`. */
-  headersFor = (
+  headersFor = Effect.fn("test.headersFor")(function* headersFor(
     original: Readonly<Record<string, string>>,
     model: string,
-  ): Effect.Effect<Headers, never, Environment | PluginOptions> =>
-    Effect.gen(function* build() {
-      const environment = yield* Environment,
-        options = yield* PluginOptions
+  ) {
+    const environment = yield* Environment,
+      options = yield* PluginOptions
 
-      return claudeHeaders.build(
-        {
-          accessToken: "access",
-          modelID: model,
-          original: new Headers(original),
-          requestID: "request",
-          sessionID: "session",
-        },
-        options,
-        environment.process,
-      )
-    })
+    return claudeHeaders.build(
+      {
+        accessToken: "access",
+        modelID: model,
+        original: new Headers(original),
+        requestID: "request",
+        sessionID: "session",
+      },
+      options,
+      environment.process,
+    )
+  })
 
 describe("claude headers merged with the caller's", () => {
   test.layer(environmentOf())((it: Tests) => {

@@ -61,7 +61,7 @@ const ONE_MS = 1,
   expiredWinner = conflictWith(
     support.tokens("expired-winner", "r", support.BASE_TIME - ONE_MS),
   ),
-  /* The source-token fingerprint a result's credential carries. */
+  /* The fingerprint of the store's token that a result's credential carries. */
   hashAfter = (
     result: Effect.Success<ReturnType<typeof support.refresh>>,
   ): Option.Option<string> =>
@@ -85,7 +85,7 @@ const ONE_MS = 1,
 test.layer(rotatedElsewhere)(
   "adoption of an external credential",
   (it: Tests) => {
-    it.effect("adopts a distinct usable source credential", () =>
+    it.effect("adopts a distinct usable credential from the store", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
@@ -105,7 +105,7 @@ test.layer(rotatedElsewhere)(
 describe("refresh whose write-back failed", () => {
   test.layer(answering("failed"))((it: Tests) => {
     it.effect(
-      "does not resurrect the stale source left by a failed write",
+      "does not adopt the stale credential a failed write left in the store",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()
@@ -134,8 +134,10 @@ describe("refresh whose write-back failed", () => {
         yield* support.begin
         yield* support.refresh(yield* original)
 
-        // A failed write is a decision about the stored blob; repeating the
-        // Whole guarded sequence reaches the same conclusion.
+        /*
+         * A failed write is the store's decision about what it holds, and
+         * repeating the guarded write would reach the same decision.
+         */
         expect(yield* writesSoFar).toHaveLength(SINGLE_WRITE)
       }),
     )
@@ -189,7 +191,7 @@ describe("write-back warnings", () => {
 test.layer(answering("unavailable"))(
   "refresh whose store stays unreachable",
   (it: Tests) => {
-    it.effect("keeps the source hash when the store stays unreachable", () =>
+    it.effect("keeps the old fingerprint when the store is unreachable", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin
@@ -229,7 +231,7 @@ describe("refresh that meets a write-back conflict", () => {
   })
 
   test.layer(liveWinner)((it: Tests) => {
-    it.effect("adopts the winning source after a write-back conflict", () =>
+    it.effect("adopts the winning credential after a write-back conflict", () =>
       Effect.gen(function* run() {
         expect.hasAssertions()
         yield* support.begin

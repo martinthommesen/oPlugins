@@ -11,7 +11,7 @@ type Layout = Effect.Success<ReturnType<typeof sandbox.acquire>>
 
 type Settings = Readonly<Effect.Success<typeof headlessSettings>>
 
-type Source = Readonly<Effect.Success<ReturnType<typeof credentials.prepare>>>
+type Store = Readonly<Effect.Success<ReturnType<typeof credentials.prepare>>>
 
 type Mock = Readonly<Effect.Success<ReturnType<typeof mockAnthropic.start>>>
 
@@ -48,7 +48,7 @@ const NPM_NAME = "@martinthommesen/oc-auth",
   /* Report success, after the mock's verdict or the write-back check. */
   conclude = Effect.fn("Headless.conclude")(function* conclude(
     config: Settings,
-    source: Source,
+    store: Store,
     mock: Option.Option<Mock>,
   ) {
     const offlinePass = Console.log(asOfflinePass(config)),
@@ -58,7 +58,7 @@ const NPM_NAME = "@martinthommesen/oc-auth",
 
     yield* Option.match(mock, {
       onNone: () =>
-        credentials.checkWriteBack(source).pipe(Effect.andThen(onlinePass)),
+        credentials.checkWriteBack(store).pipe(Effect.andThen(onlinePass)),
       onSome: (server) => server.verify.pipe(Effect.andThen(offlinePass)),
     })
   }),
@@ -98,16 +98,16 @@ const NPM_NAME = "@martinthommesen/oc-auth",
   }),
   /*
    * The environment the host runs with, as changes to the inherited one:
-   * the sandbox's Claude config directory, `security` stand-in, and
-   * OpenCode directories. The plugin's settings are options in the host
-   * config, so the developer's shell cannot change what it sends.
+   * the sandbox's Claude Code config directory, `security` stand-in, and
+   * OpenCode directories. The plugin's options are in the host config, so
+   * the developer's shell cannot change what it sends.
    */
   hostEnvironment = (
     layout: Layout,
     config: Settings,
-    source: Source,
+    store: Store,
   ): Readonly<Record<HostVariable, string>> => ({
-    CLAUDE_CONFIG_DIR: source.configDir,
+    CLAUDE_CONFIG_DIR: store.configDir,
     OC_AUTH_SECURITY_BIN: layout.security,
     PATH: `${layout.bin}:${config.path}`,
     XDG_CACHE_HOME: layout.cache,
@@ -141,9 +141,9 @@ const NPM_NAME = "@martinthommesen/oc-auth",
         npmName: NPM_NAME,
         packed: layout.packed,
       }),
-      source = yield* credentials.prepare(layout.root, config),
+      store = yield* credentials.prepare(layout.root, config),
       target = {
-        env: hostEnvironment(layout, config, source),
+        env: hostEnvironment(layout, config, store),
         opencode,
         work: layout.work,
       }
@@ -157,7 +157,8 @@ const NPM_NAME = "@martinthommesen/oc-auth",
       sentinel: marker,
       smoke: layout.smoke,
     })
-    yield* conclude(config, source, mock)
+    yield* conclude(config, store, mock)
   }).pipe(Effect.scoped)
 
+/** @internal */
 export default smokeTest

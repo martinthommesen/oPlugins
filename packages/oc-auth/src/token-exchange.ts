@@ -4,9 +4,9 @@ import {
   Headers,
   HttpClient,
   HttpClientRequest,
-} from "effect/unstable/http"
+} from "effect/http"
 import type ClaudeCredentials from "./claude-credentials.ts"
-import type { HttpClientError } from "effect/unstable/http"
+import type { HttpClientError } from "effect/http"
 import oauthResponse from "./oauth-token-response.ts"
 import pluginLog from "./plugin-log.ts"
 import policy from "./refresh-backoff-policy.ts"
@@ -198,4 +198,5 @@ class TokenExchange extends Context.Service<
     TokenExchange.layerWithClient.pipe(Layer.provide(FetchHttpClient.layer))
 }
 
+/** @internal */
 export default TokenExchange

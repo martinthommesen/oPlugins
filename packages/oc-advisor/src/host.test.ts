@@ -1,19 +1,21 @@
 import {
+  Context,
   Deferred,
   Duration,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Option,
   Ref,
   Schema,
+  Scope,
 } from "effect"
 import { assert, describe, it as test } from "@effect/vitest"
 import Advisor from "./advisor.ts"
 import ConsultationTimedOut from "./consultation-timed-out-error.ts"
 import Host from "./host.ts"
 import { Model } from "@opencode/plugin/effect"
-import type { Scope } from "effect"
 import { Session } from "@opencode/schema/session"
 import SessionRecord from "./session-record.test-support.ts"
 import { TestClock } from "effect/testing"
@@ -23,10 +25,6 @@ import support from "./advisor.test-support.ts"
 type FakeSession = Parameters<
   typeof Host.fromPlugin<string>
 >[typeof FIRST]["session"]
-
-type Advice = Effect.Success<ReturnType<Advisor["Service"]["consult"]>>
-
-type ConsultationError = Effect.Error<ReturnType<Advisor["Service"]["consult"]>>
 
 interface Scenario {
   readonly create?: Effect.Effect<void>
@@ -50,15 +48,11 @@ const CHILD_ID = Session.ID.make("ses_advisor_child"),
     parentID: support.SESSION_ID,
     projectID: "project_test",
     time: { created: 0, updated: 0 },
-    tokens: {
-      cache: { read: 0, write: 0 },
-      input: 0,
-      output: 0,
-      reasoning: 0,
-    },
+    tokens: { cache: { read: 0, write: 0 }, input: 0, output: 0, reasoning: 0 },
   }),
   FIRST = 0,
   MODEL = Model.Ref.parse("anthropic/claude-opus-5-5"),
+  REMOVAL_SECONDS = 2,
   SLOW_SECONDS = 10,
   TIMEOUT_SECONDS = 1,
   /* The host's session API as `scenario` scripts it, recording in `record`. */
@@ -112,39 +106,6 @@ const CHILD_ID = Session.ID.make("ses_advisor_child"),
 
     return { advisor: yield* Advisor, begun, host: yield* Host, removals }
   }),
-  /* Starts a consultation, lets the clock run past the deadline, and awaits it. */
-  awaitTimeout = (
-    advisor: Advisor["Service"],
-  ): Effect.Effect<readonly [Duration.Duration, ConsultationError], Advice> =>
-    advisor.consult(support.SESSION_ID, Option.none()).pipe(
-      Effect.flip,
-      Effect.timed,
-      Effect.forkChild,
-      Effect.tap(() => TestClock.adjust(`${SLOW_SECONDS} seconds`)),
-      Effect.flatMap((fiber) => Fiber.join(fiber)),
-    ),
-  boundsCleanup = Effect.gen(function* boundsCleanup() {
-    const { advisor, removals } = yield* arranged,
-      [duration, error] = yield* awaitTimeout(advisor)
-
-    assert.instanceOf(error, ConsultationTimedOut)
-    assert.strictEqual(Duration.toSeconds(duration), TIMEOUT_SECONDS)
-    assert.deepStrictEqual(yield* Ref.get(removals), [CHILD_ID])
-  }),
-  boundsParentLookup = Effect.gen(function* boundsParentLookup() {
-    const { advisor } = yield* arranged,
-      [duration, error] = yield* awaitTimeout(advisor)
-
-    assert.instanceOf(error, ConsultationTimedOut)
-    assert.strictEqual(Duration.toSeconds(duration), TIMEOUT_SECONDS)
-  }),
-  boundsTranscriptLoading = Effect.gen(function* boundsTranscriptLoading() {
-    const { advisor } = yield* arranged,
-      [duration, error] = yield* awaitTimeout(advisor)
-
-    assert.instanceOf(error, ConsultationTimedOut)
-    assert.strictEqual(Duration.toSeconds(duration), TIMEOUT_SECONDS)
-  }),
   cleansUpFailure = Effect.gen(function* cleansUpFailure() {
     const { host, removals } = yield* arranged,
       error = yield* host
@@ -173,18 +134,35 @@ const CHILD_ID = Session.ID.make("ses_advisor_child"),
     assert.deepStrictEqual(yield* Ref.get(removals), [CHILD_ID])
     assert.isFalse(yield* host.isConsultation(CHILD_ID))
   }),
-  cleansUpSuccess = Effect.gen(function* cleansUpSuccess() {
-    const { host, removals } = yield* arranged
+  /*
+   * Consults on a host scripted by `scenario`, closes the plugin's scope while
+   * the deletion runs, and checks the outcome once the scope has closed.
+   * `kept` says whether the session should still be marked as a consultation.
+   */
+  closeMidCleanup = Effect.fn("closeMidCleanup")(function* closeMidCleanup(
+    scenario: Scenario,
+    kept: boolean,
+  ) {
+    const lifetime = yield* Scope.make(),
+      services = yield* Layer.buildWithScope(arrange(scenario), lifetime),
+      teardown = yield* Context.get(services, Host)
+        .consult(support.SESSION_ID, "Question", MODEL)
+        .pipe(
+          Effect.andThen(Scope.close(lifetime, Exit.void)),
+          Effect.forkChild,
+        )
 
-    assert.strictEqual(
-      yield* host.consult(support.SESSION_ID, "Question", MODEL),
-      "Advice.",
+    yield* TestClock.adjust(`${SLOW_SECONDS} seconds`)
+    yield* Fiber.join(teardown)
+
+    assert.deepStrictEqual(
+      yield* Ref.get(Context.get(services, SessionRecord).removals),
+      [CHILD_ID],
     )
-
-    yield* Effect.yieldNow
-
-    assert.deepStrictEqual(yield* Ref.get(removals), [CHILD_ID])
-    assert.isFalse(yield* host.isConsultation(CHILD_ID))
+    assert.strictEqual(
+      yield* Context.get(services, Host).isConsultation(CHILD_ID),
+      kept,
+    )
   }),
   doesNotDelayAdvice = Effect.gen(function* doesNotDelayAdvice() {
     const { advisor } = yield* arranged,
@@ -199,82 +177,78 @@ const CHILD_ID = Session.ID.make("ses_advisor_child"),
   }),
   failedGeneration = arrange({ generate: Effect.fail("provider unavailable") }),
   failedRemoval = arrange({ remove: Effect.fail("remove unavailable") }),
-  /* A removal that fails the first time `failed` is unset, then succeeds. */
+  /* A removal that fails once, then succeeds, recording the failure in `failed`. */
   failingOnce = (failed: Ref.Ref<boolean>): Effect.Effect<void, string> =>
-    Effect.gen(function* transientRemoval() {
-      if (!(yield* Ref.get(failed))) {
-        yield* Ref.set(failed, true)
-
-        return yield* Effect.fail("remove unavailable")
-      }
-
-      return yield* Effect.void
-    }),
+    Effect.fail("remove unavailable").pipe(
+      Effect.when(Ref.modify(failed, (done) => [!done, true])),
+      Effect.asVoid,
+    ),
   /** A host whose first session removal fails and whose retry succeeds. */
   flakyRemoval = Layer.unwrap(
     Ref.make(false).pipe(
       Effect.map((failed) => arrange({ remove: failingOnce(failed) })),
     ),
   ),
-  interruptsCreation = Effect.gen(function* interruptsCreation() {
+  /*
+   * Gets advice, then checks the removals its cleanup asked for. `kept` says
+   * whether the session should still be marked as a consultation.
+   */
+  removesAfterAdvice = Effect.fn("removesAfterAdvice")(
+    function* removesAfterAdvice(removed: readonly string[], kept: boolean) {
+      const { host, removals } = yield* arranged
+
+      assert.strictEqual(
+        yield* host.consult(support.SESSION_ID, "Question", MODEL),
+        "Advice.",
+      )
+
+      yield* Effect.yieldNow
+
+      assert.deepStrictEqual(yield* Ref.get(removals), removed)
+      assert.strictEqual(yield* host.isConsultation(CHILD_ID), kept)
+    },
+  ),
+  stalledCleanup = arrange({ generate: Effect.never, remove: Effect.never }),
+  stalledParent = arrange({ parent: Effect.never, subagents: false }),
+  /* Times a consultation out at the deadline, having removed `expected`. */
+  timesOutRemoving = Effect.fn("timesOutRemoving")(function* timesOutRemoving(
+    expected: readonly string[],
+  ) {
     const { advisor, removals } = yield* arranged,
-      [duration, error] = yield* awaitTimeout(advisor)
+      [duration, error] = yield* advisor
+        .consult(support.SESSION_ID, Option.none())
+        .pipe(
+          Effect.flip,
+          Effect.timed,
+          Effect.forkChild,
+          Effect.tap(() => TestClock.adjust(`${SLOW_SECONDS} seconds`)),
+          Effect.flatMap((fiber) => Fiber.join(fiber)),
+        )
 
     assert.instanceOf(error, ConsultationTimedOut)
     assert.strictEqual(Duration.toSeconds(duration), TIMEOUT_SECONDS)
-    assert.deepStrictEqual(yield* Ref.get(removals), [])
-  }),
-  keepsFailedCleanupTracked = Effect.gen(function* keepsFailedCleanupTracked() {
-    const { host } = yield* arranged
-
-    yield* host.consult(support.SESSION_ID, "Question", MODEL)
-
-    yield* Effect.yieldNow
-
-    assert.isTrue(yield* host.isConsultation(CHILD_ID))
-  }),
-  retriesDeletion = Effect.gen(function* retriesDeletion() {
-    const { host, removals } = yield* arranged
-
-    yield* host.consult(support.SESSION_ID, "Question", MODEL)
-
-    yield* Effect.yieldNow
-
-    assert.deepStrictEqual(yield* Ref.get(removals), [CHILD_ID, CHILD_ID])
-    assert.isFalse(yield* host.isConsultation(CHILD_ID))
-  }),
-  stalledCleanup = arrange({ generate: Effect.never, remove: Effect.never }),
-  stalledParent = arrange({ parent: Effect.never, subagents: false })
-
-describe("host consultation lifecycle", () => {
-  test.layer(arrange({}))((it: Tests) => {
-    it.effect("removes successful consultation sessions", () => cleansUpSuccess)
+    assert.deepStrictEqual(yield* Ref.get(removals), expected)
   })
+
+describe("host consultation deadline", () => {
   test.layer(arrange({ create: Effect.never }))((it: Tests) => {
-    it.effect(
-      "interrupts a stalled session creation at the deadline",
-      () => interruptsCreation,
+    it.effect("interrupts a stalled session creation at the deadline", () =>
+      timesOutRemoving([]),
     )
   })
   test.layer(stalledCleanup)((it: Tests) => {
-    it.effect("bounds cleanup when session removal stalls", () => boundsCleanup)
-  })
-  test.layer(failedRemoval)((it: Tests) => {
-    it.effect(
-      "keeps failed deletions identifiable as advisor sessions",
-      () => keepsFailedCleanupTracked,
+    it.effect("bounds cleanup when session removal stalls", () =>
+      timesOutRemoving([CHILD_ID]),
     )
   })
   test.layer(arrange({ transcript: Effect.never }))((it: Tests) => {
-    it.effect(
-      "includes transcript loading in the deadline",
-      () => boundsTranscriptLoading,
+    it.effect("includes transcript loading in the deadline", () =>
+      timesOutRemoving([]),
     )
   })
   test.layer(stalledParent)((it: Tests) => {
-    it.effect(
-      "includes the parent lookup in the deadline",
-      () => boundsParentLookup,
+    it.effect("includes the parent lookup in the deadline", () =>
+      timesOutRemoving([]),
     )
   })
   test.layer(arrange({ remove: Effect.never }))((it: Tests) => {
@@ -283,8 +257,23 @@ describe("host consultation lifecycle", () => {
       () => doesNotDelayAdvice,
     )
   })
+})
+
+describe("host consultation cleanup", () => {
+  test.layer(arrange({}))((it: Tests) => {
+    it.effect("removes successful consultation sessions", () =>
+      removesAfterAdvice([CHILD_ID], false),
+    )
+  })
+  test.layer(failedRemoval)((it: Tests) => {
+    it.effect("keeps sessions it fails to delete marked as consultations", () =>
+      removesAfterAdvice([CHILD_ID, CHILD_ID], true),
+    )
+  })
   test.layer(flakyRemoval)((it: Tests) => {
-    it.effect("retries a transient deletion failure", () => retriesDeletion)
+    it.effect("retries a transient deletion failure", () =>
+      removesAfterAdvice([CHILD_ID, CHILD_ID], false),
+    )
   })
   test.layer(failedGeneration)((it: Tests) => {
     it.effect("cleans up after generation fails", () => cleansUpFailure)
@@ -295,4 +284,16 @@ describe("host consultation lifecycle", () => {
       () => cleansUpInterruption,
     )
   })
+})
+
+describe("host consultation cleanup as the plugin closes", () => {
+  test.effect("finishes a pending deletion first", () =>
+    closeMidCleanup(
+      { remove: Effect.sleep(`${REMOVAL_SECONDS} seconds`) },
+      false,
+    ),
+  )
+  test.effect("gives up on a stalled deletion at its deadline", () =>
+    closeMidCleanup({ remove: Effect.never }, true),
+  )
 })

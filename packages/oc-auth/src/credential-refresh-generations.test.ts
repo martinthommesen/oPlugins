@@ -102,7 +102,7 @@ const FIRST = 0,
         ),
       ),
   /* An expired generation of the primary store, with its own label. */
-  labelledGeneration = support.imported(
+  labeledGeneration = support.imported(
     Struct.assign(support.account(support.PRIMARY, "latest-expired"), {
       credentials: expiredTokens,
       label: "Second persisted label",
@@ -137,7 +137,7 @@ test.layer(generationsStore)(
   "refresh of two generations of one store",
   (it: Tests) => {
     it.effect(
-      "coordinates different credential generations for one source",
+      "coordinates different credential generations for one store",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()
@@ -145,7 +145,7 @@ test.layer(generationsStore)(
 
           const [first, second] = yield* atOnce(
             yield* original,
-            yield* labelledGeneration,
+            yield* labeledGeneration,
           )
 
           expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
@@ -162,7 +162,7 @@ test.layer(generationsStore)(
 )
 
 test.layer(fileStores)("refresh of distinct file stores", (it: Tests) => {
-  it.effect("does not share refreshes between different file sources", () =>
+  it.effect("does not share refreshes between different file stores", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
       yield* support.begin
@@ -187,7 +187,7 @@ test.layer(rotatedAfterLock)(
   "refresh after an expired external rotation",
   (it: Tests) => {
     it.effect(
-      "uses one post-lock source snapshot for an expired external rotation",
+      "refreshes from the expired rotation the store holds under the lock",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()

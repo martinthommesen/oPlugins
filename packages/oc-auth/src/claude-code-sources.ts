@@ -1,14 +1,15 @@
-import { Crypto, Effect, Encoding, Option, Path } from "effect"
+import { Crypto, Effect, Option, Path } from "effect"
 import Environment from "./environment.ts"
+import { Hex } from "effect/encoding"
 
 const FILE_SOURCE = "file",
   FINGERPRINT_LENGTH = 32,
-  /** Service names the Claude CLI creates. Anything else is not ours to touch. */
+  /** Item names Claude Code creates. The plugin touches no other item. */
   KEYCHAIN_SERVICE_PATTERN = /^Claude Code-credentials(?:-[0-9a-f]+)?$/u,
   PRIMARY_SERVICE = "Claude Code-credentials",
   START = 0,
   SUFFIX_LENGTH = 8,
-  /* The config directory the Claude CLI uses when CLAUDE_CONFIG_DIR is unset. */
+  /* The config directory Claude Code uses when `CLAUDE_CONFIG_DIR` is unset. */
   claudeHomeDir = Effect.gen(function* claudeHomeDir() {
     const environment = yield* Environment,
       path = yield* Path.Path
@@ -16,7 +17,7 @@ const FILE_SOURCE = "file",
     return path.join(environment.variables.home, ".claude")
   }),
   codec = new TextEncoder(),
-  /* `configDir`, else CLAUDE_CONFIG_DIR, else the primary directory, resolved. */
+  /* `configDir`, else `CLAUDE_CONFIG_DIR`, else the primary one, resolved. */
   configDirOf = Effect.fn("ClaudeCodeSources.resolveConfigDir")(
     function* configDirOf(configDir: Option.Option<string>) {
       const environment = yield* Environment,
@@ -51,14 +52,14 @@ const FILE_SOURCE = "file",
   ) {
     const platformCrypto = yield* Crypto.Crypto
 
-    return Encoding.encodeHex(
+    return Hex.encode(
       yield* platformCrypto.digest("SHA-256", codec.encode(text)),
     )
   }, Effect.orDie),
   /*
-   * Whether `source` names a credential store this plugin owns. Credential
-   * metadata round-trips through OpenCode's store, so it is checked on the
-   * way back in, and again before anything reaches a subprocess.
+   * Whether `source` names a Claude Code store, which the plugin may read and
+   * write. Credential metadata comes back from OpenCode, so it is checked
+   * when it is decoded, and again before anything reaches a subprocess.
    */
   isKnownCredentialSource = (source: string): boolean =>
     source === FILE_SOURCE || KEYCHAIN_SERVICE_PATTERN.test(source),
@@ -68,9 +69,9 @@ const FILE_SOURCE = "file",
   ): Effect.Effect<string, never, Crypto.Crypto> =>
     digestHex(dir).pipe(Effect.map((hex) => hex.slice(START, SUFFIX_LENGTH))),
   /*
-   * A short, non-reversible tag for an access token, so write-back decisions
-   * can be correlated across log lines (and against another account's)
-   * without putting token material in the log.
+   * A short, non-reversible fingerprint of an access token. Credential
+   * metadata and log records carry it in place of the token, so what a
+   * store holds can be compared and logged without token material.
    */
   tokenFingerprint = (
     token: string,

@@ -1,8 +1,9 @@
-import { Effect, Encoding, HashMap, Option, Ref, Result } from "effect"
+import { Effect, HashMap, Option, Ref, Result } from "effect"
+import { Hex } from "effect/encoding"
 
 /** One run of the fake tool: the Keychain's files and the unread stdin. */
 interface Session {
-  /** The fake Keychain's state, as named files, as the old stand-in kept it. */
+  /** The fake Keychain's state, as named files. */
   readonly files: Ref.Ref<HashMap.HashMap<string, string>>
   /** Stdin lines a `getpass` prompt has not read yet. */
   readonly prompts: Ref.Ref<readonly string[]>
@@ -35,7 +36,7 @@ const ATTEMPTS = 3,
   ): Effect.Effect<Option.Option<string>> =>
     Ref.get(session.files).pipe(Effect.map(HashMap.get(name))),
   fromHex = (hex: string): Option.Option<string> =>
-    Result.getSuccess(Encoding.decodeHexString(hex)),
+    Result.getSuccess(Hex.decodeString(hex)),
   /* `getpass`: the next stdin line, at most 128 characters; EOF reads as "". */
   getpass = (session: Session): Effect.Effect<string> =>
     Ref.modify(session.prompts, (lines) => [
@@ -58,7 +59,7 @@ const ATTEMPTS = 3,
       return stored
     }
 
-    return Encoding.encodeHex(stored)
+    return Hex.encode(stored)
   },
   /*
    * An account name as `find-generic-password` prints it: verbatim between
@@ -83,27 +84,26 @@ const ATTEMPTS = 3,
         })
         .join("")
 
-    return `"acct"<blob>=0x${Encoding.encodeHex(bytes).toUpperCase()}  "${octal}"`
+    return `"acct"<blob>=0x${Hex.encode(bytes).toUpperCase()}  "${octal}"`
   },
   /* A password typed twice, up to three tries, as a trailing `-w` asks. */
-  promptTwice = (
+  promptTwice = Effect.fn("FakeSecurity.promptTwice")(function* promptTwice(
     session: Session,
     attempts: number,
-  ): Effect.Effect<Option.Option<string>> =>
-    Effect.gen(function* prompt() {
-      const first = yield* getpass(session),
-        second = yield* getpass(session)
+  ): Effect.fn.Return<Option.Option<string>> {
+    const first = yield* getpass(session),
+      second = yield* getpass(session)
 
-      if (first === second) {
-        return Option.some(first)
-      }
+    if (first === second) {
+      return Option.some(first)
+    }
 
-      if (attempts <= NEXT) {
-        return Option.none<string>()
-      }
+    if (attempts <= NEXT) {
+      return Option.none<string>()
+    }
 
-      return yield* promptTwice(session, attempts - NEXT)
-    }),
+    return yield* promptTwice(session, attempts - NEXT)
+  }),
   putFile = (
     session: Session,
     name: string,
@@ -136,7 +136,7 @@ const ATTEMPTS = 3,
    * `<service>.flip` replaces the item right after the account lookup,
    * which models a rotation landing while a write is being prepared.
    */
-  viewItem = Effect.fn("FakeSecurity.findPassword")(function* viewItem(
+  viewItem = Effect.fn("FakeSecurity.findGenericPassword")(function* viewItem(
     session: Session,
     args: readonly string[],
   ) {
@@ -177,7 +177,7 @@ const ATTEMPTS = 3,
       }),
     )
   }),
-  /* `dump-keychain`. A missing dump made the stand-in script crash, exiting 1. */
+  /* `dump-keychain`, which fails with exit status 1 when there is no `dump`. */
   wholeDump = (session: Session): Effect.Effect<Outcome> =>
     fileOf(session, "dump").pipe(
       Effect.map(
@@ -215,26 +215,25 @@ const ATTEMPTS = 3,
     }
   }),
   /* `add-generic-password`, recording the account it wrote as. */
-  writtenItem = Effect.fn("FakeSecurity.addPassword")(function* writtenItem(
-    session: Session,
-    args: readonly string[],
-  ) {
-    const password = yield* suppliedPassword(session, args),
-      service = Option.getOrElse(option(args, "-s"), () => "")
+  writtenItem = Effect.fn("FakeSecurity.addGenericPassword")(
+    function* writtenItem(session: Session, args: readonly string[]) {
+      const password = yield* suppliedPassword(session, args),
+        service = Option.getOrElse(option(args, "-s"), () => "")
 
-    if (Option.isNone(password)) {
-      return done(EXIT_FAILURE)
-    }
+      if (Option.isNone(password)) {
+        return done(EXIT_FAILURE)
+      }
 
-    yield* writeLanding(session, service, password.value)
-    yield* putFile(
-      session,
-      `${service}.written-as`,
-      Option.getOrElse(option(args, "-a"), () => ""),
-    )
+      yield* writeLanding(session, service, password.value)
+      yield* putFile(
+        session,
+        `${service}.written-as`,
+        Option.getOrElse(option(args, "-a"), () => ""),
+      )
 
-    return done(EXIT_SUCCESS)
-  })
+      return done(EXIT_SUCCESS)
+    },
+  )
 
 /** The `security` subcommands the fake tool implements. */
 export default Object.freeze({

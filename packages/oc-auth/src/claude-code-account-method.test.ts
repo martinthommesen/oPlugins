@@ -35,7 +35,7 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   accountB = support.account(ACCOUNT_B),
   accountC = support.account(ACCOUNT_C),
   bothAccounts = [accountA, accountB],
-  /* A store answering with what `accounts` hold, by source and directory. */
+  /* Stores that hold what `accounts` hold, by `source` and config directory. */
   holding = (accounts: readonly Account[]): typeof support.script =>
     Object.freeze({
       acquire: support.script.acquire,
@@ -56,7 +56,7 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   readsSoFar = support.currentRig.pipe(
     Effect.flatMap((rig) => Ref.get(rig.reads)),
   ),
-  /* A refresh rig whose store holds what `accounts` hold. */
+  /* A refresh rig whose stores hold what `accounts` hold. */
   storeHolding = (
     accounts: readonly Account[],
   ): ReturnType<ReturnType<typeof refreshLayer>> =>
@@ -64,12 +64,12 @@ const ACCOUNT_A = "Claude Code-credentials-aaaaaaaa",
   storeWithA = storeHolding([accountA]),
   storeWithBoth = storeHolding(bothAccounts),
   storeWithCAndA = storeHolding([accountC, accountA]),
-  /* The source rotated since startup; the import takes what it holds now. */
+  /* B's store rotated since startup; the import takes what it holds now. */
   storeWithRotatedB = storeHolding([
     support.account(ACCOUNT_B, "rotated-access"),
   ])
 
-test.layer(Layer.empty)("claude Code account form", (it: PureTests) => {
+test.layer(Layer.empty)("the Claude Code account form", (it: PureTests) => {
   it.effect("builds a static account form only for multiple accounts", () =>
     Effect.sync(() => {
       expect.hasAssertions()
@@ -95,87 +95,100 @@ test.layer(Layer.empty)("claude Code account form", (it: PureTests) => {
   )
 })
 
-test.layer(storeWithRotatedB)("claude Code account import", (it: Tests) => {
-  it.effect(
-    "imports the selected account's current credentials with its startup label",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
+test.layer(storeWithRotatedB)(
+  "the import of a Claude Code account",
+  (it: Tests) => {
+    it.effect(
+      "imports the selected account's current credentials with its startup label",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
 
-        const credential = yield* accountMethod.authorize(
-            [accountA, support.account(ACCOUNT_B, "two-access")],
-            { account: ACCOUNT_B },
-          ),
-          fingerprint = yield* sources.tokenFingerprint("rotated-access")
+          const credential = yield* accountMethod.authorize(
+              [accountA, support.account(ACCOUNT_B, "two-access")],
+              { account: ACCOUNT_B },
+            ),
+            fingerprint = yield* sources.tokenFingerprint("rotated-access")
 
-        expect(yield* readsSoFar).toStrictEqual([
-          [ACCOUNT_B, Option.some(`/claude/${ACCOUNT_B}`)],
-        ])
-        expect([
-          credential.type,
-          credential.methodID,
-          credential.access,
-        ]).toStrictEqual([
-          "oauth",
-          claudeCodeCredential.METHOD_ID,
-          "rotated-access",
-        ])
-        expect(claudeCodeCredential.credentialLabel(credential)).toBe(
-          `Claude Pro: ${ACCOUNT_B}`,
-        )
-        expect(claudeCodeCredential.readMetadata(credential)).toStrictEqual(
-          Option.some({
-            accountLabel: `Claude Pro: ${ACCOUNT_B}`,
-            configDir: `/claude/${ACCOUNT_B}`,
-            source: ACCOUNT_B,
-            sourceTokenHash: fingerprint,
-          }),
-        )
-        expect(
-          yield* Schema.encodeEffect(Json)(credential.metadata),
-        ).not.toContain("rotated-access")
-      }),
-  )
-})
-
-test.layer(storeWithA)("claude Code account that disappeared", (it: Tests) => {
-  it.effect("fails closed when the selected account disappeared", () =>
-    Effect.gen(function* run() {
-      expect.hasAssertions()
-
-      const exit = yield* Effect.exit(
-        accountMethod.authorize(bothAccounts, { account: ACCOUNT_B }),
-      )
-
-      expect(Exit.isFailure(exit)).toBe(true)
-      expect(String(exit)).toMatch(/no longer available/u)
-    }),
-  )
-})
-
-test.layer(storeWithBoth)("claude Code account selection", (it: Tests) => {
-  it.effect(
-    "requires an explicit valid answer for a multiple-account form",
-    () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
-
-        const missing = yield* Effect.exit(
-            accountMethod.authorize(bothAccounts, {}),
-          ),
-          wrongType = yield* Effect.exit(
-            accountMethod.authorize(bothAccounts, { account: true }),
+          expect(yield* readsSoFar).toStrictEqual([
+            [ACCOUNT_B, Option.some(`/claude/${ACCOUNT_B}`)],
+          ])
+          expect([
+            credential.type,
+            credential.methodID,
+            credential.access,
+          ]).toStrictEqual([
+            "oauth",
+            claudeCodeCredential.METHOD_ID,
+            "rotated-access",
+          ])
+          expect(claudeCodeCredential.credentialLabel(credential)).toBe(
+            `Claude Pro: ${ACCOUNT_B}`,
           )
+          expect(claudeCodeCredential.readMetadata(credential)).toStrictEqual(
+            Option.some({
+              accountLabel: `Claude Pro: ${ACCOUNT_B}`,
+              configDir: `/claude/${ACCOUNT_B}`,
+              source: ACCOUNT_B,
+              sourceTokenHash: fingerprint,
+            }),
+          )
+          expect(
+            yield* Schema.encodeEffect(Json)(credential.metadata),
+          ).not.toContain("rotated-access")
+        }),
+    )
+  },
+)
 
-        expect(String(missing)).toMatch(/Select a registered/u)
-        expect(String(wrongType)).toMatch(/Select a registered/u)
-        expect(yield* readsSoFar).toStrictEqual([])
+test.layer(storeWithA)(
+  "a Claude Code account that disappeared",
+  (it: Tests) => {
+    it.effect("fails closed when the selected account disappeared", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const exit = yield* Effect.exit(
+          accountMethod.authorize(bothAccounts, { account: ACCOUNT_B }),
+        )
+
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(String(exit)).toMatch(/no longer available/u)
       }),
-  )
-})
+    )
+  },
+)
+
+test.layer(storeWithBoth)(
+  "the selection of a Claude Code account",
+  (it: Tests) => {
+    it.effect(
+      "requires an explicit valid answer for a multiple-account form",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+
+          const empty = yield* Effect.exit(
+              accountMethod.authorize(bothAccounts, { account: "" }),
+            ),
+            missing = yield* Effect.exit(
+              accountMethod.authorize(bothAccounts, {}),
+            ),
+            wrongType = yield* Effect.exit(
+              accountMethod.authorize(bothAccounts, { account: true }),
+            )
+
+          expect(String(missing)).toMatch(/Select a registered/u)
+          expect(String(wrongType)).toMatch(/Select a registered/u)
+          expect(String(empty)).toMatch(/Select a registered/u)
+          expect(yield* readsSoFar).toStrictEqual([])
+        }),
+    )
+  },
+)
 
 test.layer(storeWithCAndA)(
-  "claude Code accounts added after registration",
+  "accounts added to Claude Code after registration",
   (it: Tests) => {
     it.effect("does not expose accounts added after registration", () =>
       Effect.gen(function* run() {

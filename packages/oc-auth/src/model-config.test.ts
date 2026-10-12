@@ -125,24 +125,22 @@ describe("model betas with an inbound header", () => {
   )
 })
 
-describe("model betas with an environment override", () => {
-  it.effect(
-    "falls back to the base set when the environment override is empty",
-    () =>
-      Effect.sync(() => {
-        expect.assertions(TWO_ASSERTIONS)
-        expect(
-          modelConfig.modelBetas("claude-opus-5", Option.some(""), ""),
-        ).toStrictEqual(STANDARD_BETAS)
-        expect(
-          modelConfig.modelBetas("claude-opus-5", Option.some("  "), ""),
-        ).toStrictEqual(STANDARD_BETAS)
-      }),
+describe("model betas with an empty override", () => {
+  it.effect("falls back to the base set when the override is empty", () =>
+    Effect.sync(() => {
+      expect.assertions(TWO_ASSERTIONS)
+      expect(
+        modelConfig.modelBetas("claude-opus-5", Option.some(""), ""),
+      ).toStrictEqual(STANDARD_BETAS)
+      expect(
+        modelConfig.modelBetas("claude-opus-5", Option.some("  "), ""),
+      ).toStrictEqual(STANDARD_BETAS)
+    }),
   )
 })
 
 describe("model betas with a replacing override", () => {
-  it.effect("uses a deduplicated environment override", () =>
+  it.effect("uses a deduplicated override", () =>
     Effect.sync(() => {
       expect.assertions(ONE_ASSERTION)
       expect(

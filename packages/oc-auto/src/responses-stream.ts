@@ -1,7 +1,7 @@
 import { Effect, Match, Option, Schema, String as Str, Stream } from "effect"
-import type { HttpClientResponse } from "effect/unstable/http"
+import type { HttpClientResponse } from "effect/http"
 import RequestFailed from "./request-failed-error.ts"
-import { Sse } from "effect/unstable/encoding"
+import { Sse } from "effect/encoding"
 
 type ReceivedEvent = typeof StreamEvent.Type
 
@@ -114,4 +114,5 @@ const EventError = Schema.Struct({
   )
 
 /** Reads the reviewer's answer from a Responses event stream. */
+/** @internal */
 export default Object.freeze({ readOutputText })

@@ -9,9 +9,10 @@
     "types": ["node"],
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    // Retained: declarations that `@opencode/plugin` pulls in
-    // (`@opencode/ai`, `@ai-sdk/provider`, `json-schema`) fail to type-check
-    // under this configuration. This repository's own files are all checked.
+    // On because the declarations `@opencode/plugin` pulls in (`@opencode/ai`,
+    // `@ai-sdk/provider`, `json-schema`) fail to type-check under these
+    // options. It skips only `.d.ts` files, so this repository's own files
+    // are all still checked.
     "skipLibCheck": true,
 
     "strict": true,
@@ -34,6 +35,53 @@
     "plugins": [
       {
         "name": "@effect/language-service",
+        // These host-aligned platform APIs are required by the existing integrations.
+        // Effect 4 still marks them unstable; keep other unstable APIs checked.
+        "allowedUnstableApis": [
+          "effect/encoding/Sse#decode",
+          "effect/http/FetchHttpClient#Fetch",
+          "effect/http/FetchHttpClient#RequestInit",
+          "effect/http/FetchHttpClient#layer",
+          "effect/http/Headers#Headers",
+          "effect/http/Headers#get",
+          "effect/http/HttpBody#HttpBodyError",
+          "effect/http/HttpClient#HttpClient",
+          "effect/http/HttpClient#TracerPropagationEnabled",
+          "effect/http/HttpClient#make",
+          "effect/http/HttpClient#makeWith",
+          "effect/http/HttpClient#mapRequest",
+          "effect/http/HttpClient#retryTransient",
+          "effect/http/HttpClientError#HttpClientError",
+          "effect/http/HttpClientError#TransportError",
+          "effect/http/HttpClientRequest#HttpClientRequest",
+          "effect/http/HttpClientRequest#bearerToken",
+          "effect/http/HttpClientRequest#bodyJsonUnsafe",
+          "effect/http/HttpClientRequest#post",
+          "effect/http/HttpClientRequest#prependUrl",
+          "effect/http/HttpClientRequest#schemaBodyJson",
+          "effect/http/HttpClientRequest#setHeaders",
+          "effect/http/HttpClientResponse#HttpClientResponse",
+          "effect/http/HttpClientResponse#filterStatusOk",
+          "effect/http/HttpClientResponse#fromWeb",
+          "effect/http/HttpServer#HttpServer",
+          "effect/http/HttpServer#formatAddress",
+          "effect/http/HttpServerRequest#HttpServerRequest",
+          "effect/http/HttpServerRequest#schemaBodyJson",
+          "effect/http/HttpServerRequest#schemaHeaders",
+          "effect/http/HttpServerRequest#toURL",
+          "effect/http/HttpServerResponse#HttpServerResponse",
+          "effect/http/HttpServerResponse#jsonUnsafe",
+          "effect/http/HttpServerResponse#schemaJson",
+          "effect/http/HttpServerResponse#text",
+          "effect/process/ChildProcess#StandardCommand",
+          "effect/process/ChildProcess#make",
+          "effect/process/ChildProcessSpawner#ChildProcessHandle",
+          "effect/process/ChildProcessSpawner#ChildProcessSpawner",
+          "effect/process/ChildProcessSpawner#ExitCode",
+          "effect/process/ChildProcessSpawner#ProcessId",
+          "effect/process/ChildProcessSpawner#make",
+          "effect/process/ChildProcessSpawner#makeHandle"
+        ],
         // Every Effect diagnostic at error, including the ones that are off
         // or advisory by default. `pnpm run lint:effect` enforces them.
         "diagnosticSeverity": {

@@ -22,7 +22,7 @@ describe("plugin rate-limit response", () => {
       expect(response.headers.get("x-should-retry")).toBe("true")
       expect(response.headers.get("retry-after")).toBe("2")
       expect(yield* support.bodyText(response)).toBe(
-        '{"type":"error","error":{"type":"rate_limit_error","message":"Claude token refresh is temporarily unavailable."}}',
+        '{"type":"error","error":{"type":"rate_limit_error","message":"Claude Code token refresh is temporarily unavailable. Try again in a minute."}}',
       )
     }),
   )

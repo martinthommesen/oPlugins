@@ -1,4 +1,4 @@
-import { Effect, Match } from "effect"
+import { Effect, Match, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import AnthropicFetchError from "./anthropic-fetch-error.ts"
@@ -18,30 +18,17 @@ interface Tests {
 
 type Script = typeof PluginRig.quiet
 
-/** A 401 whose body records whether it was released. */
-interface Releasable {
-  readonly released: () => number
-  readonly response: Response
-}
-
 const FIRST_CALL = 1,
   ONE = 1,
   RETRY_AFTER_MS = 12_300,
   SETTLE_YIELDS = 20,
   TOO_MANY_REQUESTS = 429,
   UNAUTHORIZED = 401,
-  ZERO = 0,
   /* A healthy script whose refresh and replay answer as given. */
   answering = (
     refresh: Script["refresh"],
     fetch: Script["fetch"] = PluginRig.quiet.fetch,
-  ): Script =>
-    Object.freeze({
-      accounts: PluginRig.quiet.accounts,
-      adopt: PluginRig.quiet.adopt,
-      fetch,
-      refresh,
-    }),
+  ): Script => Struct.assign(PluginRig.quiet, { fetch, refresh }),
   /* A refresh that fails unexpectedly. */
   brokenHost = scenario.onHost(
     scenario.ours("first"),
@@ -61,34 +48,15 @@ const FIRST_CALL = 1,
       () => failingFetch,
     ),
   ),
-  /* The plain 401 the API answered with. */
-  plain401 = (): Response =>
-    new Response("unauthorized", { status: UNAUTHORIZED }),
-  /* A 401 that counts how many times its body is released. */
-  releasable = (): Releasable => {
-    let released = ZERO
-
-    return {
-      released: () => released,
-      response: new Response(
-        new ReadableStream({
-          cancel: (): void => {
-            released += ONE
-          },
-        }),
-        { status: UNAUTHORIZED },
-      ),
-    }
-  },
   /* The adopted credential is rejected too; its body is left unread. */
-  retainedReplay = releasable(),
+  retainedReplay = scenario.releasable(),
   /* Send a request, answer it with a 401, and what the caller gets. */
   roundTrip = Effect.gen(function* sendAndAnswer() {
     yield* fakeHost.setUp
 
     return yield* scenario.respond(
       yield* scenario.send(scenario.messages()),
-      plain401(),
+      scenario.unauthorized(),
     )
   }),
   /* The first replay is rejected, and the second fails outright. */

@@ -11,20 +11,11 @@ pre-commit:
       # nothing to lint.
       run: pnpm exec oxlint --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
-      # Someone else's working folders, outside the tracked tree, which the
-      # tools never change.
-      exclude:
-        - "research_notes/*"
-        - "reports/*"
     - name: oxfmt
       # Oxfmt skips the files it can't format and those its config ignores,
       # so a commit may leave it nothing to format.
       run: pnpm exec oxfmt --write --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
-      # The same working folders as above.
-      exclude:
-        - "research_notes/*"
-        - "reports/*"
     - name: gitleaks
       # `--verbose` shows each finding, and `--redact` hides its secret.
       run: |

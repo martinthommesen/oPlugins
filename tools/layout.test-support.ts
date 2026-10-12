@@ -4,7 +4,7 @@ import type Snapshot from "./snapshot.ts"
 type Layout = typeof Snapshot.Type
 
 const DEMO = "packages/oc-demo",
-  /** The installed host package, which pins effect. */
+  /** The installed `@opencode/plugin` manifest, which pins effect. */
   HOST_MANIFEST = JSON.stringify({
     dependencies: { effect: "4.0.0-rc.112" },
     version: "2.0.26",

@@ -21,11 +21,9 @@ import RefreshLock from "./refresh-lock.ts"
 import { TestClock } from "effect/testing"
 import testEnvironment from "./test-environment.test-support.ts"
 
-type Attempt = ReturnType<(typeof LockAttempt)["busy" | "cooldown" | "held"]>
+type Attempt = ReturnType<(typeof LockAttempt)["Busy" | "Cooldown" | "Held"]>
 
-type HeldLock = (typeof LockAttempt.held extends (args: infer Args) => object
-  ? Args
-  : never)["lock"]
+type HeldLock = ReturnType<typeof LockAttempt.Held>["lock"]
 
 type Files = FileSystem.FileSystem | Path.Path
 
@@ -281,7 +279,6 @@ export default Object.freeze({
     CapturedLogs.layer,
   ),
   leaseExpiry,
-  locks,
   prefix: PREFIX,
   requestTwice,
   sandbox,

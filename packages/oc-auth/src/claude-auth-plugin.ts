@@ -105,7 +105,7 @@ const AnyFunction = Schema.declare(Predicate.isFunction),
 
     return Effect.die(
       new Error(
-        `oc-auth requires a compatible OpenCode v2 Effect plugin API (target: v${HOST_VERSION}; missing: ${missing.join(", ")})`,
+        `oc-auth did not start because it targets OpenCode ${HOST_VERSION}, and this OpenCode lacks plugin APIs it needs: ${missing.join(", ")}. Update OpenCode, or use an oc-auth release built for your OpenCode version.`,
       ),
     )
   },
@@ -148,7 +148,7 @@ const AnyFunction = Schema.declare(Predicate.isFunction),
     yield* modelPricing.register(host.model.transform)
   })
 
-/** Setting the plugin up on a host, given the services it runs on. */
+/** Setting up the plugin on a host, given the services it runs on. */
 export default Object.freeze({
   checkCapabilities,
   setUp,

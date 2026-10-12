@@ -7,13 +7,13 @@ import services from "./claude-auth-services.ts"
 
 const FIRST = 0,
   /*
-   * Lets OpenCode use Claude Code subscription credentials. The plugin's
-   * options are decoded first, and the services are built over them into
-   * the plugin's scope rather than provided, because providing would
-   * release them, and the work they run in the background, as soon as
-   * set-up returns. An invalid option (a `PluginOptionsError` naming each
-   * problem), a failure to build the services (no home directory, say), or
-   * an incompatible host is a defect the host reports as a failed plugin.
+   * Lets OpenCode use Claude Code subscription credentials. The services
+   * are built over the decoded options into the plugin's scope. Providing
+   * them instead would release them, and their background work, as soon as
+   * setup returns. An invalid option (a `PluginOptionsError` naming each
+   * problem), a service that fails to build (no home directory, say), or an
+   * incompatible host is a defect, which the host reports as a failed
+   * plugin.
    *
    * Every import from the host SDK is a type, so the SDK stays out of
    * consumers' installs.

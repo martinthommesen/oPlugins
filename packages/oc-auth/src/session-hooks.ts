@@ -63,29 +63,26 @@ const CONTEXT_HOOKS = [
     Option.getOrElse(Option.fromUndefinedOr(event.kind), () => PRIMARY_KIND),
   /*
    * Rewrite a request to Claude Code's shape with `credential`, and remember
-   * how it was sent, for 401 recovery and tool-name restoration. A body that
-   * cannot be read fails the request, as a rejected hook did.
+   * how it was sent, for unauthorized recovery and tool-name restoration. A
+   * body that cannot be read is a defect, which fails the request.
    */
-  mapRequest = (
+  mapRequest = Effect.fn("SessionHooks.mapRequest")(function* mapRequest(
     event: RequestEvent,
     credential: RequestState["credential"],
-  ): Effect.Effect<void, never, Hooks> =>
-    Effect.gen(function* rewriteRequest() {
-      const aliases = yield* SessionAliases,
-        key = SessionAliases.keyOf(event.sessionID, kindOf(event)),
-        rewriter = yield* RequestTransforms,
-        rewritten = yield* rewriter
-          .request(event, credential)
-          .pipe(Effect.orDie),
-        states = yield* RequestStates
+  ) {
+    const aliases = yield* SessionAliases,
+      key = SessionAliases.keyOf(event.sessionID, kindOf(event)),
+      rewriter = yield* RequestTransforms,
+      rewritten = yield* rewriter.request(event, credential).pipe(Effect.orDie),
+      states = yield* RequestStates
 
-      yield* aliases.merge(key, rewritten.originalByAlias)
-      yield* states.remember(rewritten.request, {
-        credential,
-        snapshot: rewritten.snapshot,
-      })
-      event.request = rewritten.request
-    }),
+    yield* aliases.merge(key, rewritten.originalByAlias)
+    yield* states.remember(rewritten.request, {
+      credential,
+      snapshot: rewritten.snapshot,
+    })
+    event.request = rewritten.request
+  }),
   /* Rewrite a request when a Claude Code credential is active. */
   onRequest = (event: RequestEvent): Effect.Effect<void, never, Hooks> =>
     ActiveCredential.pipe(
@@ -101,49 +98,45 @@ const CONTEXT_HOOKS = [
    * Recover from a 401 and restore the original tool names. A response with
    * neither request state nor session aliases saw no credential of ours.
    */
-  onResponse = (
+  onResponse = Effect.fn("SessionHooks.onResponse")(function* onResponse(
     event: SessionHttpResponse,
-  ): Effect.Effect<void, never, Hooks> =>
-    Effect.gen(function* responseHook() {
-      const aliases = yield* SessionAliases,
-        known = yield* aliases.get(
-          SessionAliases.keyOf(event.sessionID, kindOf(event)),
-        ),
-        state = yield* (yield* RequestStates).lookup(event.request),
-        transforms = yield* RequestTransforms
+  ) {
+    const aliases = yield* SessionAliases,
+      known = yield* aliases.get(
+        SessionAliases.keyOf(event.sessionID, kindOf(event)),
+      ),
+      state = yield* (yield* RequestStates).lookup(event.request),
+      transforms = yield* RequestTransforms
 
-      if (Option.isNone(state) && Option.isNone(known)) {
-        return
-      }
+    if (Option.isNone(state) && Option.isNone(known)) {
+      return
+    }
 
-      if (Option.isNone(state)) {
-        /*
-         * The host handed back a Request other than the one the request hook
-         * produced, so 401 recovery is skipped for this turn. Tool names
-         * still restore from the session's aliases, which makes the
-         * degradation invisible without this.
-         */
-        yield* pluginLog.debug("request_state_missing", {
-          sessionID: event.sessionID,
-        })
-      }
+    if (Option.isNone(state)) {
+      /*
+       * The host handed back a Request other than the one the request hook
+       * produced, so unauthorized recovery is skipped for this turn. Tool
+       * names still restore from the session's aliases, so without this
+       * record the skipped recovery would leave no trace.
+       */
+      yield* pluginLog.debug("request_state_missing", {
+        sessionID: event.sessionID,
+      })
+    }
 
-      event.response = yield* transforms.restore(
-        yield* answerFor(event.response, state),
-        Option.getOrElse(known, () => ({})),
-      )
-    }),
+    event.response = yield* transforms.restore(
+      yield* answerFor(event.response, state),
+      Option.getOrElse(known, () => ({})),
+    )
+  }),
   /*
    * Keep the aliases a context rewrite assigns, or forget the session's
    * when no Claude Code credential is active. Auxiliary model calls need
    * the same subscription identity as the agent loop; their aliases are
    * kept apart because a title can run concurrently.
    */
-  rewriteContext = (
-    key: string,
-    event: ContextEvent,
-  ): Effect.Effect<void, never, Hooks> =>
-    Effect.gen(function* contextHook() {
+  rewriteContext = Effect.fn("SessionHooks.rewriteContext")(
+    function* rewriteContext(key: string, event: ContextEvent) {
       const active = yield* ActiveCredential,
         aliases = yield* SessionAliases,
         transforms = yield* RequestTransforms
@@ -153,7 +146,8 @@ const CONTEXT_HOOKS = [
       }
 
       return yield* aliases.replace(key, yield* transforms.context(event))
-    }),
+    },
+  ),
   /*
    * Register every session hook, scoped to Anthropic. They do nothing until
    * a credential loads, so they need neither the account list nor each

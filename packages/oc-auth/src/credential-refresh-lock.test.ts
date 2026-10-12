@@ -143,8 +143,10 @@ describe("refresh while another process cools down", () => {
           expect.hasAssertions()
           yield* support.begin
 
-          // Nobody is refreshing, so polling for their result only adds
-          // Latency: this finishes with no clock advance.
+          /*
+           * Nobody is refreshing, so polling for their result would only add
+           * latency: this finishes with no clock advance.
+           */
           const refreshed = yield* support.refresh(yield* original)
 
           expect(support.summary(refreshed)).toStrictEqual({
@@ -156,11 +158,13 @@ describe("refresh while another process cools down", () => {
     )
   })
 
-  // 401 recovery calls refresh first and relies on it to adopt a source
-  // Rotated outside OpenCode before any cooldown can turn it away.
+  /*
+   * 401 recovery calls refresh first and relies on it to adopt a credential
+   * rotated outside OpenCode before any cooldown can turn it away.
+   */
   test.layer(otherCoolingRotated)((it: Tests) => {
     it.effect(
-      "adopts a rotated source even while another process is cooling down",
+      "adopts a rotated credential even while another process is cooling down",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()

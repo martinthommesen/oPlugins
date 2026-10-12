@@ -1,9 +1,12 @@
 import { Effect, Exit, Option } from "effect"
+import type {
+  IntegrationOAuthMethod,
+  IntegrationOAuthMethodRegistration,
+} from "@opencode/plugin/effect/integration"
 import ActiveCredential from "./active-credential.ts"
 import type ClaudeAccount from "./claude-account.ts"
 import type ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import CredentialRefresh from "./credential-refresh.ts"
-import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import type { Plugin } from "@opencode/plugin/effect"
 import accountMethod from "./claude-code-account-method.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
@@ -33,16 +36,15 @@ type HostCredential = Readonly<
 
 type ClaudeCodeCredential = ReturnType<typeof claudeCodeCredential.fromSource>
 
-/*
+type OAuth = ReturnType<typeof claudeCodeCredential.toOAuth>
+
+/**
  * The host's OAuth credential as the callbacks read it, read-only. The
  * readonly rule flags `metadata` and the branded `methodID` together, though
  * neither is writable here, and nothing reads `methodID`.
  */
 type HostOAuth = Readonly<
-  Pick<
-    ReturnType<typeof claudeCodeCredential.toOAuth>,
-    "access" | "expires" | "metadata" | "refresh" | "type"
-  >
+  Pick<OAuth, "access" | "expires" | "metadata" | "refresh" | "type">
 >
 
 /** What the `/connect` method uses, captured once for its callbacks. */
@@ -63,11 +65,7 @@ const FIRST = 0,
   adoptNext = (
     previous: HostCredential,
     next: ClaudeCodeCredential,
-  ): Effect.Effect<
-    ReturnType<typeof claudeCodeCredential.toOAuth>,
-    never,
-    ActiveCredential
-  > =>
+  ): Effect.Effect<OAuth, never, ActiveCredential> =>
     ActiveCredential.pipe(
       Effect.flatMap((active) =>
         Option.match(claudeCodeCredential.fromOAuth(previous), {
@@ -78,9 +76,7 @@ const FIRST = 0,
       Effect.as(claudeCodeCredential.toOAuth(next)),
     ),
   /* The host's credential back as it came, for a refresh that kept it. */
-  asHost = (
-    credential: HostCredential,
-  ): ReturnType<typeof claudeCodeCredential.toOAuth> => ({
+  asHost = (credential: HostCredential): OAuth => ({
     access: credential.access,
     expires: credential.expires,
     metadata: credential.metadata,
@@ -93,41 +89,29 @@ const FIRST = 0,
    * locked Keychain, say) is reported here instead of claiming that no
    * credentials exist.
    */
-  authorizeWith = (
-    accounts: Accounts,
-    discovery: Discovery,
-    answer: Parameters<typeof accountMethod.authorize>[typeof SECOND],
-  ): Effect.Effect<
-    {
-      readonly callback: ReturnType<
-        typeof Effect.succeed<ReturnType<typeof claudeCodeCredential.toOAuth>>
-      >
-      readonly instructions: string
-      readonly mode: "auto"
-      readonly url: string
-    },
-    | ClaudeCodeStoreError
-    | Effect.Error<ReturnType<typeof accountMethod.authorize>>,
-    Method
-  > => {
-    if (accounts.length === NONE && Exit.isFailure(discovery)) {
-      return Effect.failCause(discovery.cause)
-    }
-
-    return Effect.gen(function* importSelected() {
-      const credential = yield* accountMethod.authorize(accounts, answer)
+  authorizeWith = Effect.fn("ClaudeCodeMethod.authorize")(
+    function* authorizeWith(
+      accounts: Accounts,
+      discovery: Discovery,
+      answer: Parameters<typeof accountMethod.authorize>[typeof SECOND],
+    ) {
+      if (accounts.length === NONE && Exit.isFailure(discovery)) {
+        return yield* Effect.failCause(discovery.cause)
+      }
 
       return {
-        callback: Effect.succeed(credential),
+        callback: Effect.succeed(
+          yield* accountMethod.authorize(accounts, answer),
+        ),
         instructions: INSTRUCTIONS,
         mode: "auto" as const,
         url: "",
       }
-    })
-  },
+    },
+  ),
   /*
-   * The host's refresh callback, kept in step with the request path: the
-   * credential it returns is the one requests use from then on.
+   * The host's refresh callback. It swaps the active credential too, so
+   * requests use the credential it returns from then on.
    */
   hostRefresh = Effect.fn("ClaudeCodeMethod.refresh")(function* hostRefresh(
     credential: HostCredential,
@@ -143,25 +127,16 @@ const FIRST = 0,
     })
   }),
   /* The OAuth method, with an account form only for several accounts. */
-  methodFor = (
-    form: Form,
-  ): Parameters<Transform>[typeof FIRST] extends never
-    ? never
-    : {
-        readonly form?: Option.Option.Value<Form>
-        readonly id: string
-        readonly label: string
-        readonly type: "oauth"
-      } =>
+  methodFor = (form: Form): IntegrationOAuthMethod =>
     Option.match(form, {
       onNone: () => ({
-        id: "claude-code",
+        id: claudeCodeCredential.METHOD_ID,
         label: LABEL,
         type: "oauth" as const,
       }),
       onSome: (fields) => ({
         form: fields,
-        id: "claude-code",
+        id: claudeCodeCredential.METHOD_ID,
         label: LABEL,
         type: "oauth" as const,
       }),

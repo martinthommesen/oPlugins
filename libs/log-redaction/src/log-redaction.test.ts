@@ -114,7 +114,7 @@ describe("log redaction of tokens inside text", () => {
 
 describe("log redaction of structures", () => {
   it(
-    "redacts nested and arrayed secrets, not just top-level ones",
+    "redacts secrets in nested objects and in arrays",
     { timeout: 5000 },
     () => {
       expect.hasAssertions()
@@ -136,41 +136,37 @@ describe("log redaction of structures", () => {
 })
 
 describe("log redaction of deep structures", () => {
-  it(
-    "never logs a secret nested past the depth limit",
-    { timeout: 5000 },
-    () => {
-      expect.hasAssertions()
+  it("drops a secret nested past the depth limit", { timeout: 5000 }, () => {
+    expect.hasAssertions()
 
-      const output = JSON.stringify(
-        redact({
+    const output = JSON.stringify(
+      redact({
+        level: {
           level: {
             level: {
               level: {
                 level: {
-                  level: {
-                    accessToken: "plain-secret-value",
-                    blob: {
-                      password: "another-secret",
-                      refreshToken: "another-secret",
-                    },
-                    token: "plain-secret-value",
+                  accessToken: "plain-secret-value",
+                  blob: {
+                    password: "another-secret",
+                    refreshToken: "another-secret",
                   },
+                  token: "plain-secret-value",
                 },
               },
             },
           },
-        }),
-      )
+        },
+      }),
+    )
 
-      expect(output).not.toContain("plain-secret-value")
-      expect(output).not.toContain("another-secret")
-    },
-  )
+    expect(output).not.toContain("plain-secret-value")
+    expect(output).not.toContain("another-secret")
+  })
 })
 
 describe("log redaction of ordinary fields", () => {
-  it("preserves non-sensitive fields", { timeout: 5000 }, () => {
+  it("keeps fields that hold no secret", { timeout: 5000 }, () => {
     expect.hasAssertions()
 
     const fields = {

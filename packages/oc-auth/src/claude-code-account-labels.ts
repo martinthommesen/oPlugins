@@ -2,11 +2,12 @@ import type ClaudeCredentials from "./claude-credentials.ts"
 import { Option } from "effect"
 
 /** What one account's label is built from. */
-interface LabelSource {
+interface LabelParts {
+  /** The account's credentials, which name its subscription tier. */
   readonly credentials: typeof ClaudeCredentials.Type
   /** The account's email, which identifies it best. */
   readonly email: Option.Option<string>
-  /** Where the account is stored, for when its email is unknown. */
+  /** The `source` that names its store, shown when the email is unknown. */
   readonly source: Option.Option<string>
 }
 
@@ -24,7 +25,7 @@ const FIRST = 0,
           `Claude ${tier.charAt(FIRST).toUpperCase()}${tier.slice(REST)}`,
       }),
     ),
-  /* Present and not empty: an empty email or source tells no account apart. */
+  /* Present and not empty: an empty email or `source` tells no account apart. */
   filled = Option.filter((detail: string) => detail !== ""),
   /* The base label at `index`, numbered when other accounts share it. */
   inTier = (bases: readonly string[], index: number): string => {
@@ -40,9 +41,9 @@ const FIRST = 0,
   },
   /*
    * One label per account: the subscription tier, numbered when several
-   * accounts share it, then the email or else the source.
+   * accounts share it, then the email, or else the `source`.
    */
-  labelAll = (accounts: readonly LabelSource[]): string[] => {
+  labelAll = (accounts: readonly LabelParts[]): readonly string[] => {
     const bases = accounts.map((account) => baseLabel(account.credentials))
 
     return accounts.map((account, index) => {

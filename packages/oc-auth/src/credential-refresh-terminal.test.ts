@@ -89,7 +89,7 @@ describe("refresh with a dead refresh token", () => {
 
   test.layer(rotatesThenRejects)((it: Tests) => {
     it.effect(
-      "adopts a rotated source instead of failing on invalid_grant",
+      "adopts a rotated credential instead of failing on invalid_grant",
       () =>
         Effect.gen(function* run() {
           expect.hasAssertions()

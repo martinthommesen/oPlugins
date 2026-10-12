@@ -1,10 +1,10 @@
 import { Context, Effect, Layer, Option, Record, Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import Settings from "./settings.ts"
+import PluginOptions from "./plugin-options.ts"
 
 type Storage = Plugin.Context["storage"]
 
-type Choices = typeof Stored.Type
+type SavedPreferences = typeof Stored.Type
 
 /** The advisor configuration in effect. */
 interface Preferences {
@@ -17,21 +17,27 @@ interface Preferences {
 }
 
 const STORAGE_KEY = "preferences",
-  /** Choices made with `/advisor`, which override the plugin options. */
+  /** Preferences set with `/advisor`, which override the plugin options. */
   Stored = Schema.Struct({
+    /** Whether `/advisor on` or `/advisor off` was last chosen. */
     enabled: Schema.optional(Schema.Boolean),
+    /** The model chosen with `/advisor <provider/model>`. */
     model: Schema.optional(Schema.NonEmptyString),
+    /** Whether `/advisor subagents on` or `off` was last chosen. */
     subagents: Schema.optional(Schema.Boolean),
   }),
   decodeStored = Option.match({
-    onNone: () => Effect.succeed<Choices>({}),
+    onNone: () => Effect.succeed<SavedPreferences>({}),
     onSome: Schema.decodeUnknownEffect(Stored),
   }),
   /*
-   * Reads the saved choices under `key`, ignoring a value this version
+   * Reads the saved preferences under `key`, ignoring a value this version
    * cannot decode. The warning names the key only, not the stored value.
    */
-  loadStored = (storage: Storage, key: string): Effect.Effect<Choices> =>
+  loadStored = (
+    storage: Storage,
+    key: string,
+  ): Effect.Effect<SavedPreferences> =>
     storage.get(key).pipe(
       Effect.map(Option.fromUndefinedOr),
       Effect.flatMap(decodeStored),
@@ -42,56 +48,57 @@ const STORAGE_KEY = "preferences",
         ),
       ),
     ),
-  /* Reads every saved choice, preferring its own key over the legacy record. */
-  readChoices = Effect.fn("loadChoices")(function* loadChoices(
-    storage: Storage,
-  ) {
-    const legacy = yield* loadStored(storage, STORAGE_KEY),
-      [enabled, model, subagents] = yield* Effect.all([
-        loadStored(storage, `${STORAGE_KEY}.enabled`),
-        loadStored(storage, `${STORAGE_KEY}.model`),
-        loadStored(storage, `${STORAGE_KEY}.subagents`),
-      ])
+  /* Reads every saved preference, preferring its own key over the legacy record. */
+  readPreferences = Effect.fn("PreferenceStore.readPreferences")(
+    function* readPreferences(storage: Storage) {
+      const legacy = yield* loadStored(storage, STORAGE_KEY),
+        [enabled, model, subagents] = yield* Effect.all([
+          loadStored(storage, `${STORAGE_KEY}.enabled`),
+          loadStored(storage, `${STORAGE_KEY}.model`),
+          loadStored(storage, `${STORAGE_KEY}.subagents`),
+        ])
 
-    return {
-      enabled: enabled.enabled ?? legacy.enabled,
-      model: model.model ?? legacy.model,
-      subagents: subagents.subagents ?? legacy.subagents,
-    }
-  }),
-  /* Combines saved choices with the plugin options they override. */
+      return {
+        enabled: enabled.enabled ?? legacy.enabled,
+        model: model.model ?? legacy.model,
+        subagents: subagents.subagents ?? legacy.subagents,
+      }
+    },
+  ),
+  /* Combines saved preferences with the plugin options they override. */
   resolveWith =
-    (settings: Settings["Service"]) =>
-    (stored: Choices): Preferences => {
+    (options: PluginOptions["Service"]) =>
+    (stored: SavedPreferences): Preferences => {
       const model = Option.fromUndefinedOr(stored.model).pipe(
-        Option.orElse(() => settings.model),
+        Option.orElse(() => options.model),
       )
 
       return {
         enabled: stored.enabled ?? Option.isSome(model),
         model,
-        subagents: stored.subagents ?? settings.subagents,
+        subagents: stored.subagents ?? options.subagents,
       }
     }
 
-/** The `/advisor` choices, kept in the plugin's durable storage. */
+/** The `/advisor` preferences, kept in the plugin's durable storage. */
 class PreferenceStore extends Context.Service<
   PreferenceStore,
   {
+    /** The configuration in effect: the saved preferences over the plugin options. */
     readonly current: Effect.Effect<Preferences>
-    /** Saves the given choices and returns the configuration that results. */
-    readonly update: (changes: Choices) => Effect.Effect<Preferences>
+    /** Saves the given preferences and returns the configuration that results. */
+    readonly update: (changes: SavedPreferences) => Effect.Effect<Preferences>
   }
 >()("@martinthommesen/oc-advisor/preference-store/PreferenceStore") {
   /** Builds a store on the plugin's durable storage. */
   public static readonly make = Effect.fn("PreferenceStore.make")(
     function* makePreferenceStore(storage: Storage) {
-      const applyOptions = resolveWith(yield* Settings),
-        current = readChoices(storage).pipe(Effect.map(applyOptions)),
+      const applyOptions = resolveWith(yield* PluginOptions),
+        current = readPreferences(storage).pipe(Effect.map(applyOptions)),
         update = Effect.fn("PreferenceStore.update")(function* update(
-          changes: Choices,
+          changes: SavedPreferences,
         ) {
-          // Separate keys preserve unrelated choices from concurrent commands.
+          // Separate keys preserve unrelated preferences from concurrent commands.
           const values = {
             enabled: changes.enabled,
             model: changes.model,
@@ -102,8 +109,8 @@ class PreferenceStore extends Context.Service<
             Record.collect(values, (key, value) =>
               Option.match(Option.fromUndefinedOr(value), {
                 onNone: () => Effect.void,
-                onSome: (choice) =>
-                  storage.set(`${STORAGE_KEY}.${key}`, { [key]: choice }),
+                onSome: (preference) =>
+                  storage.set(`${STORAGE_KEY}.${key}`, { [key]: preference }),
               }),
             ),
           )
@@ -118,10 +125,10 @@ class PreferenceStore extends Context.Service<
     },
   )
 
-  /* Keeps preferences in the plugin's durable storage. */
+  /* The store on the plugin's durable storage, as a layer. */
   public static readonly fromStorage = (
     storage: Storage,
-  ): Layer.Layer<PreferenceStore, never, Settings> =>
+  ): Layer.Layer<PreferenceStore, never, PluginOptions> =>
     Layer.effect(PreferenceStore, PreferenceStore.make(storage))
 }
 

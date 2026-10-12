@@ -1,7 +1,5 @@
 import type { Plugin } from "@opencode/plugin/tui"
 
-type Context = Plugin.Context
-
 /** A palette command, as this plugin declares it. */
 interface Command {
   readonly group: string
@@ -17,15 +15,15 @@ interface KeymapLayer {
   readonly mode: string
 }
 
-/** The parts of the TUI plugin context this plugin uses, read-only. */
+/** The parts of the CLI plugin context this plugin uses, read-only. */
 interface Host {
   readonly keymap: { readonly layer: (factory: () => KeymapLayer) => void }
   readonly ui: {
-    readonly toast: { readonly show: Context["ui"]["toast"]["show"] }
+    readonly toast: { readonly show: Plugin.Context["ui"]["toast"]["show"] }
   }
 }
 
-/** Oc-browser's CLI plugin: a palette command that confirms it loaded. */
+/** The CLI plugin: a palette command that confirms oc-browser loaded. */
 const tuiPlugin = {
   id: "martinthommesen.oc-browser.cli",
   setup: (context: Host): void => {

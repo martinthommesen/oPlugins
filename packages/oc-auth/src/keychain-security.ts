@@ -1,14 +1,16 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import type { Duration, PlatformError } from "effect"
 import { Effect, Option, Stream } from "effect"
 import Environment from "./environment.ts"
 import KeychainSecurityError from "./keychain-security-error.ts"
 
-/** One run of the `security` tool: its arguments, its stdin, and its budget. */
+/** One run of the `security` tool. */
 interface SecurityRun {
+  /** The arguments, the subcommand first. */
   readonly args: readonly string[]
   /** Written to stdin, which is then closed. */
   readonly input: Option.Option<string>
+  /** How long the run may take before it is killed. */
   readonly timeout: Duration.Input
 }
 
@@ -113,4 +115,5 @@ const EXIT_DENIED = 128,
     )
 
 /** Running the macOS `security` tool. */
+/** @internal */
 export default Object.freeze({ security })

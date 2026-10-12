@@ -4,8 +4,8 @@ import {
   HttpClient,
   HttpClientError,
   HttpClientResponse,
-} from "effect/unstable/http"
-import type { HttpClientRequest } from "effect/unstable/http"
+} from "effect/http"
+import type { HttpClientRequest } from "effect/http"
 
 /** One request the fake endpoint received. */
 interface SentRequest {
@@ -23,39 +23,38 @@ const BytesBody = Schema.Struct({ body: Schema.Uint8Array }),
    * Record the request `incoming` resolves to in `requests`, then answer it
    * with `reply`, or fail as a transport error carrying the reply's failure.
    */
-  respond = (
+  respond = Effect.fn("test.respond")(function* respond(
     requests: Ref.Ref<readonly SentRequest[]>,
     reply: Effect.Effect<Response, string>,
     incoming: Effect.Effect<HttpClientRequest.HttpClientRequest>,
-  ): Effect.Effect<
+  ): Effect.fn.Return<
     HttpClientResponse.HttpClientResponse,
     HttpClientError.HttpClientError
-  > =>
-    Effect.gen(function* answerRequest() {
-      const request = yield* incoming,
-        sent: SentRequest = {
-          body: Schema.decodeUnknownOption(BytesBody)(request.body).pipe(
-            Option.match({
-              onNone: () => "",
-              onSome: (bytes) => decoder.decode(bytes.body),
-            }),
-          ),
-          contentType: Headers.get(request.headers, "content-type"),
-          method: request.method,
-          url: request.url,
-        },
-        transportFailure = (cause: string): HttpClientError.HttpClientError =>
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({ cause, request }),
-          })
+  > {
+    const request = yield* incoming,
+      sent: SentRequest = {
+        body: Schema.decodeUnknownOption(BytesBody)(request.body).pipe(
+          Option.match({
+            onNone: () => "",
+            onSome: (bytes) => decoder.decode(bytes.body),
+          }),
+        ),
+        contentType: Headers.get(request.headers, "content-type"),
+        method: request.method,
+        url: request.url,
+      },
+      transportFailure = (cause: string): HttpClientError.HttpClientError =>
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ cause, request }),
+        })
 
-      yield* Ref.update(requests, (sentSoFar) => [...sentSoFar, sent])
+    yield* Ref.update(requests, (sentSoFar) => [...sentSoFar, sent])
 
-      return HttpClientResponse.fromWeb(
-        request,
-        yield* Effect.mapError(reply, transportFailure),
-      )
-    })
+    return HttpClientResponse.fromWeb(
+      request,
+      yield* Effect.mapError(reply, transportFailure),
+    )
+  })
 
 /**
  * A fake OAuth token endpoint for tests: an `HttpClient` that records every
@@ -87,4 +86,5 @@ class TokenEndpoint extends Context.Service<
     )
 }
 
+/** @internal */
 export default TokenEndpoint

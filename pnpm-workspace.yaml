@@ -8,16 +8,16 @@ packages:
 # own dependencies rather than the newest releases. The layout check
 # (`pnpm run check:layout`) enforces it.
 catalog:
-  "@effect/platform-node": 4.0.0-rc.112
-  "@effect/platform-node-shared": 4.0.0-rc.112
-  "@effect/vitest": 4.0.0-rc.112
-  "@opencode/plugin": 2.0.26
-  "@opencode/schema": 2.0.26
-  "@opencode/theme": 2.0.26
+  "@effect/platform-node": 4.0.1
+  "@effect/platform-node-shared": 4.0.1
+  "@effect/vitest": 4.0.1
+  "@opencode/plugin": 2.0.27
+  "@opencode/schema": 2.0.27
+  "@opencode/theme": 2.0.27
   "@opentui/solid": 0.5.17
   "@types/chrome": 0.3.5
   "@types/node": ^26.6.5
-  effect: 4.0.0-rc.112
+  effect: 4.0.1
   knip: 6.41.0
   lefthook: 2.2.1
   publint: 0.3.25
@@ -25,7 +25,7 @@ catalog:
   solid-js: 1.9.17
   tsdown: 0.23.1
   typescript: 7.0.2
-  vitest: 4.1.11
+  vitest: 5.0.3
   yaml: 2.9.1
 
 allowBuilds:
@@ -37,3 +37,10 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - rolldown-plugin-dts@0.28.7
   - tsdown@0.23.1
+  - "@opencode/ai@2.0.27"
+  - "@opencode/client@2.0.27"
+  - "@opencode/plugin@2.0.27"
+  - "@opencode/protocol@2.0.27"
+  - "@opencode/schema@2.0.27"
+  - "@opencode/theme@2.0.27"
+  - "@opencode/util@2.0.27"

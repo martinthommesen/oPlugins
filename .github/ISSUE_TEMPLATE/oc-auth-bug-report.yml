@@ -61,7 +61,7 @@ body:
     attributes:
       label: Plugin version
       description: "Run: opencode plugin list"
-      placeholder: "3.0.0"
+      placeholder: "0.1.0"
     validations:
       required: true
 
@@ -79,12 +79,13 @@ body:
     attributes:
       label: Redacted logs
       description: |
-        Reproduce with `CLAUDE_AUTH_DEBUG=1`, then include relevant plugin entries from
-        `~/.local/share/opencode/oclaude-debug.log` and relevant v2 service entries
-        from `~/.local/share/opencode/log/opencode.log`.
+        Reproduce with OpenCode logging at debug level (its `--log-level`
+        flag), then include the relevant records from
+        `~/.local/share/opencode/log/opencode.log`.
 
-        Review and redact authorization headers, prompts, file contents, and other
-        sensitive values before submitting.
+        oc-auth redacts tokens in its records, but not Keychain service names
+        or config paths. Review and redact those and any other sensitive values
+        before you submit.
       render: json
     validations:
       required: false

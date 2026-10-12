@@ -12,8 +12,8 @@ import type ClaudeCredentials from "#src/claude-credentials.ts"
 import HostTestError from "@oc-lib/host-test/host-test-error.ts"
 import blob from "#src/claude-credentials-blob.ts"
 
-/** Where the plugin finds its credentials, and what a refresh must change. */
-interface CredentialSource {
+/** The credential store a run uses, and what a refresh must change in it. */
+interface CredentialStore {
   readonly configDir: string
   readonly initialAccess: string
   /** Whether the run must rotate the token and write it back. */
@@ -43,28 +43,28 @@ const CREDENTIALS_FILE = ".credentials.json",
   ),
   /* Whether `current` shows the refresh the run had to make, if it had to. */
   afterRefresh = (
-    source: CredentialSource,
+    store: CredentialStore,
     current: Option.Option<typeof ClaudeCredentials.Type>,
     now: number,
   ): boolean =>
-    !source.refreshExpected ||
+    !store.refreshExpected ||
     Option.exists(
       current,
       (credentials) =>
-        credentials.accessToken !== source.initialAccess &&
+        credentials.accessToken !== store.initialAccess &&
         credentials.expiresAt >= now + MINIMUM_VALIDITY_MS,
     ),
   /* Fail unless an expected near-expiry refresh rotated and wrote back. */
   checkWriteBack = Effect.fn("Headless.checkWriteBack")(
-    function* checkWriteBack(source: CredentialSource) {
+    function* checkWriteBack(store: CredentialStore) {
       const fs = yield* FileSystem.FileSystem,
         now = yield* Clock.currentTimeMillis,
         path = yield* Path.Path,
         stored = yield* fs.readFileString(
-          path.join(source.configDir, CREDENTIALS_FILE),
+          path.join(store.configDir, CREDENTIALS_FILE),
         ),
         tokens = yield* blob.parseCredentials(stored),
-        written = afterRefresh(source, tokens, now)
+        written = afterRefresh(store, tokens, now)
 
       yield* Effect.fail(
         HostTestError.make({
@@ -75,42 +75,43 @@ const CREDENTIALS_FILE = ".credentials.json",
     },
   ),
   /*
-   * A copy of the first Claude Code account in the sandbox. Its token is
-   * never refreshed: that would invalidate its original source.
+   * A copy of the first Claude Code account in a credentials file in the
+   * sandbox. Its token is never refreshed, because a refresh would rotate
+   * the token out from under the account's own credential store.
    */
-  copiedSource = Effect.fn("Headless.copiedSource")(function* copiedSource(
+  copiedStore = Effect.fn("Headless.copiedStore")(function* copiedStore(
     root: string,
   ) {
     const accounts = yield* (yield* ClaudeCodeStores).readAccounts,
+      first = Arr.head(accounts),
       now = yield* Clock.currentTimeMillis,
       path = yield* Path.Path,
-      source = Arr.head(accounts),
       target = path.join(root, "claude")
 
-    if (Option.isNone(source)) {
+    if (Option.isNone(first)) {
       return yield* HostTestError.make({
         message:
           "No Claude Code credentials found. Run `claude` before this smoke test.",
       })
     }
 
-    if (source.value.credentials.expiresAt < now + MINIMUM_VALIDITY_MS) {
+    if (first.value.credentials.expiresAt < now + MINIMUM_VALIDITY_MS) {
       return yield* HostTestError.make({
         message:
-          "Claude credentials expire within five minutes. Run `claude` first.",
+          "Claude Code credentials expire within five minutes. Run `claude`, then run this smoke test again.",
       })
     }
 
     yield* addCredentials(
       target,
       yield* Schema.encodeEffect(Json)({
-        claudeAiOauth: source.value.credentials,
+        claudeAiOauth: first.value.credentials,
       }),
     )
 
     return {
       configDir: target,
-      initialAccess: source.value.credentials.accessToken,
+      initialAccess: first.value.credentials.accessToken,
       refreshExpected: false,
     }
   }),
@@ -118,8 +119,8 @@ const CREDENTIALS_FILE = ".credentials.json",
    * The disposable config directory, its credentials set to expire in a
    * second so the run refreshes them and writes them back there.
    */
-  disposableSource = Effect.fn("Headless.disposableSource")(
-    function* disposableSource(configDir: string) {
+  disposableStore = Effect.fn("Headless.disposableStore")(
+    function* disposableStore(configDir: string) {
       const fs = yield* FileSystem.FileSystem,
         now = yield* Clock.currentTimeMillis,
         path = yield* Path.Path,
@@ -158,7 +159,7 @@ const CREDENTIALS_FILE = ".credentials.json",
     },
   ),
   /* A fake credential for the mock API; nothing real is read. */
-  offlineSource = Effect.fn("Headless.offlineSource")(function* offlineSource(
+  offlineStore = Effect.fn("Headless.offlineStore")(function* offlineStore(
     root: string,
   ) {
     const now = yield* Clock.currentTimeMillis,
@@ -183,9 +184,9 @@ const CREDENTIALS_FILE = ".credentials.json",
     }
   }),
   /*
-   * The credential source for this run: a fake one offline, the disposable
-   * directory `OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR` names, or a copy of
-   * a real account.
+   * The credential store for this run: a fake one offline, the disposable
+   * directory `OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR` names, or a copy of a
+   * real account.
    */
   prepare = Effect.fn("Headless.prepareCredentials")(function* prepare(
     root: string,
@@ -195,12 +196,12 @@ const CREDENTIALS_FILE = ".credentials.json",
     },
   ) {
     if (mode.offline) {
-      return yield* offlineSource(root)
+      return yield* offlineStore(root)
     }
 
     return yield* Option.match(mode.refreshConfigDir, {
-      onNone: () => copiedSource(root),
-      onSome: (configDir) => disposableSource(configDir),
+      onNone: () => copiedStore(root),
+      onSome: (configDir) => disposableStore(configDir),
     })
   })
 

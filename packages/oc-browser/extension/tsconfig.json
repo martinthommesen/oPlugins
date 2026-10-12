@@ -1,7 +1,7 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    // The extension runs in Chrome, not Node: Chrome's API types replace Node's.
+    // The extension runs in Chrome, not Node, so Chrome's API types replace Node's.
     "types": ["chrome"]
   },
   "include": ["**/*.ts"]

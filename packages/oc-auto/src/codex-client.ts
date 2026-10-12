@@ -4,13 +4,13 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http"
+} from "effect/http"
 import AuthUnavailable from "./auth-unavailable-error.ts"
 import ChatGptAuth from "./chatgpt-auth.ts"
 import type HostError from "./host-error.ts"
 import ModelUnavailable from "./model-unavailable-error.ts"
+import PluginOptions from "./plugin-options.ts"
 import RequestFailed from "./request-failed-error.ts"
-import Settings from "./settings.ts"
 import responsesRequest from "./responses-request.ts"
 import responsesStream from "./responses-stream.ts"
 
@@ -73,43 +73,46 @@ const ErrorDetail = Schema.Struct({
         )
       )
     }),
+  signInRejected = (status: number): AuthUnavailable =>
+    AuthUnavailable.make({
+      reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
+    }),
   /* The response when its status is a success, or the failure it reports. */
-  verifyStatus = Effect.fn("CodexResponses.checkStatus")(function* checkStatus(
-    model: string,
-    response: HttpClientResponse.HttpClientResponse,
-  ) {
-    const { status } = response
-
-    if (status === HTTP_UNAUTHORIZED) {
-      return yield* AuthUnavailable.make({
-        reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
-      })
-    }
-
-    if (
-      status === HTTP_BAD_REQUEST ||
-      status === HTTP_FORBIDDEN ||
-      status === HTTP_NOT_FOUND
+  verifyStatus = Effect.fn("CodexResponses.verifyStatus")(
+    function* verifyStatus(
+      model: string,
+      response: HttpClientResponse.HttpClientResponse,
     ) {
-      const detail = yield* response.text.pipe(
-        RequestFailed.during(model, "readErrorBody"),
-      )
+      const { status } = response
 
-      if (modelRejected(detail)) {
-        return yield* ModelUnavailable.make({ detail, model, status })
+      if (status === HTTP_UNAUTHORIZED) {
+        return yield* signInRejected(status)
       }
-    }
 
-    if (status === HTTP_FORBIDDEN) {
-      return yield* AuthUnavailable.make({
-        reason: `ChatGPT rejected the sign-in (HTTP ${status}). Reconnect OpenAI with /connect.`,
-      })
-    }
+      if (
+        status === HTTP_BAD_REQUEST ||
+        status === HTTP_FORBIDDEN ||
+        status === HTTP_NOT_FOUND
+      ) {
+        const detail = yield* response.text.pipe(
+          RequestFailed.during(model, "readErrorBody"),
+        )
 
-    return yield* HttpClientResponse.filterStatusOk(response).pipe(
-      RequestFailed.during(model, "status"),
-    )
-  })
+        if (modelRejected(detail)) {
+          return yield* ModelUnavailable.make({ detail, model, status })
+        }
+      }
+
+      // A 403 that does not name the model refuses the account itself.
+      if (status === HTTP_FORBIDDEN) {
+        return yield* signInRejected(status)
+      }
+
+      return yield* HttpClientResponse.filterStatusOk(response).pipe(
+        RequestFailed.during(model, "status"),
+      )
+    },
+  )
 
 /** Client for the ChatGPT Codex Responses backend. */
 class CodexResponses extends Context.Service<CodexResponses, Interface>()(
@@ -119,7 +122,7 @@ class CodexResponses extends Context.Service<CodexResponses, Interface>()(
     CodexResponses,
     Effect.gen(function* makeCodexResponses() {
       const auth = yield* ChatGptAuth,
-        { baseUrl, reasoningEffort } = yield* Settings,
+        { baseUrl, reasoningEffort } = yield* PluginOptions,
         client = (yield* HttpClient.HttpClient).pipe(
           HttpClient.mapRequest(HttpClientRequest.prependUrl(baseUrl)),
           HttpClient.retryTransient({
@@ -156,4 +159,5 @@ class CodexResponses extends Context.Service<CodexResponses, Interface>()(
   )
 }
 
+/** @internal */
 export default CodexResponses

@@ -20,16 +20,45 @@ jobs:
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run lint
-      - run: pnpm run typecheck
-      - run: pnpm run lint:effect
-      - run: pnpm run test
+      - run: pnpm run check
+
+  # Each plugin job runs the plugin's tests on Linux and macOS, and its
+  # headless host test on the oldest OpenCode it supports
+  # (`engines.opencode`) and on the one it's built against.
+  oc-advisor:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        host: ["oldest", "target"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/oc-advisor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm test
+        # dist is what consumers get, and nothing else loads it before publish.
+      - run: pnpm run verify:dist
+      - run: pnpm run test:host
+        env:
+          OC_ADVISOR_HEADLESS_HOST_VERSION: ${{ matrix.host }}
+      - run: pnpm pack --dry-run
 
   oc-auth:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        host: ["2.0.25", "target"]
+        host: ["oldest", "target"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -67,11 +96,40 @@ jobs:
           OC_AUTH_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run
 
+  oc-auto:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        host: ["oldest", "target"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/oc-auto
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm test
+        # dist is what consumers get, and nothing else loads it before publish.
+      - run: pnpm run verify:dist
+      - run: pnpm run test:host
+        env:
+          OC_AUTO_HEADLESS_HOST_VERSION: ${{ matrix.host }}
+      - run: pnpm pack --dry-run
+
   oc-browser:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        host: ["target"]
+        host: ["oldest", "target"]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

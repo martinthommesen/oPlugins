@@ -7,8 +7,8 @@ type OriginalByAlias = ReturnType<typeof toolAliases.invert>
 type Remembered = readonly (readonly [string, OriginalByAlias])[]
 
 /*
- * Session and request-kind pairs whose wire aliases are retained. Only a
- * fallback for when the per-request state is unavailable, so evicting the
+ * Session and request-kind pairs whose tool aliases are kept. They are only
+ * a fallback for when the per-request state is unavailable, so evicting the
  * coldest entry costs at most one response's tool-name restoration in a
  * session that went quiet.
  */
@@ -41,13 +41,13 @@ const MAX_TRACKED_CONTEXTS = 512,
     )
 
 /**
- * The wire aliases in use, per session and request kind. The context hook
+ * The tool aliases in use, per session and request kind. The context hook
  * resets an entry each turn with the registered tools, and the request hook
  * adds what the body it rewrote carried. Keyed by session rather than by
  * request, because the host may hand the response hook a different
  * `Request`, and a hook that re-runs on its own output finds nothing new to
  * alias. Bounded, because the plugin lives in a server that outlives any
- * individual session and the host has no session-ended signal.
+ * one session, and the host has no session-ended signal.
  */
 class SessionAliases extends Context.Service<
   SessionAliases,

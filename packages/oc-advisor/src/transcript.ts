@@ -78,8 +78,9 @@ const EMPTY_LENGTH = 0,
     return budget - Math.min(newestLength, Math.floor(budget / TASK_SHARE))
   },
   /*
-   * Keeps the newest run of entries within `available` characters, separators
-   * included, shortening the latest one if necessary. Newest first.
+   * Keeps the newest run of entries that fits in `available` characters,
+   * separators included, and shortens the latest entry if it alone is too
+   * long. Returns the entries newest first.
    */
   newestThatFit = (
     entries: readonly RenderedEntry[],
@@ -140,7 +141,7 @@ const EMPTY_LENGTH = 0,
       (left, right) => left.index - right.index,
     )
   },
-  /* Budgets rendered entries, including omission markers and separators. */
+  /* Renders the entries that fit in `budget`, marking how many were left out. */
   renderBudgeted = (
     entries: readonly RenderedEntry[],
     budget: number,

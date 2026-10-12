@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
   // The extension has its own project, `extension/tsconfig.json`.
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "types/**/*.ts", "*.config.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.config.ts"]
 }

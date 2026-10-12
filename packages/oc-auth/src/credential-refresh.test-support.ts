@@ -15,7 +15,7 @@ type Account = typeof ClaudeAccount.Type
 
 type Tokens = Account["credentials"]
 
-type Attempt = ReturnType<(typeof LockAttempt)["busy" | "cooldown" | "held"]>
+type Attempt = ReturnType<(typeof LockAttempt)["Busy" | "Cooldown" | "Held"]>
 
 type Outcome = Effect.Success<ReturnType<TokenExchange["Service"]["exchange"]>>
 
@@ -36,8 +36,8 @@ interface Summary {
   readonly retryAfterMs: Option.Option<number>
 }
 
-// Test time starts here, so a token can expire before it.
 const BAD_REQUEST = 400,
+  /** Test time starts here, so a token can expire before it. */
   BASE_TIME = 1_000_000,
   FIRST = 0,
   HOUR_MS = 3_600_000,
@@ -48,9 +48,9 @@ const BAD_REQUEST = 400,
   SERVER_ERROR = 503,
   SETTLE_YIELDS = 20,
   /*
-   * A registered account in `source`, holding `accessToken`. Real Keychain
-   * service names, because credential metadata is validated on the way back
-   * in, so a fixture using an arbitrary name would not round-trip.
+   * A registered account in `source`, holding `accessToken`. `source` must be
+   * a real Keychain service name or `file`: credential metadata is validated
+   * on the way back in, so an arbitrary name would not round-trip.
    */
   account = (source = PRIMARY, accessToken = "old-access"): Account => ({
     configDir: `/claude/${source}`,
@@ -67,16 +67,16 @@ const BAD_REQUEST = 400,
   adopt = (
     credential: Asked,
   ): Effect.Effect<Refresh, never, CredentialRefresh> =>
-    Effect.gen(function* askAdopt() {
-      return yield* (yield* CredentialRefresh).adopt(credential)
-    }),
+    CredentialRefresh.pipe(
+      Effect.flatMap((service) => service.adopt(credential)),
+    ),
   /* Set the test clock to the base time. */
   begin = TestClock.setTime(BASE_TIME),
   /* The lock busy in another process. */
-  busy: Effect.Effect<Attempt> = Effect.succeed(LockAttempt.busy()),
+  busy: Effect.Effect<Attempt> = Effect.succeed(LockAttempt.Busy()),
   /* Another process cooling down until `until`. */
   cooldownUntil = (until: number): Effect.Effect<Attempt> =>
-    Effect.succeed(LockAttempt.cooldown({ until })),
+    Effect.succeed(LockAttempt.Cooldown({ until })),
   /* The host credential a result carries, if any. */
   credentialAfter = (result: Refresh): Option.Option<Asked> =>
     CredentialRefresh.Result.$match(result, {
@@ -84,18 +84,6 @@ const BAD_REQUEST = 400,
         Option.some(claudeCodeCredential.toOAuth(credential)),
       Refreshed: ({ credential }) =>
         Option.some(claudeCodeCredential.toOAuth(credential)),
-      Transient: () => Option.none(),
-      Unchanged: () => Option.none(),
-    }),
-  /* The credential a result carries, if any. */
-  credentialOf = (
-    result: Refresh,
-  ): Option.Option<
-    Effect.Success<ReturnType<typeof accountMethod.importAccount>>["metadata"]
-  > =>
-    CredentialRefresh.Result.$match(result, {
-      Adopted: ({ credential }) => Option.some(credential.metadata),
-      Refreshed: ({ credential }) => Option.some(credential.metadata),
       Transient: () => Option.none(),
       Unchanged: () => Option.none(),
     }),
@@ -113,7 +101,7 @@ const BAD_REQUEST = 400,
     Effect.acquireRelease(
       currentRig.pipe(
         Effect.map((rig) =>
-          LockAttempt.held({
+          LockAttempt.Held({
             lock: {
               defer: (ms) =>
                 Ref.update(rig.lockEvents, (events) => [
@@ -163,13 +151,10 @@ const BAD_REQUEST = 400,
   polled = <Value, Failure, Requirements>(
     effect: Effect.Effect<Value, Failure, Requirements>,
   ): Effect.Effect<Value, Failure, Requirements> =>
-    Effect.gen(function* awaitPolling() {
-      const fiber = yield* Effect.forkChild(effect)
-
-      yield* TestClock.adjust(POLL_BUDGET_MS)
-
-      return yield* Fiber.join(fiber)
-    }),
+    Effect.forkChild(effect).pipe(
+      Effect.tap(() => TestClock.adjust(POLL_BUDGET_MS)),
+      Effect.flatMap((fiber) => Fiber.join(fiber)),
+    ),
   /* The token endpoint rate limiting, with `retryAfterMs` as its hint. */
   rateLimited = (retryAfterMs: Option.Option<number>): Effect.Effect<Outcome> =>
     Effect.succeed(
@@ -183,9 +168,9 @@ const BAD_REQUEST = 400,
   refresh = (
     credential: Asked,
   ): Effect.Effect<Refresh, RefreshError, CredentialRefresh> =>
-    Effect.gen(function* askRefresh() {
-      return yield* (yield* CredentialRefresh).refresh(credential)
-    }),
+    CredentialRefresh.pipe(
+      Effect.flatMap((service) => service.refresh(credential)),
+    ),
   /* Fakes that answer as a healthy store, lock, and endpoint would. */
   script: Script = {
     acquire: heldLock(true),
@@ -237,7 +222,6 @@ const BAD_REQUEST = 400,
 /** What the credential refresh tests share. */
 export default Object.freeze({
   BASE_TIME,
-  HOUR_MS,
   PRIMARY,
   account,
   adopt,
@@ -245,7 +229,6 @@ export default Object.freeze({
   busy,
   cooldownUntil,
   credentialAfter,
-  credentialOf,
   currentRig,
   heldLock,
   holdInStore,
@@ -258,7 +241,6 @@ export default Object.freeze({
   script,
   serverError,
   settle,
-  storedNow: currentlyStored,
   summary,
   tokens,
 })

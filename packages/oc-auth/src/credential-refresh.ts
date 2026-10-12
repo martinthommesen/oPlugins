@@ -70,6 +70,28 @@ const aboutCredential = (
       })
     },
   ),
+  /* Claim the store of `subject` with `entry`, or the leader that holds it. */
+  claimStore = (
+    state: State,
+    subject: Subject,
+    entry: InFlight,
+  ): Effect.Effect<Option.Option<InFlight>> =>
+    Ref.modify(
+      state.inFlight,
+      (
+        inFlight,
+      ): readonly [
+        Option.Option<InFlight>,
+        HashMap.HashMap<string, InFlight>,
+      ] =>
+        Option.match(HashMap.get(inFlight, subject.sourceKey), {
+          onNone: () => [
+            Option.none(),
+            HashMap.set(inFlight, subject.sourceKey, entry),
+          ],
+          onSome: (current) => [Option.some(current), inFlight],
+        }),
+    ),
   /*
    * The leader's `credential` with the joiner's own metadata, so the joiner
    * keeps its label and takes only the leader's fingerprint of the store.
@@ -107,10 +129,11 @@ const aboutCredential = (
       Unchanged: (): Refresh => result,
     }),
   /*
-   * Refresh `subject` as the leader for its store, `entry` already claimed.
-   * The refresh runs in the service's scope, so a leader whose caller goes
-   * away does not take its joiners' result down with it. Only the leader
-   * removes its entry, so the store still maps to `entry` when it ends.
+   * Start refreshing `subject` as the leader for its store, `entry` already
+   * claimed. The refresh runs in the service's scope, so a leader whose
+   * caller goes away does not take its joiners' result down with it. Only
+   * the leader removes its entry, so the store still maps to `entry` when it
+   * ends.
    */
   lead = Effect.fn("CredentialRefresh.lead")(function* lead(
     state: State,
@@ -125,9 +148,27 @@ const aboutCredential = (
       ),
       Effect.forkIn(state.scope),
     )
-
-    return yield* Deferred.await(entry.result)
   }),
+  /*
+   * Claim the store of `subject` with `entry` and start leading its
+   * refresh, or the leader that already holds it. Claiming and starting
+   * cannot be interrupted apart, so an interrupted caller never leaves
+   * joiners awaiting a claim that no leader will settle.
+   */
+  leadUnlessHeld = (
+    state: State,
+    subject: Subject,
+    entry: InFlight,
+  ): Effect.Effect<Option.Option<InFlight>, never, Requirements> =>
+    claimStore(state, subject, entry).pipe(
+      Effect.tap(
+        Option.match({
+          onNone: () => lead(state, subject, entry),
+          onSome: () => Effect.void,
+        }),
+      ),
+      Effect.uninterruptible,
+    ),
   /*
    * After the leader's refresh token was rejected: a joiner of the same
    * credential generation fails too, and one holding a newer generation gets
@@ -163,6 +204,7 @@ const aboutCredential = (
    * Join the refresh in flight for the store of `subject`, or lead one.
    * A joiner that has to ask again, after the leader's refresh token was
    * rejected, joins whichever refresh another such joiner started first.
+   * Only the wait for the result can be interrupted.
    */
   shareRefresh = Effect.fn("CredentialRefresh.shareRefresh")(
     // A generator named `shareRefresh` would retry by recursing into itself, not into the Effect.
@@ -171,24 +213,10 @@ const aboutCredential = (
       subject: Subject,
     ): Effect.fn.Return<Refresh, RefreshError, Requirements> {
       const entry = yield* entryFor(subject),
-        leader = yield* Ref.modify(
-          state.inFlight,
-          (
-            inFlight,
-          ): readonly [
-            Option.Option<InFlight>,
-            HashMap.HashMap<string, InFlight>,
-          ] =>
-            Option.match(HashMap.get(inFlight, subject.sourceKey), {
-              onNone: () => [
-                Option.none(),
-                HashMap.set(inFlight, subject.sourceKey, entry),
-              ],
-              onSome: (current) => [Option.some(current), inFlight],
-            }),
-        ),
+        leader = yield* leadUnlessHeld(state, subject, entry),
         shared = yield* Option.match(leader, {
-          onNone: () => lead(state, subject, entry).pipe(Effect.asSome),
+          // The caller that leads awaits the refresh it started.
+          onNone: () => Deferred.await(entry.result).pipe(Effect.asSome),
           onSome: (current) => onLeader(subject, current),
         })
 

@@ -22,6 +22,26 @@ const FIRST = 0,
   NO_EXCHANGES = 0,
   ONE_EXCHANGE = 1,
   TWO_EXCHANGES = 2,
+  /*
+   * A leader refreshing `asked` whose caller goes away while the endpoint
+   * holds the refresh, joined by a caller asking for the same. The joiner's
+   * result.
+   */
+  abandonedLeader = Effect.fn("test.abandonedLeader")(function* abandonedLeader(
+    asked: Asked,
+  ) {
+    const abandoned = yield* Effect.forkChild(support.refresh(asked)).pipe(
+        Effect.tap(support.settle),
+      ),
+      joiner = yield* Effect.forkChild(support.refresh(asked)).pipe(
+        Effect.tap(support.settle),
+      )
+
+    yield* Fiber.interrupt(abandoned)
+    yield* support.currentRig.pipe(Effect.flatMap((rig) => rig.gate.open))
+
+    return yield* Fiber.join(joiner)
+  }),
   /* Each refresh's access token, for comparing outcomes. */
   accessOf = (results: readonly Refresh[]): Option.Option<string>[] =>
     results.map((result) => support.summary(result).access),
@@ -57,6 +77,19 @@ const FIRST = 0,
   exchangesSoFar = support.currentRig.pipe(
     Effect.flatMap((rig) => Ref.get(rig.exchanged)),
   ),
+  /* A store whose endpoint renews its refresh token once the gate opens. */
+  gatedEndpoint = refreshLayer(
+    Object.freeze({
+      acquire: support.script.acquire,
+      exchange: () =>
+        support.currentRig.pipe(
+          Effect.flatMap((rig) => rig.gate.await),
+          Effect.andThen(support.issued("new-access")),
+        ),
+      read: support.script.read,
+      writeBack: support.script.writeBack,
+    }),
+  )(Option.some(support.account().credentials)),
   /*
    * A store with nothing in it, whose endpoint rejects the first refresh
    * token once the gate opens and renews the second.
@@ -159,3 +192,28 @@ describe("refresh joining a leader whose token died", () => {
     )
   })
 })
+
+test.layer(gatedEndpoint)(
+  "refresh whose leader's caller goes away",
+  (it: Tests) => {
+    it.effect("still settles the refresh for a caller that joined it", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* support.begin
+
+        const joined = yield* abandonedLeader(yield* original)
+
+        expect(support.summary(joined).access).toStrictEqual(
+          Option.some("new-access"),
+        )
+        expect(yield* exchangesSoFar).toHaveLength(ONE_EXCHANGE)
+        // The leader's write-back runs, so Claude Code keeps the new tokens.
+        expect(
+          yield* support.currentRig.pipe(
+            Effect.flatMap((rig) => Ref.get(rig.writes)),
+          ),
+        ).toHaveLength(ONE_EXCHANGE)
+      }),
+    )
+  },
+)

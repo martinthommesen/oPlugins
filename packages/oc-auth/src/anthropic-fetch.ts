@@ -5,7 +5,9 @@ import { FetchHttpClient } from "effect/http"
 /*
  * Send `request` with the runtime's `fetch`. The host hands the plugin Fetch
  * API objects and expects them back, so a replay stays one: its response
- * body streams through untouched, and the host can cancel it.
+ * body streams through untouched, and the host can cancel it. The request's
+ * own signal, the turn's, aborts it and its body, and so does interrupting
+ * the send before the response arrives.
  */
 const send = Effect.fn("AnthropicFetch.send")(function* send(request: Request) {
   const fetchFn = yield* FetchHttpClient.Fetch
@@ -16,7 +18,8 @@ const send = Effect.fn("AnthropicFetch.send")(function* send(request: Request) {
         cause,
         message: "the replayed request failed",
       }),
-    try: (signal): PromiseLike<Response> => fetchFn(request, { signal }),
+    try: (signal): PromiseLike<Response> =>
+      fetchFn(request, { signal: AbortSignal.any([request.signal, signal]) }),
   })
 })
 

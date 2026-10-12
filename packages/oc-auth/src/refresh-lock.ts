@@ -10,10 +10,13 @@
  * exists, so ticket numbers never reset and a stale holder never writes to
  * its successor's file.
  *
- * When the lock directory can't be used, every caller gets a lock that
- * serializes nothing, because refusing to refresh would be the worse failure.
- * Each such grant logs a `refresh_lock_degraded` warning, and the lock says
- * it is `degraded`.
+ * When the lock directory, or a ticket in it, can't be examined, every caller
+ * gets a lock that serializes nothing, because refusing to refresh would be
+ * the worse failure. Each such grant logs a `refresh_lock_degraded` warning,
+ * and the lock says it is `degraded`. A ticket that can be examined but not
+ * read, or that holds no lease oc-auth could have written, counts as live for
+ * the longest lease oc-auth writes after it last changed (see
+ * `refresh-lock-ticket-files.ts`).
  *
  * A lease counts only once it is written. When a ticket's lease can't be
  * written, `refresh_lease_unwritten` is logged, and the lock acts as if the
@@ -41,8 +44,8 @@ import LockAttempt from "./refresh-lock-attempt.ts"
 import type { PlatformError } from "effect"
 import PluginOptions from "./plugin-options.ts"
 import commit from "./refresh-lock-held.ts"
+import degrade from "./refresh-lock-degraded.ts"
 import opencodeDataDir from "./opencode-data-dir.ts"
-import pluginLog from "./plugin-log.ts"
 import ticketFiles from "./refresh-lock-ticket-files.ts"
 import tickets from "./refresh-lock-tickets.ts"
 
@@ -61,24 +64,22 @@ interface Plan {
   readonly ttlMs: number
 }
 
+/** The lock one acquisition asks for. */
+interface Target {
+  readonly dir: string
+  /** The path-free name of the store in warnings. */
+  readonly lock: string
+  readonly source: string
+  readonly ttlMs: number
+}
+
 type Ticket = typeof commit extends (ticket: infer Held) => object
   ? Held
   : never
 
 type Requirements = Environment | FileSystem.FileSystem | Path.Path
 
-/*
- * The lock granted when the lock directory cannot be used. `extend` reports
- * success because failing every refresh on a machine with an unwritable lock
- * directory would be worse than an uncoordinated refresh.
- */
-const DEGRADED_LOCK = {
-    defer: (): Effect.Effect<void> => Effect.void,
-    degraded: true,
-    extend: (): Effect.Effect<boolean> => Effect.succeed(true),
-    release: Effect.void,
-  },
-  MAX_LOCK_TTL_MS = 120_000,
+const MAX_LOCK_TTL_MS = tickets.MAX_LEASE_MS,
   NEXT_TICKET = 1n,
   NO_TICKET = 0n,
   PREFIX_HEX_LENGTH = 16,
@@ -135,22 +136,6 @@ const DEGRADED_LOCK = {
       ),
     )
   }),
-  /*
-   * Grant the uncoordinated lock, and warn: two processes refreshing at once
-   * can sign Claude Code out, so the lock directory needs fixing.
-   */
-  degrade = Effect.fn("RefreshLock.degrade")(function* degrade(
-    source: string,
-    failure: { readonly message: string },
-  ) {
-    yield* pluginLog.warning("refresh_lock_degraded", { source })
-    yield* pluginLog.debug("refresh_lock_degraded", {
-      error: failure.message,
-      source,
-    })
-
-    return LockAttempt.Held({ lock: DEGRADED_LOCK })
-  }),
   encoder = new TextEncoder(),
   /* `OC_AUTH_REFRESH_LOCK_DIR`, else OpenCode's data directory. */
   lockDir = Effect.gen(function* resolveLockDir() {
@@ -164,6 +149,8 @@ const DEGRADED_LOCK = {
   /*
    * The name of the store `source` keys, as its ticket file names and
    * warnings carry it. A digest stands in for `source`, which can hold a path.
+   * A failing digest is a broken platform rather than anything a caller could
+   * handle.
    */
   lockName = Effect.fn("RefreshLock.lockName")(function* lockName(
     source: string,
@@ -172,7 +159,7 @@ const DEGRADED_LOCK = {
       digest = yield* crypto.digest("SHA-256", encoder.encode(source))
 
     return Hex.encode(digest).slice(START, PREFIX_HEX_LENGTH)
-  }),
+  }, Effect.orDie),
   /*
    * Take the ticket after the highest of the expired tickets and `floor`, or
    * report the live claim that turns up while racing for it. Fails when the
@@ -203,15 +190,12 @@ const DEGRADED_LOCK = {
       ),
     )
   }),
-  /* One acquisition of the lock for `source` in `dir`. */
+  /* One acquisition of the lock `target` names. */
   seekLock = Effect.fn("RefreshLock.seekLock")(function* seekLock(
-    dir: string,
-    source: string,
-    ttlMs: number,
+    target: Target,
   ) {
     const crypto = yield* Crypto.Crypto,
       fs = yield* FileSystem.FileSystem,
-      lock = yield* lockName(source),
       owner = yield* crypto.randomUUIDv4
 
     /*
@@ -220,14 +204,31 @@ const DEGRADED_LOCK = {
      * the scan, which determines whether coordination is available.
      */
     yield* fs
-      .makeDirectory(dir, { mode: PRIVATE_DIRECTORY, recursive: true })
+      .makeDirectory(target.dir, { mode: PRIVATE_DIRECTORY, recursive: true })
       .pipe(Effect.ignore)
 
     return yield* race(
-      { dir, lock, owner, prefix: `oc-auth-refresh-${lock}-`, source, ttlMs },
+      {
+        dir: target.dir,
+        lock: target.lock,
+        owner,
+        prefix: `oc-auth-refresh-${target.lock}-`,
+        source: target.source,
+        ttlMs: target.ttlMs,
+      },
       NO_TICKET,
     )
   }),
+  /* One acquisition of the lock `target` names, degraded when the lock directory can't be used. */
+  seekOrDegrade = (
+    target: Target,
+  ): Effect.Effect<Attempt, never, Crypto.Crypto | Requirements> =>
+    seekLock(target).pipe(
+      Effect.catchTag(
+        "PlatformError",
+        (failure: { readonly message: string }) => degrade(target, failure),
+      ),
+    ),
   /* Acquire the lock, releasing a held one when the scope closes. */
   takeLock = (
     dir: string,
@@ -239,11 +240,8 @@ const DEGRADED_LOCK = {
     Crypto.Crypto | Requirements | Scope.Scope
   > =>
     Effect.acquireRelease(
-      seekLock(dir, source, ttlMs).pipe(
-        Effect.catchTag(
-          "PlatformError",
-          (failure: { readonly message: string }) => degrade(source, failure),
-        ),
+      lockName(source).pipe(
+        Effect.flatMap((lock) => seekOrDegrade({ dir, lock, source, ttlMs })),
       ),
       LockAttempt.$match({
         Busy: () => Effect.void,

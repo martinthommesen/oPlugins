@@ -8,6 +8,13 @@ type Claim = typeof RefreshLockClaim.Type
 
 const DIGITS = /^\d+$/u,
   LOCK_SUFFIX = ".lock",
+  /*
+   * The longest lease oc-auth writes, from when it writes it. The held lock
+   * caps every lease at this, whatever the options of the process writing it,
+   * so a ticket that can't be read is never live longer than this after it
+   * last changed.
+   */
+  MAX_LEASE_MS = 120_000,
   NO_CLAIMS = 0,
   /* What the live claims among `claims` say, or none when there are none. */
   contention = (
@@ -63,6 +70,7 @@ const DIGITS = /^\d+$/u,
 
 /** The ticket arithmetic of the refresh lock, free of I/O. */
 export default Object.freeze({
+  MAX_LEASE_MS,
   contention,
   highestTicket,
   superseded,

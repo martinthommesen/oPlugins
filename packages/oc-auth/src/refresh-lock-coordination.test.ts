@@ -15,9 +15,9 @@ interface Tests {
 
 const COOLDOWN_MS = 30_000,
   COOLDOWN_OVER = 31_000,
-  /** The warning a degraded grant logs: its event and source, no content. */
+  /** The warning a degraded grant logs: its event and lock name, no path. */
   DEGRADED_WARNING = {
-    annotations: { source: support.source },
+    annotations: { lock: support.lock },
     level: "Warn",
     message: "refresh_lock_degraded",
   },
@@ -200,10 +200,10 @@ test.layer(support.layer)("refresh lock degradation", (it: Tests) => {
             Object.keys(record.annotations).toSorted(),
           ]),
         ).toStrictEqual([
-          ["Warn", ["source"]],
-          ["Debug", ["error", "source"]],
-          ["Warn", ["source"]],
-          ["Debug", ["error", "source"]],
+          ["Warn", ["lock"]],
+          ["Debug", ["error", "lock", "source"]],
+          ["Warn", ["lock"]],
+          ["Debug", ["error", "lock", "source"]],
         ])
         /*
          * Without this the degraded lock is indistinguishable from a real one,

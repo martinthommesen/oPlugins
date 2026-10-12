@@ -32,6 +32,8 @@ type Platform = Crypto.Crypto | FileSystem.FileSystem | Path.Path
 // Test time starts here, so a released lease (expiring at 0) is long expired.
 const BASE_TIME = 1_000_000,
   DEFAULT_TTL_MS = 20_000,
+  /** The name warnings give the store of SOURCE: the digest in PREFIX. */
+  LOCK = "e9c5dce8a55501f4",
   LeaseExpiry = Schema.fromJsonString(
     Schema.Struct({ expiresAt: Schema.Finite }),
   ),
@@ -279,6 +281,7 @@ export default Object.freeze({
     CapturedLogs.layer,
   ),
   leaseExpiry,
+  lock: LOCK,
   locks,
   prefix: PREFIX,
   requestTwice,

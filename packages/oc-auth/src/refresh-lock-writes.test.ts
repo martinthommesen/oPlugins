@@ -18,8 +18,6 @@ const COOLDOWN_MS = 30_000,
   EXTENDED_MS = 45_000,
   FIRST_TICKET = 1,
   IN_COOLDOWN = 5000,
-  /** The path-free name of the usual source's store. */
-  LOCK = support.prefix.slice("oc-auth-refresh-".length, -"-".length),
   NOTHING = 0,
   NOW = 0,
   /*
@@ -203,7 +201,7 @@ test.layer(support.layer)("refresh lock write failure logs", (it: Tests) => {
         reported
           .filter((record) => record.level === "Warn")
           .map((record) => record.annotations),
-      ).toStrictEqual([{ lease: "extension", lock: LOCK }])
+      ).toStrictEqual([{ lease: "extension", lock: support.lock }])
     }),
   )
 })

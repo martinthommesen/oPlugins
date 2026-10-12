@@ -325,8 +325,9 @@ host offers every plugin API it needs, such as `model.transform` and
 
 The plugin writes to OpenCode's own log, by default
 `~/.local/share/opencode/log/opencode.log`, and keeps no log file of its own.
-Each record's message is a stable event name, such as `refresh_lock_degraded`,
-with fields such as `source`, which names the credential store.
+Each record's message is a stable event name, such as
+`refresh_writeback_failed`, with fields such as `source`, which names the
+credential store.
 
 Warnings carry metadata only, such as credential store names, counts, and status
 codes, never a token, a message, or a path. Each of these events is a warning:
@@ -334,7 +335,7 @@ codes, never a token, a message, or a path. Each of these events is a warning:
 | Event                      | Meaning                                                                                                                                             |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `refresh_writeback_failed` | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires             |
-| `refresh_lock_degraded`    | The refresh lock directory can't be used, so OpenCode processes don't take turns refreshing a store. Two refreshes at once can sign Claude Code out |
+| `refresh_lock_degraded`    | The refresh lock directory or a lock file is unusable, so OpenCode doesn't take turns refreshing the `lock` store. Overlap can sign Claude Code out |
 | `refresh_lease_unwritten`  | A refresh lock lease couldn't be written, so the plugin doesn't refresh under it. `lease` names the write, `lock` the store as lock files do        |
 | `keychain_list_failed`     | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                           |
 | `credential_reload_failed` | The newly selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch                            |

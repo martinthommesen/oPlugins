@@ -2,6 +2,7 @@ import { Clock, Effect, Schema } from "effect"
 import Environment from "./environment.ts"
 import type { FileSystem } from "effect"
 import pluginLog from "./plugin-log.ts"
+import tickets from "./refresh-lock-tickets.ts"
 
 /** A ticket this process holds open, as a lease write needs it. */
 interface Leased {
@@ -84,14 +85,19 @@ const LEASE_BYTES = 256,
       ),
     )
   }),
-  /* Lease `held` as `kind` for `ms` from now; false when the write fails. */
+  /*
+   * Lease `held` as `kind` for `ms` from now, but no longer than the longest
+   * lease a reader allows for; false when the write fails.
+   */
   lease = (
     held: Leased,
     kind: LeaseKind,
     ms: number,
   ): Effect.Effect<boolean, never, Environment> =>
     Clock.currentTimeMillis.pipe(
-      Effect.flatMap((now) => inscribe(held, kind, now + ms)),
+      Effect.flatMap((now) =>
+        inscribe(held, kind, now + Math.min(ms, tickets.MAX_LEASE_MS)),
+      ),
     ),
   /* End the lease on `held` now; false when the write fails. */
   retire = (held: Leased): Effect.Effect<boolean, never, Environment> =>

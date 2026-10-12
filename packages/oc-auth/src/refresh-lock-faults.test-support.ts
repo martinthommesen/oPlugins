@@ -1,4 +1,12 @@
-import { Context, Effect, FileSystem, Layer, PlatformError, Ref } from "effect"
+import {
+  Context,
+  DateTime,
+  Effect,
+  FileSystem,
+  Layer,
+  PlatformError,
+  Ref,
+} from "effect"
 import {
   NodeCrypto,
   NodeFileSystem,
@@ -12,8 +20,8 @@ import support from "./refresh-lock.test-support.ts"
 type Attempt = ReturnType<(typeof LockAttempt)["Busy" | "Cooldown" | "Held"]>
 
 /** Which lease write fails, and how much of it lands first. */
-interface Fault {
-  /** The failing write, counting every ticket write from 1. */
+interface WriteFault {
+  /** The failing write, counting every ticket write from 1; 0 for none. */
   readonly failing: number
   /** Runs when the write fails. */
   readonly onFault: Effect.Effect<void>
@@ -21,11 +29,19 @@ interface Fault {
   readonly partial: number
 }
 
-/* How an injected write failure fails. */
-const BROKEN_WRITE = Effect.fail(
+/** Which ticket writes fail, and which tickets can't be read or examined. */
+interface Fault extends WriteFault {
+  /** Paths whose files can be neither read nor examined. */
+  readonly unexaminable: readonly string[]
+  /** Paths whose files can be examined but not read. */
+  readonly unreadable: readonly string[]
+}
+
+/* How an injected failure fails. */
+const BROKEN = Effect.fail(
     PlatformError.badArgument({
-      description: "injected write failure",
-      method: "writeAll",
+      description: "injected failure",
+      method: "injected",
       module: "FileSystem",
     }),
   ),
@@ -33,16 +49,44 @@ const BROKEN_WRITE = Effect.fail(
   NEXT = 1,
   NO_WRITES = 0,
   START = 0,
+  /* `effect`, unless `path` is among `paths`: then an injected failure. */
+  blocked = <Value>(
+    paths: readonly string[],
+    path: string,
+    effect: Effect.Effect<Value, PlatformError.PlatformError>,
+  ): Effect.Effect<Value, PlatformError.PlatformError> => {
+    if (paths.includes(path)) {
+      return BROKEN
+    }
+
+    return effect
+  },
+  /* Make the file at `path` look last changed `offset` past the base time. */
+  changedAt = Effect.fn("test.changedAt")(function* changedAt(
+    path: string,
+    offset: number,
+  ) {
+    const fs = yield* FileSystem.FileSystem,
+      time = DateTime.toDateUtc(DateTime.makeUnsafe(support.base + offset))
+
+    yield* fs.utimes(path, time, time)
+  }),
   /* Fail ticket write `failing`, after `partial` of its bytes land, then run `onFault`. */
   failWrite = (
     failing: number,
     partial: number,
     onFault: Effect.Effect<void> = Effect.void,
-  ): Fault => ({ failing, onFault, partial }),
+  ): Fault => ({
+    failing,
+    onFault,
+    partial,
+    unexaminable: [],
+    unreadable: [],
+  }),
   /* Write `buffer` to `file`, unless it is the write `fault` fails. */
   failingWrite = (
     file: FileSystem.File,
-    fault: Fault & { readonly writes: Ref.Ref<number> },
+    fault: WriteFault & { readonly writes: Ref.Ref<number> },
     buffer: Uint8Array,
   ): Effect.Effect<void, PlatformError.PlatformError> =>
     Ref.updateAndGet(fault.writes, (count) => count + NEXT).pipe(
@@ -53,13 +97,13 @@ const BROKEN_WRITE = Effect.fail(
 
         return file
           .writeAll(buffer.subarray(START, fault.partial))
-          .pipe(Effect.andThen(fault.onFault), Effect.andThen(BROKEN_WRITE))
+          .pipe(Effect.andThen(fault.onFault), Effect.andThen(BROKEN))
       }),
     ),
   /* `file`, with its writes failing per `fault`. */
   faultyFile = (
     file: FileSystem.File,
-    fault: Fault & { readonly writes: Ref.Ref<number> },
+    fault: WriteFault & { readonly writes: Ref.Ref<number> },
   ): FileSystem.File => ({
     [FileSystem.FileTypeId]: FileSystem.FileTypeId,
     read: (buffer) => file.read(buffer),
@@ -73,7 +117,8 @@ const BROKEN_WRITE = Effect.fail(
   }),
   /*
    * The file system the lock uses, over the real one, with the files it
-   * opens writing per `fault`.
+   * opens writing, and the files it reads and examines answering, per
+   * `fault`.
    */
   faultyFiles = (
     fault: Fault,
@@ -98,9 +143,14 @@ const BROKEN_WRITE = Effect.fail(
               ),
             ),
           readDirectory: (path, options) => fs.readDirectory(path, options),
-          readFileString: (path, encoding) => fs.readFileString(path, encoding),
+          readFileString: (path, encoding) =>
+            blocked(
+              [...fault.unreadable, ...fault.unexaminable],
+              path,
+              fs.readFileString(path, encoding),
+            ),
           remove: (path, options) => fs.remove(path, options),
-          stat: (path) => fs.stat(path),
+          stat: (path) => blocked(fault.unexaminable, path, fs.stat(path)),
         })
       }),
     ),
@@ -149,7 +199,30 @@ const BROKEN_WRITE = Effect.fail(
       return yield* inFreshDir(fault).pipe(Effect.provideContext(context))
     },
     Effect.orDie,
-  )
+  ),
+  /* Make the files at `paths` impossible to read or examine. */
+  unexaminable = (paths: readonly string[]): Fault => ({
+    failing: NO_WRITES,
+    onFault: Effect.void,
+    partial: NO_WRITES,
+    unexaminable: paths,
+    unreadable: [],
+  }),
+  /* Make the files at `paths` impossible to read, though not to examine. */
+  unreadable = (paths: readonly string[]): Fault => ({
+    failing: NO_WRITES,
+    onFault: Effect.void,
+    partial: NO_WRITES,
+    unexaminable: [],
+    unreadable: paths,
+  })
 
-/** Refresh locks whose ticket writes fail on cue. */
-export default Object.freeze({ failWrite, takeFaulty, takeFaultyAnywhere })
+/** Refresh locks whose ticket files fail on cue, and tickets made to look old. */
+export default Object.freeze({
+  changedAt,
+  failWrite,
+  takeFaulty,
+  takeFaultyAnywhere,
+  unexaminable,
+  unreadable,
+})

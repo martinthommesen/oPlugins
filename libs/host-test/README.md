@@ -57,3 +57,19 @@ modules `host-test.ts` uses:
 
 When the test fails, it prints the sandbox's host log before it removes the
 sandbox.
+
+## Command deadline
+
+`command.ts`'s `run` gives each command 180 seconds to exit and close its stdout
+and stderr. A descendant that holds an output stream open after the command
+exits counts against the same deadline. After the deadline, cleanup has a
+bounded allowance of 10 seconds:
+
+- Stopping the command gets 5 seconds: SIGTERM to its process group, then
+  SIGKILL after a 3-second grace.
+- Releasing the process gets 5 seconds. A release that takes longer keeps
+  running detached, so it cannot hold the test.
+
+A command that times out therefore fails within 190 seconds of starting, with
+its timeout and the output it gave so far. When stopping it failed or did not
+finish, the failure says so instead of claiming the command stopped.

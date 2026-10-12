@@ -3,18 +3,21 @@ import { Effect } from "effect"
 import toolAliases from "./tool-aliases.ts"
 
 const ONE_ASSERTION = 1,
+  THREE_ASSERTIONS = 3,
   TWO_ASSERTIONS = 2
 
 describe("tool alias restoration", () => {
   it.effect("restores only aliases this plugin applied", () =>
     Effect.sync(() => {
-      expect.assertions(ONE_ASSERTION)
-      expect(
-        toolAliases.restore(
-          '{"name":"mcp_Shell"} {"name": "mcp_Playwright_click"}',
-          { mcp_Shell: "shell" },
-        ),
-      ).toBe('{"name":"shell"} {"name": "mcp_Playwright_click"}')
+      expect.assertions(THREE_ASSERTIONS)
+
+      const aliases = { mcp_Shell: "shell" }
+
+      expect(toolAliases.original("mcp_Shell", aliases)).toBe("shell")
+      expect(toolAliases.original("mcp_Playwright_click", aliases)).toBe(
+        "mcp_Playwright_click",
+      )
+      expect(toolAliases.original("constructor", aliases)).toBe("constructor")
     }),
   )
 })

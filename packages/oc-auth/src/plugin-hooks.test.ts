@@ -28,7 +28,10 @@ const AFTER_CACHE_WINDOW = 30_000,
   ONE_RESOLVE = 1,
   /* A response carrying one tool call under `name`. */
   callOf = (name: string): Response =>
-    Response.json({ content: [{ name, type: "tool_use" }] }),
+    Response.json({
+      content: [{ id: "one", input: {}, name, type: "tool_use" }],
+      type: "message",
+    }),
   /* The tool names a response restored to. */
   namesIn = (response: Response): Effect.Effect<string> =>
     Effect.promise(

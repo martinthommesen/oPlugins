@@ -88,6 +88,23 @@ const EVENT_STREAM = { "content-type": "text/event-stream" },
       Stream.toReadableStreamEffect(),
       Effect.map((body) => new Response(body, { headers })),
     ),
+  /* Every chunk of `response`'s body, as text, into `seen`. */
+  forwardChunks = (
+    response: Response,
+    seen: Queue.Queue<string>,
+  ): Effect.Effect<void> =>
+    Option.match(Option.fromNullishOr(response.body), {
+      onNone: () => Effect.void,
+      onSome: (body) =>
+        Stream.fromReadableStream({
+          evaluate: () => body,
+          onError: (cause) => cause,
+        }).pipe(
+          Stream.decodeText,
+          Stream.runForEach((chunk) => Queue.offer(seen, chunk)),
+          Effect.orDie,
+        ),
+    }),
   /* An `http.request` event carrying `request` for `model`. */
   httpEvent = (request: Request, model: string): SessionHttpRequest => ({
     agent: asAgent("build"),
@@ -139,6 +156,7 @@ const EVENT_STREAM = { "content-type": "text/event-stream" },
 export default Object.freeze({
   bodyText,
   contextEvent,
+  forwardChunks,
   httpEvent,
   layer: transformsLayer,
   openStream,

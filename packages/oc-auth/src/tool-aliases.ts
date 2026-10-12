@@ -5,7 +5,6 @@ type OriginalByAlias = Readonly<Record<string, string>>
 
 const FIRST_LETTER = 1,
   START = 0,
-  TOOL_NAME_FIELD = /"(?<field>name|tool_name)"\s*:\s*"(?<alias>mcp_[^"]*)"/gu,
   TOOL_PREFIX = "mcp_",
   /*
    * Anthropic's OAuth billing validator rejects unknown tool names when
@@ -64,21 +63,22 @@ const FIRST_LETTER = 1,
     later: OriginalByAlias,
   ): OriginalByAlias =>
     Object.fromEntries([...Object.entries(earlier), ...Object.entries(later)]),
-  /* Replace only the aliases this plugin applied, leaving real MCP names alone. */
-  restoreToolNames = (text: string, originalByAlias: OriginalByAlias): string =>
-    text.replaceAll(
-      TOOL_NAME_FIELD,
-      (match: string, field: string, alias: string): string =>
-        Option.match(Option.fromNullishOr(originalByAlias[alias]), {
-          onNone: () => match,
-          onSome: (original) => `"${field}":${JSON.stringify(original)}`,
-        }),
+  /*
+   * The OpenCode name `name` stands for, when it is an alias this plugin
+   * applied; any other name, such as a real MCP tool's, is its own.
+   */
+  originalName = (name: string, originalByAlias: OriginalByAlias): string =>
+    Option.liftPredicate(name, (alias) =>
+      Object.hasOwn(originalByAlias, alias),
+    ).pipe(
+      Option.flatMap((alias) => Option.fromUndefinedOr(originalByAlias[alias])),
+      Option.getOrElse(() => name),
     )
 
-/** Tool aliases, and restoring the tool names they stand for. */
+/** Tool aliases, and the tool names they stand for. */
 export default Object.freeze({
   build: buildToolAliases,
   invert: invertAliases,
   merge: mergeAliases,
-  restore: restoreToolNames,
+  original: originalName,
 })

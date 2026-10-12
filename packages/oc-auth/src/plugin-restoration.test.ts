@@ -16,7 +16,7 @@ interface Tests {
 }
 
 const ALIASED_SSE =
-    'event: content_block_start\ndata: {"type":"tool_use","name":"mcp_Shell"}\n\n',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"one","name":"mcp_Shell","input":{}}}\n\n',
   OK = 200,
   SHELL_BODY = JSON.stringify({ tools: [{ name: "shell" }] }),
   /* A response streaming a tool call under its wire alias. */

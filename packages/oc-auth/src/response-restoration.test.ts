@@ -6,11 +6,11 @@ import support from "./request-transforms.test-support.ts"
 
 const ALIASES = { mcp_Shell: "shell" },
   BODY_CLOSE = '"}]}',
-  BODY_HEAD = '{"pad":"',
+  BODY_HEAD = '{"type":"message","pad":"',
   BODY_MIDDLE = '","content":[{"type":"text","text":"',
   CREATED = 201,
   CRLF_EVENT =
-    'event: content_block_start\r\ndata: {"type":"tool_use","name":"mcp_Shell"}\r\n\r\n',
+    'event: content_block_start\r\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"one","name":"mcp_Shell","input":{}}}\r\n\r\n',
   /** The fixed tail a rewrite that cut the body would keep. */
   CUT = 1024,
   /** The start of a gzip stream, which is not valid UTF-8. */
@@ -23,7 +23,7 @@ const ALIASES = { mcp_Shell: "shell" },
    */
   LARGE = 266_240,
   MCP_PREFIX_LENGTH = 4,
-  NAME_DISTANCE = 1038,
+  NAME_DISTANCE = 1080,
   ONE_ASSERTION = 1,
   SPLIT_EVENTS = [
     'event: content_block_start\ndata: {"type":"content_block_start","content_block":{"type":"tool_use","id":"one","na',
@@ -62,23 +62,6 @@ const ALIASES = { mcp_Shell: "shell" },
       BODY_CLOSE,
     ].join("")
   },
-  /* Every chunk of `response`'s body, as text, into `seen`. */
-  forwardChunks = (
-    response: Response,
-    seen: Queue.Queue<string>,
-  ): Effect.Effect<void> =>
-    Option.match(Option.fromNullishOr(response.body), {
-      onNone: () => Effect.void,
-      onSome: (body) =>
-        Stream.fromReadableStream({
-          evaluate: () => body,
-          onError: (cause) => cause,
-        }).pipe(
-          Stream.decodeText,
-          Stream.runForEach((chunk) => Queue.offer(seen, chunk)),
-          Effect.orDie,
-        ),
-    }),
   /* `response` restored with `ALIASES`, read whole. */
   restoredText = (response: Response): Effect.Effect<string> =>
     responseRestoration
@@ -88,6 +71,7 @@ const ALIASES = { mcp_Shell: "shell" },
   toolUseBody = (name: string): string =>
     JSON.stringify({
       content: [{ id: "one", input: {}, name, type: "tool_use" }],
+      type: "message",
     })
 
 describe("response restoration of streams", () => {
@@ -110,7 +94,9 @@ describe("response restoration of streams", () => {
       const open = yield* support.openStream,
         restored = yield* responseRestoration.restore(open.response, ALIASES),
         seen = yield* Queue.unbounded<string>(),
-        tailer = yield* forwardChunks(restored, seen).pipe(Effect.forkChild),
+        tailer = yield* support
+          .forwardChunks(restored, seen)
+          .pipe(Effect.forkChild),
         untilFirst = yield* open
           .push(CRLF_EVENT)
           .pipe(Effect.andThen(Queue.take(seen))),
@@ -151,7 +137,7 @@ describe("response restoration of whole bodies", () => {
       expect.assertions(THREE_ASSERTIONS)
 
       const restored = yield* responseRestoration.restore(
-        new Response('{"name":"mcp_Shell"}', {
+        new Response(toolUseBody("mcp_Shell"), {
           headers: JSON_HEADERS,
           status: CREATED,
           statusText: "Created",
@@ -161,7 +147,7 @@ describe("response restoration of whole bodies", () => {
 
       expect(restored.status).toBe(CREATED)
       expect(restored.statusText).toBe("Created")
-      expect(yield* support.bodyText(restored)).toBe('{"name":"shell"}')
+      expect(yield* support.bodyText(restored)).toBe(toolUseBody("shell"))
     }),
   )
 })
@@ -203,7 +189,10 @@ describe("response restoration of large bodies without event framing", () => {
       expect.assertions(THREE_ASSERTIONS)
 
       // Places "mcp_" just before the cut, splitting "mcp_Shell".
-      const body = bodyEndingWith('","name":"mcp_Shell","x":"', NAME_DISTANCE),
+      const body = bodyEndingWith(
+          '"},{"type":"tool_use","id":"one","input":{},"name":"mcp_Shell","x":"',
+          NAME_DISTANCE,
+        ),
         restored = yield* restoredText(
           new Response(body, { headers: JSON_HEADERS }),
         )

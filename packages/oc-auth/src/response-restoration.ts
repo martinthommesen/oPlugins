@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Option, Order, Stream } from "effect"
-import toolAliases from "./tool-aliases.ts"
+import responseToolNames from "./response-tool-names.ts"
 
 /** Maps each alias this plugin applied back to the OpenCode tool name. */
 type OriginalByAlias = Readonly<Record<string, string>>
@@ -14,10 +14,67 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
   CARRY =
     Math.max(...BLANK_LINES.map((boundary) => boundary.length)) -
     BOUNDARY_SLACK,
+  DATA_FIELD = "data:",
+  /** Just past a line end that ends a blank line: the end of an SSE event. */
+  EVENT_END = /(?<=(?:\r\n|\n|\r(?!\n)){2})/u,
+  /** Just past any line end, so each line keeps its own. */
+  LINE_END = /(?<=\n|\r(?!\n))/u,
+  LINE_TERMINATOR = /(?:\r\n|\n|\r)$/u,
   NOT_FOUND = -1,
   START = 0,
   TEXTUAL_TYPES = ["event-stream", "json"],
   TEXT_PREFIX = "text/",
+  VALUE_SPACE = /^ /u,
+  /* `line` without its line end. */
+  bareLine = (line: string): string => line.replace(LINE_TERMINATOR, ""),
+  /* Whether `line` is a `data` field, part of its event's payload. */
+  carriesData = (line: string): boolean => line.startsWith(DATA_FIELD),
+  /*
+   * An event's `lines` with its payload replaced by `data`, written on the
+   * line its payload started on, with that line's own line end.
+   */
+  dataReplaced = (lines: readonly string[], data: string): string => {
+    const first = lines.findIndex((line) => carriesData(line))
+
+    return lines
+      .map((line, index) => {
+        if (!carriesData(line)) {
+          return line
+        }
+
+        if (index !== first) {
+          return ""
+        }
+
+        return `${DATA_FIELD} ${data}${line.slice(bareLine(line).length)}`
+      })
+      .join("")
+  },
+  /* The value of a `data` line: after the field name and one optional space. */
+  dataValue = (line: string): string =>
+    bareLine(line).slice(DATA_FIELD.length).replace(VALUE_SPACE, ""),
+  /*
+   * One SSE event with its tool names restored. An event whose payload is
+   * not JSON, or names no tool of ours, passes byte for byte.
+   */
+  eventRestored = (event: string, originalByAlias: OriginalByAlias): string => {
+    const lines = event.split(LINE_END),
+      payload = lines
+        .filter((line) => carriesData(line))
+        .map((line) => dataValue(line))
+        .join("\n")
+
+    return Option.match(responseToolNames.inEvent(payload, originalByAlias), {
+      onNone: () => event,
+      onSome: (data) => dataReplaced(lines, data),
+    })
+  },
+  /* Complete SSE events with their tool names restored, one event at a time. */
+  eventsRestored = (text: string, originalByAlias: OriginalByAlias): string =>
+    text
+      .split(EVENT_END)
+      .map((event) => eventRestored(event, originalByAlias))
+      .join(""),
   /*
    * Whether a response body is text this plugin may decode. Rewriting runs
    * through TextDecoder, which replaces every invalid byte with U+FFFD, so a
@@ -61,11 +118,20 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
     )
   },
   /*
+   * The text left when the body ends, with its tool names restored: a whole
+   * JSON message, or else the last events of a stream.
+   */
+  lastRestored = (text: string, originalByAlias: OriginalByAlias): string =>
+    Option.getOrElse(responseToolNames.inMessage(text, originalByAlias), () =>
+      eventsRestored(text, originalByAlias),
+    ),
+  /*
    * `body` as text with the original tool names restored, flushed on SSE
-   * event boundaries so a tool name is never split across two rewrites. A
-   * body without event boundaries, such as a non-streaming JSON response, is
-   * rewritten whole when the stream ends. The caller reads such a body whole
-   * anyway, so holding it costs one more copy.
+   * event boundaries so each event is rewritten whole and passes on as soon
+   * as it is complete. A body without event boundaries, such as a
+   * non-streaming JSON response, is rewritten whole when the stream ends.
+   * The caller reads such a body whole anyway, so holding it costs one more
+   * copy.
    */
   namesRestored = (
     body: ReadableStream<Uint8Array>,
@@ -88,7 +154,7 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
               onSome: (boundary): readonly [string, readonly string[]] => [
                 buffer.slice(boundary),
                 [
-                  toolAliases.restore(
+                  eventsRestored(
                     buffer.slice(START, boundary),
                     originalByAlias,
                   ),
@@ -101,7 +167,7 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
               Arr.filter(
                 [`${pending}${decoder.decode()}`],
                 (rest) => rest !== "",
-              ).map((rest) => toolAliases.restore(rest, originalByAlias)),
+              ).map((rest) => lastRestored(rest, originalByAlias)),
           },
         ),
       )

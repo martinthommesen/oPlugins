@@ -66,9 +66,6 @@ const FIVE_ASSERTIONS = 5,
         { name: "web_search", type: "web_search_20250305" },
       ],
     }),
-  /* A tool reference block naming `name`, as JSON. */
-  referenceTo = (name: string): string =>
-    JSON.stringify({ tool_name: name, type: "tool_reference" }),
   /* A body that offers `toolName` deferred and references `referenced`. */
   searchPayload = (toolName: string, referenced: string): string =>
     JSON.stringify({
@@ -137,11 +134,8 @@ test.layer(Layer.empty)("request body tool references", (it: PureTests) => {
         expect(transformed.text).toBe(searchPayload("mcp_Read", "mcp_Read"))
         expect(transformed.originalByAlias).toStrictEqual({ mcp_Read: "read" })
         expect(
-          toolAliases.restore(
-            referenceTo("mcp_Read"),
-            transformed.originalByAlias,
-          ),
-        ).toBe(referenceTo("read"))
+          toolAliases.original("mcp_Read", transformed.originalByAlias),
+        ).toBe("read")
       }),
   )
 })
@@ -181,9 +175,9 @@ describe("request body tool names", () => {
           originalByAlias: {},
           text: toolList(["mcp_Foo", "foo"]),
         })
-        expect(
-          toolAliases.restore('{"name":"mcp_Foo"}', taken.originalByAlias),
-        ).toBe('{"name":"mcp_Foo"}')
+        expect(toolAliases.original("mcp_Foo", taken.originalByAlias)).toBe(
+          "mcp_Foo",
+        )
       }),
     )
   })

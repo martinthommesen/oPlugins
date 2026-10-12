@@ -1,4 +1,4 @@
-import { Effect, Fiber, Layer, Ref } from "effect"
+import { Effect, Fiber, Layer, Option, Ref } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import FakeCodex from "./fake-codex.test-support.ts"
 import MalformedAssessment from "./malformed-assessment-error.ts"
@@ -30,9 +30,11 @@ const ALLOW = '{"outcome":"allow"}',
   invalidRequest: Script = (model) =>
     Effect.fail(
       RequestFailed.make({
+        category: "request_rejected",
         cause: "Invalid context length.",
         model,
         operation: "status",
+        status: Option.some(HTTP_BAD_REQUEST),
       }),
     ),
   rejectPrimary: Script = (model) => {

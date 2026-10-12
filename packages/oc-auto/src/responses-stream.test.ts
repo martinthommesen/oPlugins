@@ -18,10 +18,21 @@ const ALLOW =
     'data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
   OVERSIZED_OUTPUT_CHARS = 20_000,
   REQUEST = HttpClientRequest.post("https://example.com/responses"),
+  /** The categories of `TERMINAL_FAILURES`, in order. */
+  TERMINAL_CATEGORIES = [
+    "incomplete",
+    "response_failed",
+    "response_failed",
+    "incomplete",
+    "incomplete",
+    "incomplete",
+    "refused",
+  ],
   /** Terminal events that do not complete a response successfully. */
   TERMINAL_FAILURES = [
     { response: { status: "incomplete" }, type: "response.incomplete" },
     { type: "response.failed" },
+    { message: "Rate limited for org-secret.", type: "error" },
     { response: { status: "incomplete" }, type: "response.completed" },
     {
       response: { error: { message: "Failed" }, status: "completed" },
@@ -30,6 +41,10 @@ const ALLOW =
     { type: "response.completed" },
     { type: "response.refusal.done" },
   ] as const,
+  /* The category of each failure, in order. */
+  categoriesOf = (
+    failures: readonly { readonly category: string }[],
+  ): readonly string[] => failures.map((failure) => failure.category),
   encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown)),
   isRequestFailed = Schema.is(RequestFailed),
   /* The reviewer's text read from a response whose body is `body`. */
@@ -62,6 +77,7 @@ describe("readOutputText", () => {
         const failure = yield* read(ALLOW).pipe(Effect.flip)
 
         expect(failure).toBeInstanceOf(RequestFailed)
+        expect(failure.category).toBe("incomplete")
       }),
     )
   })
@@ -78,6 +94,7 @@ describe("readOutputText", () => {
           )
 
           expect(failure).toBeInstanceOf(RequestFailed)
+          expect(failure.category).toBe("incomplete")
         }),
     )
   })
@@ -101,6 +118,7 @@ describe("response terminal failures", () => {
           )
 
           expect(pipe(failures, Arr.every(isRequestFailed))).toBe(true)
+          expect(categoriesOf(failures)).toStrictEqual(TERMINAL_CATEGORIES)
         }),
     )
   })
@@ -116,6 +134,10 @@ describe("response terminal failures", () => {
         ])
 
         expect(pipe(failures, Arr.every(isRequestFailed))).toBe(true)
+        expect(categoriesOf(failures)).toStrictEqual([
+          "incomplete",
+          "invalid_response",
+        ])
       }),
     )
   })
@@ -136,6 +158,7 @@ describe("response output limits", () => {
           )
 
         expect(failure).toBeInstanceOf(RequestFailed)
+        expect(failure.category).toBe("output_too_large")
       }),
     )
   })

@@ -27,7 +27,11 @@ const FIRST = 0,
       session: Effect.fn("FakeHost.session")(function* session(id: SessionId) {
         return yield* Effect.fromOption(HashMap.get(sessions, id)).pipe(
           Effect.mapError(() =>
-            HostError.make({ cause: id, operation: "session.get" }),
+            HostError.make({
+              category: "not_found",
+              cause: id,
+              operation: "session.get",
+            }),
           ),
         )
       }),

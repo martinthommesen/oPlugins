@@ -16,14 +16,20 @@ interface Registered {
 
 /** How the fake host and the fake reviewer backend answer. */
 interface Script {
-  /** The reviewer backend's answer to every request. */
-  readonly respond: () => Response
+  /** The reviewer backend's answer to every request, or the network's failure. */
+  readonly respond: Effect.Effect<Response>
+  /** How reading the root session fails, if it does. */
+  readonly session?: Effect.Effect<void, HostFailure>
   /** Whether OpenAI is connected with a ChatGPT sign-in. */
   readonly signedIn: boolean
 }
 
+/** What a host call fails with: text, or a structured failure. */
+type HostFailure = string | { readonly _tag: string; readonly message: string }
+
 const FIRST = 0,
   HTTP_OK = 200,
+  HTTP_TOO_MANY_REQUESTS = 429,
   HTTP_UNAVAILABLE = 503,
   /** The OpenAI connection the host reports when signed in. */
   OPENAI_CONNECTION = {
@@ -33,6 +39,8 @@ const FIRST = 0,
     type: "credential",
   } as const,
   REGISTRATION = { dispose: Effect.void },
+  /** Provider or conversation text a failure carries, which no record or prompt may show. */
+  SECRET = "Rate limit for org-7f3a: the database password is hunter2",
   SESSION_ID = support.sessionId("ses_root"),
   /** The root session the permission prompt comes from. */
   SESSION_INFO = {
@@ -73,20 +81,21 @@ const FIRST = 0,
     },
   ],
   /* The reviewer backend answering with a stream whose text is `text`. */
-  answerWith =
-    (text: string): Script["respond"] =>
-    () =>
-      new Response(
-        (
-          [
-            { delta: text, type: "response.output_text.delta" },
-            { response: { status: "completed" }, type: "response.completed" },
-          ] as const
-        )
-          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
-          .join(""),
-        { headers: { "content-type": "text/event-stream" }, status: HTTP_OK },
-      ),
+  answerWith = (text: string): Script["respond"] =>
+    Effect.sync(
+      () =>
+        new Response(
+          (
+            [
+              { delta: text, type: "response.output_text.delta" },
+              { response: { status: "completed" }, type: "response.completed" },
+            ] as const
+          )
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+          { headers: { "content-type": "text/event-stream" }, status: HTTP_OK },
+        ),
+    ),
   /* A permission prompt to run the tool call in the root session. */
   askToPush = (): PermissionEvaluation => ({
     action: "bash",
@@ -109,6 +118,11 @@ const FIRST = 0,
     Schema.Array(SessionMessage.Info),
   ),
   decodeSession = Schema.decodeUnknownEffect(Session.Info),
+  /* A structured host failure tagged `tag` that quotes the conversation. */
+  hostFailure = (tag: string): HostFailure =>
+    Schema.TaggedStruct(tag, { message: Schema.String }).make({
+      message: SECRET,
+    }),
   /*
    * A host whose session API reads the root session, whose OpenAI
    * connection follows `script`, and which records each permission hook in
@@ -151,7 +165,7 @@ const FIRST = 0,
         },
         session: {
           context: () => Effect.succeed(messages),
-          get: () => Effect.succeed(info),
+          get: () => (script.session ?? Effect.void).pipe(Effect.as(info)),
         },
       }
     }).pipe(Effect.orDie),
@@ -163,7 +177,7 @@ const FIRST = 0,
    */
   setUp = Effect.fn("test.setUp")(function* setUp(script: Script) {
     const fakeFetch: typeof globalThis.fetch = flow(
-        () => Effect.sync(script.respond),
+        () => script.respond,
         Effect.runPromise,
       ),
       registered = yield* Ref.make<readonly Registered[]>([])
@@ -188,9 +202,19 @@ const FIRST = 0,
 
 /** A fake host and reviewer backend for setup's registered permission hook. */
 export default Object.freeze({
+  SECRET,
   askToPush,
   assessing,
+  hostFailure,
+  /** The reviewer backend limiting requests, in the provider's words. */
+  rateLimited: Effect.sync(
+    () => new Response(SECRET, { status: HTTP_TOO_MANY_REQUESTS }),
+  ),
   setUp,
-  unavailableBackend: (): Response =>
-    new Response("Service unavailable", { status: HTTP_UNAVAILABLE }),
+  /** The reviewer backend failing with an outage. */
+  unavailableBackend: Effect.sync(
+    () => new Response("Service unavailable", { status: HTTP_UNAVAILABLE }),
+  ),
+  /** A network that can't reach the reviewer backend: `fetch` rejects. */
+  unreachable: Effect.die(new TypeError(SECRET)),
 })

@@ -76,7 +76,7 @@ describe("plugin setup's permission hook when review fails", () => {
 
       expect(evaluation.effect).toBe("ask")
       expect(evaluation.message).toBe(
-        'Auto-review could not decide: The review request failed while running "status". Approve or reject this request yourself.',
+        "Auto-review could not decide: The reviewer backend had an error (HTTP 503). Try again later. Approve or reject this request yourself.",
       )
     }),
   )

@@ -4,23 +4,26 @@ import type ContextUnavailable from "./context-unavailable-error.ts"
 import type HostError from "./host-error.ts"
 import type MalformedAssessment from "./malformed-assessment-error.ts"
 import type ModelUnavailable from "./model-unavailable-error.ts"
-import type RequestFailed from "./request-failed-error.ts"
 import type ReviewTimedOut from "./review-timed-out-error.ts"
 import Verdict from "./verdict.ts"
 import redact from "@oc-lib/log-redaction/log-redaction.ts"
+import requestFailure from "./request-failure.ts"
 
 /** Why a review could not decide, as far as the user is told. */
 type ReviewFailure =
   | Readonly<Pick<AuthUnavailable, "_tag" | "reason">>
   | Readonly<Pick<ContextUnavailable, "_tag" | "reason">>
-  | Readonly<Pick<HostError, "_tag" | "operation">>
+  | Readonly<Pick<HostError, "_tag" | "category" | "operation">>
   | Readonly<Pick<MalformedAssessment, "_tag">>
   | Readonly<Pick<ModelUnavailable, "_tag" | "model" | "status">>
-  | Readonly<Pick<RequestFailed, "_tag" | "model" | "operation">>
+  | (Parameters<typeof requestFailure.logFields>[typeof FIRST] & {
+      readonly _tag: "RequestFailed"
+    })
   | Readonly<Pick<ReviewTimedOut, "_tag" | "timeout">>
 
-/* Why a review failed, in the user's terms. */
-const failureReason = (failure: ReviewFailure): string =>
+const FIRST = 0,
+  /* Why a review failed, in the user's terms. */
+  failureReason = (failure: ReviewFailure): string =>
     Match.valueTags(failure, {
       AuthUnavailable: ({ reason }) => reason,
       ContextUnavailable: ({ reason }) => reason,
@@ -30,8 +33,7 @@ const failureReason = (failure: ReviewFailure): string =>
         "The reviewer's answer was not a valid assessment.",
       ModelUnavailable: ({ model, status }) =>
         `The reviewer model ${model} is unavailable (HTTP ${status}).`,
-      RequestFailed: ({ operation }) =>
-        `The review request failed while running "${operation}".`,
+      RequestFailed: (failed) => requestFailure.explain(failed),
       ReviewTimedOut: ({ timeout }) =>
         `The review did not finish within ${timeout}.`,
     }),
@@ -60,18 +62,18 @@ const failureReason = (failure: ReviewFailure): string =>
         Match.valueTags(failure, {
           AuthUnavailable: () => ({ error: "AuthUnavailable" }),
           ContextUnavailable: () => ({ error: "ContextUnavailable" }),
-          HostError: ({ operation }) => ({ error: "HostError", operation }),
+          HostError: ({ category, operation }) => ({
+            category,
+            error: "HostError",
+            operation,
+          }),
           MalformedAssessment: () => ({ error: "MalformedAssessment" }),
           ModelUnavailable: ({ model, status }) => ({
             error: "ModelUnavailable",
             model,
             status,
           }),
-          RequestFailed: ({ model, operation }) => ({
-            error: "RequestFailed",
-            model,
-            operation,
-          }),
+          RequestFailed: (failed) => requestFailure.logFields(failed),
           ReviewTimedOut: ({ timeout }) => ({
             error: "ReviewTimedOut",
             timeout,

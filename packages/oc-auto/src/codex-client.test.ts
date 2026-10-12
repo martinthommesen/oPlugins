@@ -79,6 +79,12 @@ const COMPLETION = {
 
     return { outcome, requests: yield* Ref.get(backend.requests) }
   }),
+  /* What a completion failed with, if it did. */
+  failureOf = (
+    outcome: Effect.Success<typeof completion>["outcome"],
+  ):
+    | Effect.Error<ReturnType<CodexResponses["Service"]["complete"]>>
+    | undefined => Option.getOrUndefined(Result.getFailure(outcome)),
   /* A server-sent event stream of `events`. */
   streamOf = (events: readonly TestEvent[]): Response =>
     new Response(
@@ -161,6 +167,9 @@ describe("codex responses failures", () => {
           expect(
             Option.getOrUndefined(Result.getFailure(outcome)),
           ).toBeInstanceOf(RequestFailed)
+          expect(failureOf(outcome)).toMatchObject({
+            category: "response_failed",
+          })
         }),
       )
     },
@@ -188,6 +197,10 @@ describe("codex request rejection", () => {
           expect(
             Option.getOrUndefined(Result.getFailure(outcome)),
           ).toBeInstanceOf(RequestFailed)
+          expect(failureOf(outcome)).toMatchObject({
+            category: "request_rejected",
+            status: Option.some(HTTP_BAD_REQUEST),
+          })
         }),
     )
   })
@@ -252,6 +265,10 @@ describe("codex transport policy", () => {
         expect(
           Option.getOrUndefined(Result.getFailure(outcome)),
         ).toBeInstanceOf(RequestFailed)
+        expect(failureOf(outcome)).toMatchObject({
+          category: "server_error",
+          status: Option.some(HTTP_UNAVAILABLE),
+        })
       }),
     )
   })

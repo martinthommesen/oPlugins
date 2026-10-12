@@ -136,20 +136,41 @@ after an approval.
 ### Failures
 
 Missing or expired sign-ins, backend errors, timeouts, unfinished response
-streams, and unreadable answers leave the prompt for you, with the reason.
+streams, and unreadable answers leave the prompt for you, with the reason. When
+a request to the reviewer fails, the prompt and the log name a `category` for
+the cause, and the prompt says what to do about it:
+
+| Category           | Cause                                                                     |
+| ------------------ | ------------------------------------------------------------------------- |
+| `rate_limited`     | The backend answered HTTP 429: it is limiting requests                    |
+| `server_error`     | The backend answered an HTTP 5xx status                                   |
+| `request_rejected` | The backend answered another HTTP 4xx status                              |
+| `network`          | The request didn't reach the backend                                      |
+| `invalid_request`  | The plugin couldn't build the request                                     |
+| `invalid_response` | The plugin couldn't read the response or one of its stream events         |
+| `incomplete`       | The response stream ended before a complete answer                        |
+| `response_failed`  | The backend reported in the stream that the response failed               |
+| `refused`          | The reviewer refused to answer                                            |
+| `output_too_large` | The reviewer's answer exceeded its size limit                             |
+| `unknown`          | Nothing structured names the cause; the prompt names the step that failed |
+
+A failed call to OpenCode has a `category` too: `not_found`, `unauthorized`,
+`unavailable`, `conflict`, `invalid_request`, or `unknown` when OpenCode's error
+names none of those.
 
 ### Logs
 
 The plugin logs to OpenCode's log. Records at info level and above carry
-metadata only:
+metadata only, never the provider's or OpenCode's error text, response bodies,
+or the conversation:
 
-| Event                        | Level   | Fields                                                                    |
-| ---------------------------- | ------- | ------------------------------------------------------------------------- |
-| `auto_review_verdict`        | Info    | `action`, `verdict`, and `model` when the reviewer decided                |
-| `auto_review_failed`         | Warning | `error`, and `model`, `status`, `operation`, or `timeout` when they apply |
-| `reviewer_model_unavailable` | Warning | `model` and `fallbackModel`                                               |
-| `auto_review_rationale`      | Debug   | `action` and the reviewer's `rationale`                                   |
-| `auto_review_failure_reason` | Debug   | The `reason` the prompt shows                                             |
+| Event                        | Level   | Fields                                                                                                            |
+| ---------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `auto_review_verdict`        | Info    | `action`, `verdict`, and `model` when the reviewer decided                                                        |
+| `auto_review_failed`         | Warning | `error`, and `model`, `operation`, `category`, `status` (the HTTP status, a number), or `timeout` when they apply |
+| `reviewer_model_unavailable` | Warning | `model` and `fallbackModel`                                                                                       |
+| `auto_review_rationale`      | Debug   | `action` and the reviewer's `rationale`                                                                           |
+| `auto_review_failure_reason` | Debug   | The `reason` the prompt shows                                                                                     |
 
 Debug records pass through redaction first, and OpenCode keeps them only when it
 logs at debug level (its `--log-level` flag).

@@ -124,6 +124,8 @@ const ClaudeAiOauth = Schema.Struct({
 /** What the credentials-file tests share. */
 export default Object.freeze({
   FILE,
+  STALE_TEMP_AGE_MS,
+  agedFile,
   agedTemps,
   credentialDir,
   fileToken,

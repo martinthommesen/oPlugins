@@ -1,7 +1,10 @@
-import { Clock, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect"
+import { Clock, Crypto, Effect, FileSystem, Option, Path } from "effect"
 import ClaudeCodeStoreError from "./claude-code-store-error.ts"
 import Environment from "./environment.ts"
+import failures from "./claude-code-file-failures.ts"
 import sources from "./claude-code-sources.ts"
+
+type Cleanup = Parameters<typeof failures.quietly>[typeof SECOND]
 
 /** The parts of a platform failure this store reports or decides on. */
 interface FileFailure {
@@ -10,36 +13,39 @@ interface FileFailure {
 }
 
 const CREDENTIALS_FILE = ".credentials.json",
-  /** The errno code Node attaches to a failed file operation. */
-  Errno = Schema.Struct({ code: Schema.String }),
+  /** The code of a file that is already gone. */
+  GONE_CODES = ["ENOENT"],
   /** Codes that mean nothing is stored, rather than an unreadable store. */
   MISSING_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]),
   PRIVATE_FILE = 0o600,
+  SECOND = 1,
   TEMP_PREFIX = ".credentials.json.",
   TEMP_SUFFIX = ".tmp",
   TEMP_SWEEP_AGE_MS = 3_600_000,
+  /*
+   * The codes of a directory sync the platform or file system doesn't
+   * support: EINVAL, ENOTSUP, and EOPNOTSUPP from a file system that can't
+   * sync a directory, and EISDIR and EPERM from Windows, which can neither
+   * open a directory as a file nor sync one.
+   */
+  UNSUPPORTED_SYNC_CODES = [
+    "EINVAL",
+    "EISDIR",
+    "ENOTSUP",
+    "EOPNOTSUPP",
+    "EPERM",
+  ],
   codec = new TextEncoder(),
-  /* The errno code of `failure`, when it carries one. */
-  errnoOf = (failure: FileFailure): Option.Option<string> =>
-    Schema.decodeUnknownOption(Errno)(failure.cause).pipe(
-      Option.map((errno) => errno.code),
-    ),
-  /* The message of `failure`, with its errno code. */
-  explained = (failure: FileFailure): string =>
-    Option.match(errnoOf(failure), {
-      onNone: () => failure.message,
-      onSome: (code) => `${failure.message} (${code})`,
-    }),
   /* A failed write, as the store error the write-back logs. */
   failedFile = (failure: FileFailure): ClaudeCodeStoreError =>
-    ClaudeCodeStoreError.make({ message: explained(failure) }),
+    ClaudeCodeStoreError.make({ message: failures.explained(failure) }),
   /* Whether `name` is a temp blob this store writes. */
   isTempName = (name: string): boolean =>
     name.startsWith(TEMP_PREFIX) && name.endsWith(TEMP_SUFFIX),
   /* A file that exists but cannot be read, as the store error the user sees. */
   notReadable = (failure: FileFailure): ClaudeCodeStoreError =>
     ClaudeCodeStoreError.make({
-      message: `The Claude Code credentials file could not be read: ${explained(failure)}. Check that it is a file you can read, then try again.`,
+      message: `The Claude Code credentials file could not be read: ${failures.explained(failure)}. Check that it is a file you can read, then try again.`,
     }),
   /*
    * The stored blob, or none when there is no file. Like a missing Keychain
@@ -53,7 +59,7 @@ const CREDENTIALS_FILE = ".credentials.json",
       return Option.some(yield* fs.readFileString(credPath))
     },
     Effect.catchTag("PlatformError", (failure: FileFailure) => {
-      const missing = Option.exists(errnoOf(failure), (code) =>
+      const missing = Option.exists(failures.errnoOf(failure), (code) =>
         MISSING_CODES.has(code),
       )
 
@@ -64,55 +70,87 @@ const CREDENTIALS_FILE = ".credentials.json",
       return Effect.fail(notReadable(failure))
     }),
   ),
-  /* Remove `path` when it is a temp blob older than the sweep age. */
-  sweepOne = Effect.fn("ClaudeCodeFileStore.sweepOne")(
-    function* sweepOne(path: string, now: number) {
-      const fs = yield* FileSystem.FileSystem,
-        info = yield* fs.stat(path)
+  /* The sweep's `step` on `path` in `dir`, as a cleanup to report. */
+  sweepAt = (dir: string, path: string, step: string): Cleanup => ({
+    dir,
+    event: "credential_sweep_failed",
+    expected: GONE_CODES,
+    path,
+    step,
+  }),
+  /*
+   * Remove `path` in `dir` when it is a temp blob older than the sweep age.
+   * A file another process removed first is no failure.
+   */
+  sweepOne = Effect.fn("ClaudeCodeFileStore.sweepOne")(function* sweepOne(
+    dir: string,
+    path: string,
+    now: number,
+  ) {
+    const fs = yield* FileSystem.FileSystem,
+      info = yield* failures.quietly(fs.stat(path), sweepAt(dir, path, "stat")),
+      mtime = info.pipe(
+        Option.flatMap(
+          (found: { readonly mtime: Option.Option<Date> }) => found.mtime,
+        ),
+      )
 
-      // Without a modification time the file counts as just written.
-      if (
-        Option.isSome(info.mtime) &&
-        now - info.mtime.value.getTime() > TEMP_SWEEP_AGE_MS
-      ) {
-        yield* fs.remove(path)
-      }
-    },
-    (effect) => Effect.ignore(effect),
-  ),
+    // Without a modification time the file counts as just written.
+    if (
+      Option.isSome(mtime) &&
+      now - mtime.value.getTime() > TEMP_SWEEP_AGE_MS
+    ) {
+      yield* failures.quietly(fs.remove(path), sweepAt(dir, path, "remove"))
+    }
+  }),
   /*
    * Remove the temp blobs a killed process left behind, since each holds a
-   * full token pair. Failures are ignored: the write has landed by then.
+   * full token pair. The write has landed by then, so a failure is only
+   * reported, and one blob that can't be removed doesn't keep the others.
    */
   sweepStaleTemps = Effect.fn("ClaudeCodeFileStore.sweepStaleTemps")(
     function* sweepStaleTemps(dir: string) {
       const fs = yield* FileSystem.FileSystem,
-        names = yield* fs.readDirectory(dir),
+        names = yield* failures.quietly(
+          fs.readDirectory(dir),
+          sweepAt(dir, dir, "list"),
+        ),
         now = yield* Clock.currentTimeMillis,
         path = yield* Path.Path,
-        stale = names.filter((name) => isTempName(name))
+        stale = Option.getOrElse(names, () => []).filter((name) =>
+          isTempName(name),
+        )
 
       yield* Effect.forEach(
         stale,
-        (name) => sweepOne(path.join(dir, name), now),
+        (name) => sweepOne(dir, path.join(dir, name), now),
         { concurrency: "unbounded", discard: true },
       )
     },
-    (effect) => Effect.ignore(effect),
   ),
   /*
-   * Fsync the directory so the rename itself survives a crash. Not every
-   * platform supports it, and the rename lands either way.
+   * Fsync the directory so the rename itself survives a crash. The rename
+   * lands either way, so a failure is only reported, and a platform or file
+   * system that can't sync a directory is no failure.
    */
   syncDirectory = Effect.fn("ClaudeCodeFileStore.syncDirectory")(
     function* syncDirectory(dir: string) {
-      const fs = yield* FileSystem.FileSystem,
-        handle = yield* fs.open(dir, { flag: "r" })
+      const fs = yield* FileSystem.FileSystem
 
-      yield* handle.sync
+      yield* failures.quietly(
+        fs
+          .open(dir, { flag: "r" })
+          .pipe(Effect.flatMap((handle: FileSystem.File) => handle.sync)),
+        {
+          dir,
+          event: "credential_sync_failed",
+          expected: UNSUPPORTED_SYNC_CODES,
+          path: dir,
+          step: "sync",
+        },
+      )
     },
     Effect.scoped,
-    (effect) => Effect.ignore(effect),
   ),
   /*
    * Write `blob` to the new file `tempPath`, private and flushed. A rename
@@ -152,8 +190,14 @@ const CREDENTIALS_FILE = ".credentials.json",
           dir,
           `${TEMP_PREFIX}${pid}.${randomId}${TEMP_SUFFIX}`,
         ),
-        // Already renamed into place, or never created.
-        untemp = Effect.ignore(fs.remove(tempPath))
+        // Already renamed into place, or never created, unless reported.
+        untemp = failures.quietly(fs.remove(tempPath), {
+          dir,
+          event: "credential_temp_kept",
+          expected: GONE_CODES,
+          path: tempPath,
+          step: "remove",
+        })
 
       yield* tempFile(tempPath, blob).pipe(
         Effect.andThen(fs.rename(tempPath, target)),

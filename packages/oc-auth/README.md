@@ -337,6 +337,9 @@ codes, never a token, a message, or a path. Each of these events is a warning:
 | `refresh_writeback_failed` | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires             |
 | `refresh_lock_degraded`    | The refresh lock directory or a lock file is unusable, so OpenCode doesn't take turns refreshing the `lock` store. Overlap can sign Claude Code out |
 | `refresh_lease_unwritten`  | A refresh lock lease couldn't be written, so the plugin doesn't refresh under it. `lease` names the write, `lock` the store as lock files do        |
+| `credential_temp_kept`     | A temp file holding refreshed tokens couldn't be deleted from the Claude Code config directory. Later write-backs retry once it's an hour old       |
+| `credential_sync_failed`   | The Claude Code config directory couldn't be synced after a write-back, so a crash could undo the write. The write-back itself succeeded            |
+| `credential_sweep_failed`  | Leftover `.credentials.json.*.tmp` files holding tokens couldn't be listed or removed in the Claude Code config directory. `step` says which        |
 | `keychain_list_failed`     | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                           |
 | `credential_reload_failed` | The newly selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch                            |
 

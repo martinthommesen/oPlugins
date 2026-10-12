@@ -1,13 +1,35 @@
 import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import type PluginOptionsError from "@oc-lib/plugin-options/plugin-options-error.ts"
+import modelConfig from "./model-config.ts"
 import pluginOptions from "@oc-lib/plugin-options/plugin-options.ts"
 
-/* A comma-separated list of beta flags that names at least one. */
-const BetaFlags = Schema.String.check(
+/** What a value that a request header can't carry is told. */
+const ACCEPTED_IN_HEADERS = {
+    expected:
+      "only printable Latin-1 characters, which a request header can carry",
+  },
+  /*
+   * What a request header value can hold once control characters are gone:
+   * printable Latin-1, which is all Fetch's `Headers` takes. A character past
+   * U+00FF would make building every request's headers fail.
+   */
+  ALLOWED_HEADER_CHARACTERS = /^[\u0020-\u007E\u00A0-\u00FF]*$/u,
+  /*
+   * A comma-separated list of beta flags that names at least one. Each flag,
+   * trimmed as the `anthropic-beta` header gets it, must be header text.
+   */
+  BetaFlags = Schema.String.check(
     Schema.isPattern(/[^\s,]/u, {
       expected: "a comma-separated list naming at least one beta flag",
     }),
+    Schema.makeFilter(
+      (raw: string) =>
+        modelConfig
+          .parseBetas(raw)
+          .every((flag) => ALLOWED_HEADER_CHARACTERS.test(flag)),
+      ACCEPTED_IN_HEADERS,
+    ),
   ),
   // A C0 or C1 control character would break out of a header slot.
   CONTROL_CHARACTERS = /\p{Cc}/gu,
@@ -20,9 +42,13 @@ const BetaFlags = Schema.String.check(
     decode: (raw: string) => raw.replaceAll(CONTROL_CHARACTERS, " ").trim(),
     encode: (text: string) => text,
   }),
-  /** Header text, which must keep something printable once cleaned up. */
+  /**
+   * Header text, which must keep something printable once cleaned up, and
+   * nothing a header can't carry.
+   */
   HeaderContent = Schema.String.check(
     Schema.isNonEmpty({ expected: "text with a printable character" }),
+    Schema.isPattern(ALLOWED_HEADER_CHARACTERS, ACCEPTED_IN_HEADERS),
   ),
   /*
    * Text that lands in request headers and system prompt blocks, so a value

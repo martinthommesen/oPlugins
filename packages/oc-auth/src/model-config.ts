@@ -106,5 +106,6 @@ export default Object.freeze({
   baseBetas: STANDARD_BETAS,
   ccVersion: CC_VERSION,
   modelBetas: wireBetas,
+  parseBetas,
   sdkVersion: SDK_VERSION,
 })

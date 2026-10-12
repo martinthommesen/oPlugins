@@ -194,3 +194,61 @@ describe("claude headers identity", () => {
     )
   })
 })
+
+describe("claude headers from cleaned-up options", () => {
+  test.layer(
+    environmentOf({
+      betaFlags: " custom-beta ,, other-beta\n",
+      userAgent: "\tcustom-agent\n/9.9 ",
+    }),
+  )((it: Tests) => {
+    it.effect("sends header text cleaned up and beta flags trimmed", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const headers = yield* headersFor({}, "claude-opus-5-5")
+
+        expect(headers.get("user-agent")).toBe("custom-agent /9.9")
+        expect(betasOf(headers)).toStrictEqual([
+          "claude-code-20250219",
+          "oauth-2025-04-20",
+          "custom-beta",
+          "other-beta",
+        ])
+      }),
+    )
+  })
+})
+
+describe("claude headers from Latin-1 options", () => {
+  test.layer(
+    environmentOf({ cliVersion: "9.9-\u00FF", entrypoint: "a\u00A0b~" }),
+  )((it: Tests) => {
+    it.effect("builds the default user agent from the edges of Latin-1", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        expect(
+          (yield* headersFor({}, "claude-opus-5-5")).get("user-agent"),
+        ).toBe("claude-cli/9.9-\u00FF (external, a\u00A0b~)")
+      }),
+    )
+  })
+
+  test.layer(
+    environmentOf({
+      betaFlags: "beta-\u00E9",
+      userAgent: " \u00A1caf\u00E9 \u007E",
+    }),
+  )((it: Tests) => {
+    it.effect("sends a Latin-1 user agent and beta flag as given", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const headers = yield* headersFor({}, "claude-opus-5-5")
+
+        expect(headers.get("user-agent")).toBe("\u00A1caf\u00E9 \u007E")
+        expect(betasOf(headers)).toContain("beta-\u00E9")
+      }),
+    )
+  })
+})

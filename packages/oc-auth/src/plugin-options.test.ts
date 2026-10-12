@@ -14,6 +14,9 @@ interface Tests {
 const COOLDOWN_MS = 15_000,
   KNOWN_OPTIONS =
     "betaFlags, cliVersion, cost, entrypoint, refreshCooldownMs, refreshLockTtlMs, userAgent",
+  /** What an option value a request header can't carry is told. */
+  NOT_HEADER_TEXT =
+    "Expected only printable Latin-1 characters, which a request header can carry.",
   NO_LEASE_MS = 0,
   /* The message setup fails with when the options have `problems`. */
   failureNaming = (problems: string): Option.Option<string> =>
@@ -63,6 +66,46 @@ describe("plugin options with an unknown name", () => {
             `refresh_cooldown_ms: Unknown option (known: ${KNOWN_OPTIONS}).`,
           ),
         )
+      }),
+    )
+  })
+})
+
+describe("plugin options a request header can't carry", () => {
+  test.layer(host)((it: Tests) => {
+    it.effect("fails setup on characters past Latin-1 in each option", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        expect(
+          yield* fakeHost.optionsFailure({
+            betaFlags: "oauth-2025-04-20,бета",
+            cliVersion: "2.1\u2028295",
+            entrypoint: "вход",
+            userAgent: "клиент/1.0",
+          }),
+        ).toStrictEqual(
+          failureNaming(
+            [
+              `betaFlags: ${NOT_HEADER_TEXT}`,
+              `cliVersion: ${NOT_HEADER_TEXT}`,
+              `entrypoint: ${NOT_HEADER_TEXT}`,
+              `userAgent: ${NOT_HEADER_TEXT}`,
+            ].join(" "),
+          ),
+        )
+      }),
+    )
+  })
+
+  test.layer(host)((it: Tests) => {
+    it.effect("fails setup on a line break inside a beta flag", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        expect(
+          yield* fakeHost.optionsFailure({
+            betaFlags: " oauth-2025-04-20 ,custom\nbeta\n",
+          }),
+        ).toStrictEqual(failureNaming(`betaFlags: ${NOT_HEADER_TEXT}`))
       }),
     )
   })

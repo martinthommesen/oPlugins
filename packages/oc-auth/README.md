@@ -89,11 +89,20 @@ Pass options with the object form of the `plugins` entry:
 system prompt. So the plugin turns every control character in them into a space
 and trims the value, and something printable must remain.
 
+After that cleanup, a value may hold only printable Latin-1 characters (U+0020
+to U+007E and U+00A0 to U+00FF), which is what a request header can carry. A
+value with any other character stops the plugin from starting.
+
 `betaFlags` must name at least one flag. It can't drop `oauth-2025-04-20` or
 `claude-code-20250219`: subscription auth doesn't work without them, so the
 plugin adds them back after any override. It also can't add `effort-2025-11-24`
 for a model that Claude Code doesn't send it for. The plugin removes that flag
 per model after it merges everything else.
+
+`betaFlags` goes into the `anthropic-beta` header. The plugin splits it at
+commas, trims each flag, and drops empty ones. Each flag that remains may hold
+only printable Latin-1 characters, so a line break or a tab inside a flag stops
+the plugin from starting.
 
 An invalid option stops the plugin from starting. That covers a value of the
 wrong type, a number out of range, and an option name the plugin doesn't know.

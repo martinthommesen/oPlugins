@@ -49,13 +49,16 @@ pnpm run check   # every check below, in order, stopping at the first failure
   `knip.jsonc`.
 - `pnpm run sherif`: the workspace's `package.json` files agree.
 - `pnpm run check:layout`: `tools/check-layout.ts`, which checks that every
-  plugin and library is named and wired as the ADRs and this file say, and that
-  no other suppression comment exists.
+  plugin and library is named and wired as the ADRs and this file say, that each
+  plugin's `bundled-libraries.txt` fingerprint is current, and that no other
+  suppression comment exists.
 
-`pnpm run secrets` scans the files for secrets with gitleaks, from
-`.gitleaks.toml`; install gitleaks with `brew install gitleaks`. `pnpm install`
-installs a pre-commit hook (`lefthook.yml`) that fixes and formats the staged
-files and scans them for secrets.
+`pnpm run fingerprints` rewrites every plugin's fingerprint of its bundled
+libraries; commit it with the library change (ADR 0004). `pnpm run secrets`
+scans the files for secrets with gitleaks, from `.gitleaks.toml`; install
+gitleaks with `brew install gitleaks`. `pnpm install` installs a pre-commit hook
+(`lefthook.yml`) that fixes and formats the staged files, rewrites and stages
+the fingerprints from the staged files, and scans them for secrets.
 
 `pnpm run test:host` in a plugin downloads OpenCode, so it runs in CI and by
 hand only. Each plugin records the oldest OpenCode version it supports once, as

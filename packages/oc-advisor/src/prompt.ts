@@ -3,7 +3,7 @@ import TOOL_NAME from "./tool-name.ts"
 import type conversation from "./conversation.ts"
 import transcript from "./transcript.ts"
 
-/* The advisor model's system prompt. */
+/* The advisor's instructions, the consultation agent's system prompt. */
 const ADVISOR_INSTRUCTIONS = `You are the advisor to an AI coding agent. The agent paused its work to ask for your guidance. You cannot run tools or see anything beyond the transcript you are given; the agent will continue the task after reading your reply.
 
 Your job:

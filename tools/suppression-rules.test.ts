@@ -6,7 +6,9 @@ import suppressionRules from "./suppression-rules.ts"
  * The fixtures build each directive from two strings, so this file holds no
  * comment-like text a scan of the repository could mistake for one.
  */
-const AFTER_LOCATION = /: .*$/u,
+const ADVISOR_HOOKS = "packages/oc-advisor/src/hooks.ts",
+  AFTER_LOCATION = /: .*$/u,
+  CONSULTATION_AGENT = "packages/oc-advisor/src/consultation-agent.ts",
   DISABLE_NEXT = ["oxlint", "disable-next-line"].join("-"),
   FILE = "packages/oc-demo/src/demo.ts",
   MODEL_PRICING = "packages/oc-auth/src/model-pricing.ts",
@@ -50,13 +52,26 @@ describe("the host editor draft's suppression", () => {
     ).toStrictEqual([`${MODEL_PRICING}:3`])
   })
 
+  it("is allowed once in consultation-agent.ts", { timeout: 5000 }, () => {
+    expect.hasAssertions()
+    expect(
+      problemsIn(CONSULTATION_AGENT, [
+        `  // ${DISABLE_NEXT} typescript/prefer-readonly-parameter-types -- A draft.`,
+        "  overwrite = (draft: Types.DeepMutable<Agent.Info>): void => {",
+        `  // ${DISABLE_NEXT} typescript/prefer-readonly-parameter-types`,
+      ]).map((problem) => problem.replace(AFTER_LOCATION, "")),
+    ).toStrictEqual([`${CONSULTATION_AGENT}:3`])
+  })
+
   it("isn't allowed in any other file", { timeout: 5000 }, () => {
     expect.hasAssertions()
     expect(
-      problemsIn(FILE, [
-        `// ${DISABLE_NEXT} typescript/prefer-readonly-parameter-types`,
-      ]).map((problem) => problem.replace(AFTER_LOCATION, "")),
-    ).toStrictEqual([`${FILE}:1`])
+      [FILE, ADVISOR_HOOKS].flatMap((file) =>
+        problemsIn(file, [
+          `// ${DISABLE_NEXT} typescript/prefer-readonly-parameter-types`,
+        ]).map((problem) => problem.replace(AFTER_LOCATION, "")),
+      ),
+    ).toStrictEqual([`${FILE}:1`, `${ADVISOR_HOOKS}:1`])
   })
 })
 

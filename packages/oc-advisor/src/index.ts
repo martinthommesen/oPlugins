@@ -4,6 +4,7 @@ import Host from "./host.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { Scope } from "effect"
 import command from "./command.ts"
+import consultationAgent from "./consultation-agent.ts"
 import hooks from "./hooks.ts"
 import services from "./services.ts"
 import tool from "./tool.ts"
@@ -12,6 +13,11 @@ type PluginContext = Plugin.Context
 
 /** The parts of the host's plugin context this plugin uses. */
 interface PluginHost {
+  readonly agent: {
+    readonly transform: Parameters<
+      typeof consultationAgent.register
+    >[typeof FIRST]
+  }
   readonly command: Pick<PluginContext["command"], "transform">
   readonly model: Pick<PluginContext["model"], "list">
   readonly options: PluginContext["options"]
@@ -23,8 +29,12 @@ interface PluginHost {
   readonly tool: Pick<PluginContext["tool"], "transform">
 }
 
-/* Registers the advisor tool, the `/advisor` command, and the session hooks. */
-const install = Effect.fn("AdvisorPlugin.install")(function* install(
+const FIRST = 0,
+  /*
+   * Registers the consultation agent, the advisor tool, the `/advisor`
+   * command, and the session hook.
+   */
+  install = Effect.fn("AdvisorPlugin.install")(function* install(
     context: PluginHost,
   ) {
     const built = yield* Layer.build(
@@ -34,6 +44,8 @@ const install = Effect.fn("AdvisorPlugin.install")(function* install(
         context.storage,
       ),
     )
+
+    yield* consultationAgent.register(context.agent.transform)
 
     yield* context.tool.transform((editor) => {
       editor.add(tool.advisorTool(Context.get(built, Advisor)))
@@ -56,11 +68,6 @@ const install = Effect.fn("AdvisorPlugin.install")(function* install(
     yield* context.session.hook(
       "context",
       hooks.presentAdvisor(Context.get(built, Advisor)),
-    )
-
-    yield* context.session.hook(
-      "generate",
-      hooks.instructConsultations(Context.get(built, Host)),
     )
   }),
   /*

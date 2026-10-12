@@ -110,10 +110,15 @@ compatibility test are in [Development](#development).
   `maxTranscriptChars`. It keeps the first available user message and the newest
   entries, and it shortens long messages, tool inputs, and tool results.
 - The advisor model answers in a short-lived consultation session, a child of
-  the consulting session. Because the request runs in a session, provider
-  plugins that hook session requests, such as subscription sign-ins, apply to
-  it. The plugin replaces the consultation session's system prompt with the
-  advisor's instructions and gives it no tools.
+  the consulting session. The session runs as the consultation agent, a hidden
+  agent the plugin registers under the reserved ID `oc-advisor-consultation`.
+  The agent carries the advisor's instructions and denies every tool. The plugin
+  overwrites any agent you define under that ID.
+- The advisor sees its instructions, the transcript, and the instruction text
+  OpenCode adds to every session, such as `AGENTS.md` files and OpenCode's
+  built-in instructions. It's offered no tools. Because the request runs in a
+  session, provider plugins that hook session requests, such as subscription
+  sign-ins, apply to it.
 - The plugin deletes the consultation session in the background, so the deletion
   can't hold up the agent. A deletion gets one retry and five seconds in total.
   When the plugin stops, it waits for pending deletions for up to those five
@@ -127,8 +132,8 @@ compatibility test are in [Development](#development).
 - Agents whose tools are restricted to a fixed list, such as the built-in
   `explore` subagent, are only offered the advisor if their configuration allows
   the `advisor` tool.
-- The advisor sees the conversation, not the agent's system prompt or the files
-  on disk, unless their contents appear in tool results.
+- The advisor doesn't see the consulting agent's own prompt or the files on
+  disk, unless their contents appear in the conversation.
 - OpenCode 2.0.26 exposes only the active context after compaction to plugins.
   Earlier details survive only if OpenCode includes them in its compaction
   summary. The tool description asks agents to put missing details in their

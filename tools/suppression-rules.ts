@@ -12,12 +12,15 @@ interface Suppression {
 const CODE = /\.[cm]?[jt]sx?$/u,
   DIRECTIVE =
     /^(?:oxlint-disable|eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|@effect-diagnostics)/u,
-  /** The one file with the host editor's draft parameter. */
-  MODEL_PRICING = "packages/oc-auth/src/model-pricing.ts",
+  /** The files with a host editor's draft parameter, as `AGENTS.md` names them. */
+  DRAFT_FILES: ReadonlySet<string> = new Set([
+    "packages/oc-advisor/src/consultation-agent.ts",
+    "packages/oc-auth/src/model-pricing.ts",
+  ]),
   NEXT = 1,
   /** A comment line's opening `//`, `/*`, or `*`, and the space after it. */
   OPENER = /^(?:\/\/+|\/\*+|\*+)\s*/u,
-  /** The suppression for the host editor's draft, which is edited in place. */
+  /** The suppression for a host editor's draft, which is edited in place. */
   READONLY_DRAFT =
     /^\/\/ oxlint-disable-next-line typescript\/prefer-readonly-parameter-types(?: -- .+)?$/u,
   /** The suppression unicorn/throw-new-error needs above a tagged error. */
@@ -42,15 +45,15 @@ const CODE = /\.[cm]?[jt]sx?$/u,
   /*
    * Every suppression in `file` that `AGENTS.md` doesn't allow. It allows
    * two: unicorn/throw-new-error directly above a `Schema.TaggedError`
-   * class, and one typescript/prefer-readonly-parameter-types on the host
-   * editor's draft in `model-pricing.ts`.
+   * class, and one typescript/prefer-readonly-parameter-types on a host
+   * editor's draft in each of the files it names.
    */
   checkFile = (file: string, text: string): readonly string[] => {
     const all = allSuppressions(text),
       draft = Arr.findFirst(
         all,
         (suppression) =>
-          file === MODEL_PRICING && READONLY_DRAFT.test(suppression.comment),
+          DRAFT_FILES.has(file) && READONLY_DRAFT.test(suppression.comment),
       )
 
     return all.flatMap((suppression) => {

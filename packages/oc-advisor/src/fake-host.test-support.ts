@@ -68,7 +68,6 @@ const DEFAULT_REPLY = Effect.succeed("Use a dedicated password hash."),
         Ref.update(record.prompts, Arr.append(prompt)).pipe(
           Effect.andThen(overrides.reply ?? DEFAULT_REPLY),
         ),
-      isConsultation: () => Effect.succeed(false),
       models: Effect.succeed(offeredModels(overrides)),
       notify: () => Effect.void,
       parent: () =>

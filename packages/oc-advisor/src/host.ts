@@ -1,7 +1,8 @@
-import { Context, Effect, HashSet, Layer, Option, Ref, Struct } from "effect"
+import { Context, Effect, Layer, Option, Struct } from "effect"
 import type { Model, Plugin } from "@opencode/plugin/effect"
 import HostError from "./host-error.ts"
 import type { Session } from "@opencode/schema/session"
+import consultationAgent from "./consultation-agent.ts"
 import conversation from "./conversation.ts"
 
 type SessionApi = Pick<
@@ -36,16 +37,14 @@ interface HostContext<Failure> {
 interface Interface {
   /**
    * Answers a prompt with the given model, in a short-lived consultation
-   * session under the consulting session, so the provider's session hooks
-   * apply.
+   * session under the consulting session, run as the consultation agent, so
+   * the provider's session hooks apply.
    */
   readonly consult: (
     sessionId: Session.ID,
     prompt: string,
     model: Model.Ref,
   ) => Effect.Effect<string, HostError>
-  /** Whether a session was created to answer a consultation. */
-  readonly isConsultation: (sessionId: Session.ID) => Effect.Effect<boolean>
   /** The host's models, each marked enabled or not. */
   readonly models: Effect.Effect<readonly Model.Info[], HostError>
   /** Shows a message in a session without starting a model turn. */
@@ -66,12 +65,6 @@ interface Interface {
   >
 }
 
-/** Records which sessions exist to answer a consultation. */
-interface Tracker {
-  readonly add: (sessionId: Session.ID) => Effect.Effect<void>
-  readonly remove: (sessionId: Session.ID) => Effect.Effect<void>
-}
-
 const CLEANUP_RETRIES = 1,
   CLEANUP_TIMEOUT_SECONDS = 5,
   /* Maps any failure of a host call to a `HostError` naming the operation. */
@@ -82,17 +75,16 @@ const CLEANUP_RETRIES = 1,
     ): Effect.Effect<Value, HostError, Requirements> =>
       Effect.mapError(self, (cause) => HostError.make({ cause, operation })),
   /*
-   * Deletes a consultation session with one retry and a deadline, and stops
-   * tracking it only once it is gone. The warning names the session only,
-   * because the host's error may quote the conversation.
+   * Deletes a consultation session with one retry and a deadline. The
+   * warning names the session only, because the host's error may quote the
+   * conversation.
    */
   cleanupSession =
-    <Failure>(session: HostSession<Failure>, tracker: Tracker) =>
+    <Failure>(session: HostSession<Failure>) =>
     (id: Session.ID): Effect.Effect<void> =>
       session.remove({ sessionID: id }).pipe(
         Effect.retry({ times: CLEANUP_RETRIES }),
         Effect.timeout(`${CLEANUP_TIMEOUT_SECONDS} seconds`),
-        Effect.andThen(tracker.remove(id)),
         Effect.tapError(() =>
           Effect.logWarning("advisor_session_cleanup_failed").pipe(
             Effect.annotateLogs({ sessionID: id }),
@@ -101,14 +93,12 @@ const CLEANUP_RETRIES = 1,
         Effect.ignore,
       ),
   /*
-   * Builds `consult` on the host's session API. `tracker` records the
-   * sessions it creates, and `close` starts their cleanup without delaying
-   * the caller.
+   * Builds `consult` on the host's session API. `close` starts the cleanup
+   * of the sessions it creates without delaying the caller.
    */
   consultation =
     <Failure>(
       session: HostSession<Failure>,
-      tracker: Tracker,
       close: (id: Session.ID) => Effect.Effect<void>,
     ): Interface["consult"] =>
     (sessionId, prompt, model) => {
@@ -120,18 +110,23 @@ const CLEANUP_RETRIES = 1,
               asHostError("session.generate"),
             ),
         open = session
-          .create({ model, parentID: sessionId, title: "Advisor" })
+          .create({
+            agent: consultationAgent.ID,
+            model,
+            parentID: sessionId,
+            permissions: consultationAgent.denyAll(),
+            title: "Advisor",
+          })
           .pipe(asHostError("session.create"))
 
       /*
        * `acquireUseRelease` alone would make a stalled creation
        * uninterruptible. Restoring `open` lets the deadline interrupt it,
-       * while tracking a created session and registering its release stay
-       * uninterruptible.
+       * while registering a created session's release stays uninterruptible.
        */
       return Effect.uninterruptibleMask((restore) =>
         Effect.acquireUseRelease(
-          restore(open).pipe(Effect.tap(({ id }) => tracker.add(id))),
+          restore(open),
           (child) => restore(ask(child)),
           ({ id }) => close(id),
         ),
@@ -178,23 +173,16 @@ class Host extends Context.Service<Host, Interface>()(
             .pipe(Effect.map(Struct.get("data")), asHostError("model.list")),
           operations = sessionOperations(context.session),
           scope = yield* Effect.scope,
-          tracked = yield* Ref.make(HashSet.empty<Session.ID>()),
-          tracker: Tracker = {
-            add: (id) => Ref.update(tracked, HashSet.add(id)),
-            remove: (id) => Ref.update(tracked, HashSet.remove(id)),
-          },
-          wipe = cleanupSession(context.session, tracker)
+          wipe = cleanupSession(context.session)
 
         return Host.of({
           // Uninterruptible, so closing the plugin waits for pending deletions.
-          consult: consultation(context.session, tracker, (id) =>
+          consult: consultation(context.session, (id) =>
             wipe(id).pipe(
               Effect.forkIn(scope, { uninterruptible: true }),
               Effect.asVoid,
             ),
           ),
-          isConsultation: (sessionId) =>
-            Ref.get(tracked).pipe(Effect.map(HashSet.has(sessionId))),
           models,
           notify: operations.notify,
           parent: operations.parent,

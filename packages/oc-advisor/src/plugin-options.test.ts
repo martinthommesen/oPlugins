@@ -24,6 +24,7 @@ const FIRST = 0,
     ),
   /* A host with `options` that accepts registrations and fails any other call. */
   hostWith = (options: PluginHost["options"]): PluginHost => ({
+    agent: { transform: acceptRegistration },
     command: { transform: acceptRegistration },
     model: { list: dieIfCalled },
     options,

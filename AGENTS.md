@@ -75,8 +75,9 @@ contradiction, written exactly as in the file named:
   (`packages/oc-auth/src/claude-auth-terminal-error.ts`).
 - `typescript/prefer-readonly-parameter-types` on the draft parameter of a host
   editor's `update` callback: the host's contract is a draft edited in place,
-  which a readonly type cannot express
-  (`packages/oc-auth/src/model-pricing.ts`).
+  which a readonly type cannot express. It is allowed once in each of
+  `packages/oc-auth/src/model-pricing.ts` and
+  `packages/oc-advisor/src/consultation-agent.ts`.
 
 Adding any other suppression, option, or `off` is a policy change for the
 maintainer, not a fix.

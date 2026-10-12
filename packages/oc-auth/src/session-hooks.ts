@@ -62,6 +62,36 @@ const CONTEXT_HOOKS = [
   kindOf = (event: { readonly kind: string }): string =>
     Option.getOrElse(Option.fromUndefinedOr(event.kind), () => PRIMARY_KIND),
   /*
+   * The aliases that restore a response: those its request was sent with,
+   * or, when the host handed back a Request other than the one the request
+   * hook produced, the session's. None when neither is known, because the
+   * request saw no credential of ours.
+   */
+  knownAliases = Effect.fn("SessionHooks.knownAliases")(function* knownAliases(
+    event: SessionHttpResponse,
+    state: Option.Option<RequestState>,
+  ) {
+    if (Option.isSome(state)) {
+      return Option.some(state.value.originalByAlias)
+    }
+
+    const known = yield* (yield* SessionAliases).get(
+      SessionAliases.keyOf(event.sessionID, kindOf(event)),
+    )
+
+    /*
+     * Unauthorized recovery is skipped for this turn. Tool names still
+     * restore from the session's aliases, so without this record the skipped
+     * recovery would leave no trace.
+     */
+    yield* Effect.when(
+      pluginLog.debug("request_state_missing", { sessionID: event.sessionID }),
+      Effect.succeed(Option.isSome(known)),
+    )
+
+    return known
+  }),
+  /*
    * Rewrite a request to Claude Code's shape with `credential`, and remember
    * how it was sent, for unauthorized recovery and tool-name restoration. A
    * body that cannot be read is a defect, which fails the request.
@@ -77,10 +107,15 @@ const CONTEXT_HOOKS = [
       states = yield* RequestStates
 
     yield* aliases.merge(key, rewritten.originalByAlias)
-    yield* states.remember(rewritten.request, {
-      credential,
-      snapshot: rewritten.snapshot,
-    })
+    yield* states.remember(
+      rewritten.request,
+      {
+        credential,
+        originalByAlias: rewritten.originalByAlias,
+        snapshot: rewritten.snapshot,
+      },
+      event.request,
+    )
     event.request = rewritten.request
   }),
   /* Rewrite a request when a Claude Code credential is active. */
@@ -101,32 +136,17 @@ const CONTEXT_HOOKS = [
   onResponse = Effect.fn("SessionHooks.onResponse")(function* onResponse(
     event: SessionHttpResponse,
   ) {
-    const aliases = yield* SessionAliases,
-      known = yield* aliases.get(
-        SessionAliases.keyOf(event.sessionID, kindOf(event)),
-      ),
-      state = yield* (yield* RequestStates).lookup(event.request),
-      transforms = yield* RequestTransforms
+    const state = yield* (yield* RequestStates).lookup(event.request),
+      transforms = yield* RequestTransforms,
+      used = yield* knownAliases(event, state)
 
-    if (Option.isNone(state) && Option.isNone(known)) {
+    if (Option.isNone(used)) {
       return
-    }
-
-    if (Option.isNone(state)) {
-      /*
-       * The host handed back a Request other than the one the request hook
-       * produced, so unauthorized recovery is skipped for this turn. Tool
-       * names still restore from the session's aliases, so without this
-       * record the skipped recovery would leave no trace.
-       */
-      yield* pluginLog.debug("request_state_missing", {
-        sessionID: event.sessionID,
-      })
     }
 
     event.response = yield* transforms.restore(
       yield* answerFor(event.response, state),
-      Option.getOrElse(known, () => ({})),
+      used.value,
     )
   }),
   /*

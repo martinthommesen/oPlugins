@@ -1,8 +1,9 @@
-import { Effect, Struct } from "effect"
+import { Array as Arr, Effect, Option, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import FakeHooks from "./fake-hooks.test-support.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
+import SessionAliases from "./session-aliases.ts"
 import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
 import scenario from "./plugin-scenario.test-support.ts"
@@ -17,8 +18,11 @@ interface Tests {
 
 const ALIASED_SSE =
     'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"one","name":"mcp_Shell","input":{}}}\n\n',
+  FIRST_OTHER = 1,
   OK = 200,
   SHELL_BODY = JSON.stringify({ tools: [{ name: "shell" }] }),
+  /** How many session and request-kind entries the alias cache keeps. */
+  TRACKED_CONTEXTS = 512,
   /* A response streaming a tool call under its wire alias. */
   aliased = (): Response => new Response(ALIASED_SSE),
   /* A response's body, as text. */
@@ -44,6 +48,24 @@ const ALIASED_SSE =
   /* The body a request went out with. */
   sentBody = (request: Request): Effect.Effect<string> =>
     bodyOf(request.clone()),
+  /*
+   * Push the test session's aliases out of the session cache, the way as
+   * many other active sessions would, and whether they are gone.
+   */
+  sessionEvicted = Effect.gen(function* sessionEvicted() {
+    const aliases = yield* SessionAliases
+
+    yield* Effect.forEach(
+      Arr.range(FIRST_OTHER, TRACKED_CONTEXTS),
+      (index) =>
+        aliases.merge(SessionAliases.keyOf(`other-${index}`, "primary"), {}),
+      { discard: true },
+    )
+
+    return Option.isNone(
+      yield* aliases.get(SessionAliases.keyOf("session", "primary")),
+    )
+  }),
   /* A context event whose session registered a shell tool. */
   shellContext = Struct.assign(transformsSupport.contextEvent(), {
     tools: { shell: { description: "run", input: {} } },
@@ -139,6 +161,80 @@ describe("tool names on an unknown request", () => {
           expect(restoredHere).toMatch(/"name":"shell"/u)
           expect(restoredThere).toMatch(/mcp_Shell/u)
         }),
+    )
+  })
+})
+
+describe("tool names after the session cache lost them", () => {
+  test.layer(onOurs)((it: Tests) => {
+    it.effect("restores with the request's own aliases once evicted", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* fakeHost.setUp
+
+        const outbound = yield* scenario.send(scenario.messages(SHELL_BODY)),
+          wasEvicted = yield* sessionEvicted
+
+        expect(wasEvicted).toBe(true)
+        expect(yield* restoredText(outbound)).toMatch(/"name":"shell"/u)
+        // An unknown request has only the session cache, which lost them.
+        expect(yield* restoredText(outbound.clone())).toMatch(/mcp_Shell/u)
+      }),
+    )
+  })
+
+  test.layer(onOurs)((it: Tests) => {
+    it.effect("restores with the request's own aliases once replaced", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* fakeHost.setUp
+
+        const outbound = yield* scenario.send(scenario.messages(SHELL_BODY))
+
+        // The next turn's tools replace the session's aliases.
+        yield* (yield* FakeHooks).fire("context", scenario.contextEvent())
+
+        expect(yield* restoredText(outbound)).toMatch(/"name":"shell"/u)
+      }),
+    )
+  })
+})
+
+describe("tool names of a request rewritten twice", () => {
+  test.layer(onOurs)((it: Tests) => {
+    it.effect("keeps the first rewrite's aliases once evicted", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* fakeHost.setUp
+
+        const firstPass = yield* scenario.send(scenario.messages(SHELL_BODY)),
+          secondPass = yield* scenario.send(firstPass),
+          wasEvicted = yield* sessionEvicted
+
+        expect(wasEvicted).toBe(true)
+        expect(yield* sentBody(secondPass)).toMatch(/"mcp_Shell"/u)
+        expect(yield* restoredText(secondPass)).toMatch(/"name":"shell"/u)
+      }),
+    )
+  })
+
+  test.layer(replaying)((it: Tests) => {
+    it.effect("restores a replay after a 401 once evicted", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+        yield* fakeHost.setUp
+
+        const outbound = yield* scenario.send(scenario.messages(SHELL_BODY)),
+          wasEvicted = yield* sessionEvicted,
+          whenAnswered = yield* scenario.respond(
+            outbound,
+            scenario.unauthorized(),
+          )
+
+        expect(wasEvicted).toBe(true)
+        expect(whenAnswered.status).toBe(OK)
+        expect(yield* bodyOf(whenAnswered)).toMatch(/"name":"shell"/u)
+      }),
     )
   })
 })

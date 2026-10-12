@@ -41,13 +41,14 @@ const MAX_TRACKED_CONTEXTS = 512,
     )
 
 /**
- * The tool aliases in use, per session and request kind. The context hook
- * resets an entry each turn with the registered tools, and the request hook
- * adds what the body it rewrote carried. Keyed by session rather than by
- * request, because the host may hand the response hook a different
- * `Request`, and a hook that re-runs on its own output finds nothing new to
- * alias. Bounded, because the plugin lives in a server that outlives any
- * one session, and the host has no session-ended signal.
+ * The tool aliases in use, per session and request kind. A response is
+ * restored with the aliases its own request state kept; these are the
+ * fallback for when the host hands the response hook a `Request` other than
+ * the one the request hook produced, so that no request state is found. The
+ * context hook resets an entry each turn with the registered tools, and the
+ * request hook adds what the body it rewrote carried. Bounded, because the
+ * plugin lives in a server that outlives any one session, and the host has
+ * no session-ended signal.
  */
 class SessionAliases extends Context.Service<
   SessionAliases,

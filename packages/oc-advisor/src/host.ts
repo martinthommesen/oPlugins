@@ -4,7 +4,7 @@ import HostError from "./host-error.ts"
 import type { Session } from "@opencode/schema/session"
 import consultationAgent from "./consultation-agent.ts"
 import conversation from "./conversation.ts"
-import hostFailure from "./host-failure.ts"
+import hostFailure from "@oc-lib/host-failure/host-failure.ts"
 
 type SessionApi = Pick<
   Plugin.Context["session"],

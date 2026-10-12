@@ -16,7 +16,7 @@ const NAMED = [
     ["UnauthorizedError", "unauthorized"],
     ["ServiceUnavailableError", "unavailable"],
   ] as const,
-  /** Host failures that name no category this plugin knows. */
+  /** Host failures that name no category this library knows. */
   UNNAMED = [
     failures.failure("UnknownError"),
     failures.failure("session not found"),

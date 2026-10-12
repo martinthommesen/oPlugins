@@ -39,6 +39,5 @@ export default Object.freeze({
   TOOL_CONTEXT,
   UNAUTHORIZED: failure("UnauthorizedError"),
   UNAVAILABLE: failure("ServiceUnavailableError"),
-  failure,
   leaked,
 })

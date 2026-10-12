@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import hostFailure from "./host-failure.ts"
+import hostFailure from "@oc-lib/host-failure/host-failure.ts"
 
 /** A call to the host through the plugin context failed. */
 // oxlint-disable-next-line unicorn/throw-new-error -- `Schema.TaggedError` builds a class; nothing is thrown here.

@@ -24,13 +24,15 @@ type CacheStats = Option.Option.Value<ReturnType<typeof cache.cacheStats>>
  */
 type Color = Pick<Context["theme"]["text"]["muted"], "intent">
 
-type KeymapLayer = Context["keymap"]["layer"] extends (
+type HostKeymapLayer = Context["keymap"]["layer"] extends (
   factory: () => infer Layer,
 ) => void
   ? Layer
   : never
 
-type RunResult = ReturnType<NonNullable<KeymapLayer["commands"]>[number]["run"]>
+type RunResult = ReturnType<
+  NonNullable<HostKeymapLayer["commands"]>[number]["run"]
+>
 
 type Messages = typeof cache.lastRequestStats extends (
   messages?: infer List,
@@ -38,11 +40,39 @@ type Messages = typeof cache.lastRequestStats extends (
   ? List
   : never
 
+type AlertOptions = Context["ui"]["dialog"]["alert"] extends (
+  options: infer Options,
+) => object
+  ? Options
+  : never
+
 type TokenUsage = typeof cache.cacheStats extends (
   tokens?: infer Usage,
 ) => object
   ? Usage
   : never
+
+/** A command this plugin adds, as it declares it. */
+interface Command {
+  readonly group: string
+  readonly id: string
+  readonly palette: true
+  readonly run: () => RunResult
+  readonly slash: { readonly name: string }
+  readonly title: string
+}
+
+/** A keymap layer, as this plugin declares it. */
+interface KeymapLayer {
+  readonly commands: readonly Command[]
+  readonly mode: string
+}
+
+/** The sidebar section's claim on the slot tree. */
+interface SidebarClaim {
+  readonly append: "sidebar.content"
+  readonly render: (input: { readonly sessionID: string }) => JSX.Element
+}
 
 /** The parts of the CLI plugin context this plugin uses, read-only. */
 interface Host {
@@ -54,14 +84,16 @@ interface Host {
       readonly message: { readonly list: (sessionID: string) => Messages }
     }
   }
-  readonly keymap: { readonly layer: Context["keymap"]["layer"] }
+  readonly keymap: { readonly layer: (factory: () => KeymapLayer) => void }
   readonly theme: {
     readonly text: { readonly base: Color; readonly muted: Color }
   }
   readonly ui: {
-    readonly dialog: { readonly alert: Context["ui"]["dialog"]["alert"] }
+    readonly dialog: {
+      readonly alert: (options: AlertOptions) => RunResult
+    }
     readonly router: { readonly current: Context["ui"]["router"]["current"] }
-    readonly slot: Context["ui"]["slot"]
+    readonly slot: (claim: SidebarClaim) => () => void
     readonly toast: { readonly show: Context["ui"]["toast"]["show"] }
   }
 }
@@ -183,9 +215,9 @@ const coloredText = (color: () => Color): DomNode => {
     })
   },
   /** The CLI plugin: the sidebar's prompt cache section and `/cache`. */
-  tuiPlugin: Plugin.Definition = {
+  tuiPlugin = {
     id: "martinthommesen.oc-auth.cli",
-    setup: (context: Host) => {
+    setup: (context: Host): void => {
       context.ui.slot({
         append: "sidebar.content",
         render: (input) =>
@@ -224,6 +256,6 @@ const coloredText = (color: () => Color): DomNode => {
         mode: "global",
       }))
     },
-  }
+  } satisfies Plugin.Definition
 
 export default tuiPlugin

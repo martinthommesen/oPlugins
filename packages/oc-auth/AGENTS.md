@@ -44,6 +44,12 @@ leaks between tests. `Tests` is a local interface naming the block's services
 `it` type isn't deeply readonly. A test-support helper that builds a fresh
 component per call uses `Layer.build` in its own scope.
 
+The CLI plugin's tests (`src/tui.test.ts`) set it up on a fake CLI host
+(`src/cli-host.test-support.ts`) and mount its sidebar section in OpenTUI's test
+renderer. That renderer loads its native library through `node:ffi`, so
+`vitest.config.ts` runs the tests with `--experimental-ffi` (Node 26.1 or
+later), and resolves `solid-js` to the reactive build `@opentui/solid` uses.
+
 `pnpm run test:host` builds the plugin and loads it into a headless OpenCode
 host (`scripts/test-host.ts`, on the shared `@oc-lib/host-test`). It downloads
 OpenCode, so it runs in CI and by hand only, not in `pnpm run check`.

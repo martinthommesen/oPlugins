@@ -30,6 +30,7 @@ interface Active {
 /** What the fake connection keeps for one test. */
 interface State {
   readonly active: Ref.Ref<Option.Option<Active>>
+  readonly dying: Ref.Ref<boolean>
   readonly failing: Ref.Ref<boolean>
   readonly held: Ref.Ref<Option.Option<Deferred.Deferred<boolean>>>
   readonly resolved: Ref.Ref<number>
@@ -47,11 +48,22 @@ const FIRST = 0,
     method: "oauth" as const,
     type: "credential" as const,
   }),
+  /* Die once if a test asked, as the host reports its own problems. */
+  activeDefect = (state: State): Effect.Effect<void> =>
+    Ref.getAndSet(state.dying, false).pipe(
+      Effect.flatMap((dies) =>
+        Effect.die(new Error("active connection unavailable")).pipe(
+          Effect.when(Effect.succeed(dies)),
+        ),
+      ),
+      Effect.asVoid,
+    ),
   /* The active connection, as the host reports it. */
   activeOf =
     (state: State): Connection["active"] =>
     () =>
-      Ref.get(state.active).pipe(
+      activeDefect(state).pipe(
+        Effect.andThen(Ref.get(state.active)),
         Effect.map((current) =>
           current.pipe(
             Option.map(Struct.get("connection")),
@@ -96,13 +108,16 @@ const FIRST = 0,
       ),
       Effect.asVoid,
     ),
-  /* Resolving a connection: counted, obstructed as asked, then the value. */
+  /*
+   * Resolving a connection: counted, then the value of the connection active
+   * when it was asked, once obstructed as asked.
+   */
   resolveOf =
     (state: State): Connection["resolve"] =>
     () =>
       Ref.update(state.resolved, (count) => count + ONE).pipe(
-        Effect.andThen(obstacles(state)),
         Effect.andThen(Ref.get(state.active)),
+        Effect.tap(() => obstacles(state)),
         Effect.map((current) =>
           current.pipe(Option.map(Struct.get("value")), Option.getOrUndefined),
         ),
@@ -114,6 +129,8 @@ class FakeConnection extends Context.Service<
   {
     /** The connection API the plugin is given. */
     readonly connection: Connection
+    /** Make the next lookup of the active connection die. */
+    readonly dieNextActive: Effect.Effect<void>
     /** Make the next resolve fail. */
     readonly failNextResolve: Effect.Effect<void>
     /** Hold the next resolve until the returned effect releases it. */
@@ -164,6 +181,7 @@ class FakeConnection extends Context.Service<
       Effect.gen(function* makeConnection() {
         const state: State = {
           active: yield* Ref.make(initial),
+          dying: yield* Ref.make(false),
           failing: yield* Ref.make(false),
           held: yield* Ref.make(Option.none<Deferred.Deferred<boolean>>()),
           resolved: yield* Ref.make(FIRST),
@@ -171,6 +189,7 @@ class FakeConnection extends Context.Service<
 
         return FakeConnection.of({
           connection: { active: activeOf(state), resolve: resolveOf(state) },
+          dieNextActive: Ref.set(state.dying, true),
           failNextResolve: Ref.set(state.failing, true),
           holdNextResolve: Deferred.make<boolean>().pipe(
             Effect.tap((gate) => Ref.set(state.held, Option.some(gate))),

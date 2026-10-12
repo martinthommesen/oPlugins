@@ -60,6 +60,14 @@ const FIRST = 0,
   hostWithAccess = scenario.onHost(scenario.ours("access")),
   /* A host whose active connection is ours, with zero costs configured. */
   hostZeroCost = scenario.onConfiguredHost(ZERO_COST)(scenario.ours("access")),
+  /* The levels of the records logged for `event`, oldest first. */
+  levelsOf = (
+    event: string,
+  ): Effect.Effect<readonly string[], never, CapturedLogs> =>
+    CapturedLogs.pipe(
+      Effect.flatMap((logs) => logs.named(event)),
+      Effect.map((records) => records.map((record) => record.level)),
+    ),
   /*
    * Set the plugin up in a scope of its own and close it, as the host does
    * when it unloads the plugin: how many event subscriptions had finished
@@ -203,6 +211,57 @@ test.layer(hostWithAccess)("unloading the plugin", (it: Tests) => {
         afterUnload: ONE,
         whileLoaded: ZERO,
       })
+    }),
+  )
+})
+
+test.layer(hostWithAccess)("a switch whose lookup dies", (it: Tests) => {
+  it.effect("drops the previous credential and warns about the lookup", () =>
+    Effect.gen(function* run() {
+      expect.hasAssertions()
+      yield* fakeHost.setUp
+      yield* (yield* FakeConnection).dieNextActive
+      yield* changeTo(scenario.ours("other"), "other")
+
+      // The host reports its problems as defects; the old account must go.
+      expect(yield* authorization).toBeNull()
+      expect(yield* levelsOf("credential_reload_failed")).toStrictEqual([
+        "Warn",
+        "Debug",
+      ])
+      expect(yield* levelsOf("model_reload_failed")).toStrictEqual([])
+      expect(yield* (yield* FakeCatalog).reloads).toBe(ONE)
+    }),
+  )
+})
+
+test.layer(hostWithAccess)("a startup lookup that dies", (it: Tests) => {
+  it.effect("starts the plugin with no credential and a warning", () =>
+    Effect.gen(function* run() {
+      expect.hasAssertions()
+      yield* (yield* FakeConnection).dieNextActive
+      yield* fakeHost.setUp
+
+      expect(yield* authorization).toBeNull()
+      expect(yield* levelsOf("credential_reload_failed")).toStrictEqual([
+        "Warn",
+        "Debug",
+      ])
+    }),
+  )
+})
+
+test.layer(hostWithAccess)("a model reload that dies", (it: Tests) => {
+  it.effect("is reported as a failed model reload", () =>
+    Effect.gen(function* run() {
+      expect.hasAssertions()
+      yield* fakeHost.setUp
+      yield* (yield* FakeCatalog).dieNextReload
+      yield* changeTo(scenario.ours("other"), "other")
+
+      expect(yield* authorization).toBe("Bearer other")
+      expect(yield* levelsOf("model_reload_failed")).toStrictEqual(["Debug"])
+      expect(yield* levelsOf("credential_reload_failed")).toStrictEqual([])
     }),
   )
 })

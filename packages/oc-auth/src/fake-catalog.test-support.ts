@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import type claudeAuth from "./claude-auth-plugin.ts"
 
 type Host = Parameters<typeof claudeAuth.setUp>[typeof FIRST]
@@ -86,6 +86,8 @@ class FakeCatalog extends Context.Service<
       readonly anthropic: number
       readonly other: number
     }>
+    /** Make the next reload die. */
+    readonly dieNextReload: Effect.Effect<void>
     /** How many times the plugin reloaded the models. */
     readonly reloads: Effect.Effect<number>
   }
@@ -94,20 +96,31 @@ class FakeCatalog extends Context.Service<
   public static readonly layer: Layer.Layer<FakeCatalog> = Layer.sync(
     FakeCatalog,
     () => {
-      const state = catalogState()
+      const dying = Ref.makeUnsafe(false),
+        state = catalogState()
 
       return FakeCatalog.of({
         catalog: {
+          // A reload can die, as the host's can, when a test asks.
           reload: () =>
-            Effect.sync(() => {
-              state.tally.reloads += ONE
-              state.anthropic.cost = [...NATIVE_COST]
-              state.foreignModel.cost = [...NATIVE_COST]
+            Ref.getAndSet(dying, false).pipe(
+              Effect.flatMap((dies) =>
+                Effect.die(new Error("model reload failed")).pipe(
+                  Effect.when(Effect.succeed(dies)),
+                ),
+              ),
+              Effect.andThen(
+                Effect.sync(() => {
+                  state.tally.reloads += ONE
+                  state.anthropic.cost = [...NATIVE_COST]
+                  state.foreignModel.cost = [...NATIVE_COST]
 
-              for (const transform of state.transforms) {
-                transform(state.shared)
-              }
-            }),
+                  for (const transform of state.transforms) {
+                    transform(state.shared)
+                  }
+                }),
+              ),
+            ),
           transform: (edit) =>
             Effect.sync(() => {
               state.transforms.push(edit)
@@ -120,6 +133,7 @@ class FakeCatalog extends Context.Service<
           anthropic: state.anthropic.cost.length,
           other: state.foreignModel.cost.length,
         })),
+        dieNextReload: Ref.set(dying, true),
         reloads: Effect.sync(() => state.tally.reloads),
       })
     },

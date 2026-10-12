@@ -22,6 +22,11 @@ _Avoid_: caller, parent session
 The short-lived session in which the advisor answers one consultation.
 _Avoid_: child session, advisor session, temporary session
 
+**Consultation agent**:
+The hidden agent every consultation session runs as. It carries the
+advisor's instructions and allows no tools.
+_Avoid_: advisor agent, hidden agent
+
 **Advice**:
 The advisor's answer to a consultation.
 _Avoid_: reply, response, guidance

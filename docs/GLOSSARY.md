@@ -35,9 +35,14 @@ A value the user sets for a plugin in `opencode.jsonc`.
 _Avoid_: config value, setting (for an option)
 
 **Library**:
-Code shared by plugins, built into each plugin that uses it and never
-released on its own.
+Shared code used by plugins or repository tooling, never released on its own.
 _Avoid_: shared package, kit, utils, common (for a library)
+
+**Bundled library**:
+A library whose code is built into a plugin's published bundle. Bundling
+relates a library to one plugin: a library can be bundled into one plugin
+and used only by another plugin's tests.
+_Avoid_: production library, runtime library
 
 ### Sessions
 

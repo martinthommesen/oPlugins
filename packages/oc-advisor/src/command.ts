@@ -152,9 +152,18 @@ const AdvisorCommand = Data.taggedEnum<Action>(),
       SetModel: ({ model }) =>
         chooseModel(model).pipe(
           Effect.catchTags({
-            HostError: (failure: { readonly operation: string }) =>
-              Effect.succeed(
-                `Couldn't list the available models because ${failure.operation} failed. Run the command again.`,
+            HostError: (failure: {
+              readonly category: string
+              readonly operation: string
+            }) =>
+              Effect.logWarning("advisor_model_list_failed").pipe(
+                Effect.annotateLogs({
+                  category: failure.category,
+                  operation: failure.operation,
+                }),
+                Effect.as(
+                  `Couldn't list the available models because ${failure.operation} failed. Run the command again.`,
+                ),
               ),
             InvalidModel: (failure: {
               readonly model: string

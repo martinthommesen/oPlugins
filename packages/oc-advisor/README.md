@@ -148,15 +148,27 @@ compatibility test are in [Development](#development).
 | The advisor doesn't answer in time | Raise the `timeout` option, or choose a faster advisor model.                                                                                                     |
 
 The plugin writes its log records to OpenCode's log. They carry metadata such as
-event names, session IDs, and model IDs, never the conversation or the advice.
-Each of these events is a warning:
+event names, session IDs, and model IDs, never the conversation, the advice, or
+the text of OpenCode's errors. Each of these events is a warning:
 
-| Event                               | Meaning                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `advisor_consultation_failed`       | A consultation gave no advice. `error` names the reason, with the `operation` or `model` involved             |
-| `advisor_availability_check_failed` | The plugin couldn't tell whether a session is a subagent's, so it hid the advisor from that request           |
-| `advisor_session_cleanup_failed`    | The plugin couldn't delete the consultation session `sessionID`, titled "Advisor". You can delete it yourself |
-| `advisor_preferences_unreadable`    | A saved `/advisor` preference under `key` couldn't be read and was ignored. Set it again with `/advisor`      |
+| Event                               | Meaning                                                                                                                                                                                                                                                           |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `advisor_consultation_failed`       | A consultation gave no advice. `error` names the reason, with the `model` involved, or with the failed `operation` and its `category`                                                                                                                             |
+| `advisor_availability_check_failed` | The plugin couldn't tell whether session `sessionID` is a subagent's, so it hid the advisor from that request. `operation` and `category` say which call failed and why                                                                                           |
+| `advisor_model_list_failed`         | `/advisor` couldn't list the models to check the one you chose, and told you so. `operation` and `category` say which call failed and why                                                                                                                         |
+| `advisor_session_cleanup_failed`    | The plugin couldn't delete the consultation session `sessionID`, titled "Advisor". `reason` is `timeout` when the five seconds ran out, or `retries_exhausted` when both attempts failed, with the last failure's `category`. You can delete the session yourself |
+| `advisor_preferences_unreadable`    | A saved `/advisor` preference under `key` couldn't be read and was ignored. Set it again with `/advisor`                                                                                                                                                          |
+
+`category` says why a call to OpenCode failed, as far as OpenCode's error says:
+
+| Category          | OpenCode's error                                                 |
+| ----------------- | ---------------------------------------------------------------- |
+| `not_found`       | The session, message, agent, provider, or location doesn't exist |
+| `unauthorized`    | The call was refused                                             |
+| `unavailable`     | A service OpenCode needs is unavailable                          |
+| `conflict`        | The session is busy, or the call conflicts with its state        |
+| `invalid_request` | OpenCode rejected the call as invalid                            |
+| `unknown`         | The error names none of the causes above                         |
 
 ## Development
 

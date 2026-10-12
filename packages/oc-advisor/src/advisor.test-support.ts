@@ -18,6 +18,7 @@ type Entries = readonly (readonly [string, Schema.Json])[]
 const FIRST = 0,
   /** A failed parent lookup, as when the host can't be reached. */
   SERVER_UNAVAILABLE = HostError.make({
+    category: "unavailable",
     cause: "server unavailable",
     operation: "session.get",
   }),

@@ -353,6 +353,9 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.1(effect@4.0.1)(vitest@5.0.3(@opentelemetry/api@1.9.0)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)))
+      '@oc-lib/captured-logs':
+        specifier: workspace:*
+        version: link:../../libs/captured-logs
       '@oc-lib/host-test':
         specifier: workspace:*
         version: link:../../libs/host-test

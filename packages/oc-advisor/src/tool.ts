@@ -14,7 +14,7 @@ type Advice = Effect.Success<ReturnType<Advisor["Service"]["consult"]>>
 type ConsultationFailure =
   | Readonly<Pick<AdvisorUnavailable, "_tag">>
   | Readonly<Pick<ConsultationTimedOut, "_tag" | "model" | "seconds">>
-  | Readonly<Pick<HostError, "_tag" | "operation">>
+  | Readonly<Pick<HostError, "_tag" | "category" | "operation">>
   | Readonly<Pick<InvalidModel, "_tag" | "model">>
 
 const ToolInput = Schema.Struct({
@@ -44,7 +44,11 @@ const ToolInput = Schema.Struct({
             model,
             seconds,
           }),
-          HostError: ({ operation }) => ({ error: "HostError", operation }),
+          HostError: ({ category, operation }) => ({
+            category,
+            error: "HostError",
+            operation,
+          }),
           InvalidModel: ({ model }) => ({ error: "InvalidModel", model }),
         }),
       ),

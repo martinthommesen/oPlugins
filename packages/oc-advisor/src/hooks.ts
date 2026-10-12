@@ -17,9 +17,13 @@ const presentAdvisor =
         Effect.map(availability.Availability.$is("Available")),
         Effect.catchTag(
           "HostError",
-          (failure: { readonly operation: string }) =>
+          (failure: {
+            readonly category: string
+            readonly operation: string
+          }) =>
             Effect.logWarning("advisor_availability_check_failed").pipe(
               Effect.annotateLogs({
+                category: failure.category,
                 operation: failure.operation,
                 sessionID: event.sessionID,
               }),

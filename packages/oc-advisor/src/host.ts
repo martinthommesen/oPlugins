@@ -4,6 +4,7 @@ import HostError from "./host-error.ts"
 import type { Session } from "@opencode/schema/session"
 import consultationAgent from "./consultation-agent.ts"
 import conversation from "./conversation.ts"
+import hostFailure from "./host-failure.ts"
 
 type SessionApi = Pick<
   Plugin.Context["session"],
@@ -67,30 +68,52 @@ interface Interface {
 
 const CLEANUP_RETRIES = 1,
   CLEANUP_TIMEOUT_SECONDS = 5,
-  /* Maps any failure of a host call to a `HostError` naming the operation. */
+  /*
+   * Maps any failure of a host call to a `HostError` naming the operation
+   * and the failure's category.
+   */
   asHostError =
     (operation: string) =>
     <Value, Failure, Requirements>(
       self: Effect.Effect<Value, Failure, Requirements>,
     ): Effect.Effect<Value, HostError, Requirements> =>
-      Effect.mapError(self, (cause) => HostError.make({ cause, operation })),
+      Effect.mapError(self, (cause) =>
+        HostError.make({
+          category: hostFailure.categorize(cause),
+          cause,
+          operation,
+        }),
+      ),
   /*
-   * Deletes a consultation session with one retry and a deadline. The
-   * warning names the session only, because the host's error may quote the
-   * conversation.
+   * Warns that a consultation session wasn't deleted, with why: the
+   * deadline passed (`timeout`), or every attempt failed
+   * (`retries_exhausted`) with the last failure's `category`. It leaves out
+   * the host's error, which may quote the conversation.
    */
+  cleanupFailed = (
+    sessionId: Session.ID,
+    why: Readonly<Record<string, string>>,
+  ): Effect.Effect<void> =>
+    Effect.logWarning("advisor_session_cleanup_failed").pipe(
+      Effect.annotateLogs({ sessionID: sessionId }),
+      Effect.annotateLogs(why),
+    ),
+  /* Deletes a consultation session with one retry and a deadline. */
   cleanupSession =
     <Failure>(session: HostSession<Failure>) =>
     (id: Session.ID): Effect.Effect<void> =>
       session.remove({ sessionID: id }).pipe(
+        asHostError("session.remove"),
         Effect.retry({ times: CLEANUP_RETRIES }),
         Effect.timeout(`${CLEANUP_TIMEOUT_SECONDS} seconds`),
-        Effect.tapError(() =>
-          Effect.logWarning("advisor_session_cleanup_failed").pipe(
-            Effect.annotateLogs({ sessionID: id }),
-          ),
-        ),
-        Effect.ignore,
+        Effect.catchTags({
+          HostError: (failure: { readonly category: string }) =>
+            cleanupFailed(id, {
+              category: failure.category,
+              reason: "retries_exhausted",
+            }),
+          TimeoutError: () => cleanupFailed(id, { reason: "timeout" }),
+        }),
       ),
   /*
    * Builds `consult` on the host's session API. `close` starts the cleanup

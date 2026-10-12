@@ -86,3 +86,20 @@ describe("the layout check's report", () => {
     )
   })
 })
+
+describe("the layout check's fingerprints", () => {
+  test.layer(NodeServices.layer)((it: Tests) => {
+    it.effect("prints a missing fingerprint with the fixing command", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const report = yield* checkWith([])
+
+        expect(report.failed).toBe(true)
+        expect(report.stderr).toContain(
+          "packages/oc-demo/bundled-libraries.txt: The fingerprint of the libraries bundled into oc-demo is missing. Run pnpm run fingerprints,",
+        )
+      }),
+    )
+  })
+})

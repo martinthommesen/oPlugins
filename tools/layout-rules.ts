@@ -3,6 +3,7 @@ import catalogRules from "./catalog-rules.ts"
 import libraryRules from "./library-rules.ts"
 import pluginFileRules from "./plugin-file-rules.ts"
 import pluginManifestRules from "./plugin-manifest-rules.ts"
+import releaseActionRules from "./release-action-rules.ts"
 import releaseRules from "./release-rules.ts"
 import suppressionRules from "./suppression-rules.ts"
 
@@ -16,6 +17,7 @@ const problems = (snapshot: typeof Snapshot.Type): readonly string[] => [
     libraryRules.problems(snapshot, folder),
   ),
   ...releaseRules.problems(snapshot),
+  ...releaseActionRules.problems(snapshot),
   ...catalogRules.problems(snapshot),
   ...suppressionRules.problems(snapshot),
 ]

@@ -1,7 +1,9 @@
 /**
  * The layout check: every plugin and library is named, shaped, and wired as
- * the ADRs and `AGENTS.md` say. It prints one line per problem, naming the
- * file, and fails when it finds any. `pnpm run check:layout` runs it.
+ * the ADRs and `AGENTS.md` say, and every plugin's fingerprint of the
+ * libraries bundled into it is current. It prints one line per problem,
+ * naming the file, and fails when it finds any. `pnpm run check:layout`
+ * runs it.
  */
 import { Effect, Layer } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"

@@ -16,22 +16,75 @@ permissions:
 # Each plugin is published by its own job below, after `pnpm run check` has
 # built and verified every bundle.
 #
+# A library change reaches release-please as a change to the fingerprint of
+# every plugin it's bundled into (docs/adr/0004). The fingerprints job checks
+# the commit that triggered the run, and release-please runs only when that
+# passes and main still points at that commit.
+#
 # Publishing uses npm trusted publishing (OIDC through `id-token: write`), no
 # token. It can only be configured once a package exists on npm, so each
 # package's publish step stays off until its repository variable
 # (OC_ADVISOR_NPM_PUBLISH, OC_AUTH_NPM_PUBLISH, OC_AUTO_NPM_PUBLISH,
 # OC_BROWSER_NPM_PUBLISH) is set to `true`.
 jobs:
-  release-please:
+  # The layout check fails when a plugin's fingerprint is stale, which keeps
+  # release-please from missing a plugin a library change is bundled into.
+  fingerprints:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check:layout
+
+  release-please:
+    needs: fingerprints
+    runs-on: ubuntu-latest
+    # The release-please action that the steps below pin, by commit, and the
+    # release-please version it bundles, from the action's package-lock.json.
+    # tools/package.json pins the same version for the offline release test,
+    # and the layout check fails unless the steps, these two values, and that
+    # pin agree. To update the action, record its commit and the version it
+    # bundles here, use the commit in every step, and pin the version in
+    # tools/package.json.
+    env:
+      RELEASE_PLEASE_ACTION: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7
+      RELEASE_PLEASE_VERSION: 17.6.0
     outputs:
       oc_advisor_release_created: ${{ steps.release-please.outputs.oc_advisor_release_created }}
       oc_auth_release_created: ${{ steps.release-please.outputs.oc_auth_release_created }}
       oc_auto_release_created: ${{ steps.release-please.outputs.oc_auto_release_created }}
       oc_browser_release_created: ${{ steps.release-please.outputs.oc_browser_release_created }}
     steps:
+      # release-please reads the head of main, not the commit the fingerprints
+      # job checked. When main has moved on, the run for the newer push
+      # checks it and runs release-please, so this run skips it.
+      - name: Check that main is still the checked commit
+        id: head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$head" == "$GITHUB_SHA" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main is at $head, past $GITHUB_SHA, which this run checked, so this run skips release-please and leaves the release to the run for $head."
+          fi
+
       - name: Run release-please (attempt 1)
-        uses: googleapis/release-please-action@v5
+        if: steps.head.outputs.current == 'true'
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please-1
         continue-on-error: true
         with:
@@ -40,7 +93,7 @@ jobs:
 
       - name: Run release-please (attempt 2)
         if: steps.release-please-1.outcome == 'failure'
-        uses: googleapis/release-please-action@v5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please-2
         continue-on-error: true
         with:
@@ -49,7 +102,7 @@ jobs:
 
       - name: Run release-please (attempt 3)
         if: steps.release-please-1.outcome == 'failure' && steps.release-please-2.outcome == 'failure'
-        uses: googleapis/release-please-action@v5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please-3
         with:
           config-file: release-please-config.json

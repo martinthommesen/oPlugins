@@ -44,6 +44,12 @@ relates a library to one plugin: a library can be bundled into one plugin
 and used only by another plugin's tests.
 _Avoid_: production library, runtime library
 
+**Fingerprint**:
+A digest of the libraries bundled into a plugin, committed in the plugin's
+folder. A library change changes the fingerprint of every plugin it's
+bundled into, which is how a library change releases those plugins.
+_Avoid_: hash, checksum, lockfile (for a fingerprint)
+
 ### Sessions
 
 **Root session**:

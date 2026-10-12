@@ -2,11 +2,16 @@
 
 release-please releases a plugin only for commits that touch the plugin's own
 folder, so a fix in a bundled library would otherwise ship nowhere. Each plugin
-therefore commits a fingerprint of the libraries bundled into it, and changing a
-library updates the fingerprint of every plugin it's bundled into in the same
-commit. The commit type still decides whether anything releases. A check of the
-exact commit runs before release-please and blocks it when a fingerprint is
-stale, because the maintainer commits straight to `main`.
+therefore commits a fingerprint of the libraries bundled into it, found from the
+plugin's published code and the libraries that code imports, and the pre-commit
+hook updates it from the staged files. Changing a library thus changes the
+fingerprint of every plugin it's bundled into in the same commit. The commit
+type still decides whether anything releases. Because the maintainer commits
+straight to `main`, the release workflow checks the exact commit before
+release-please and blocks it when a fingerprint is stale, and skips it when
+`main` has moved past that commit. The tools pin the release-please version the
+release action bundles, and an offline test of its release planning shows that a
+library change releases exactly the plugins it's bundled into.
 
 ## Considered options
 

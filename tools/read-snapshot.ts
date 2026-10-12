@@ -13,6 +13,7 @@ const CONCURRENCY = { concurrency: 16 },
    * absent, the rules that need it report it missing.
    */
   ROOT_FILES = [
+    ".github/workflows/release.yml",
     ".release-please-manifest.json",
     "pnpm-workspace.yaml",
     "release-please-config.json",

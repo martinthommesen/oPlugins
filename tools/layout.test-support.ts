@@ -41,9 +41,24 @@ const DEMO = "packages/oc-demo",
     version: "0.1.0",
   },
   MANIFEST_FILE = `${DEMO}/package.json`,
+  /** The release action, pinned to a commit. */
+  RELEASE_ACTION =
+    "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7",
+  /** A release workflow that records the action and what it bundles. */
+  RELEASE_WORKFLOW = [
+    "jobs:",
+    "  release-please:",
+    "    env:",
+    `      RELEASE_PLEASE_ACTION: ${RELEASE_ACTION}`,
+    "      RELEASE_PLEASE_VERSION: 17.6.0",
+    "    steps:",
+    `      - uses: ${RELEASE_ACTION}`,
+    "",
+  ].join("\n"),
   /** A repository with one valid plugin, oc-demo, and one library. */
   VALID: Layout = {
     files: {
+      ".github/workflows/release.yml": RELEASE_WORKFLOW,
       ".release-please-manifest.json": JSON.stringify({ [DEMO]: "0.1.0" }),
       [`${DEMO}/AGENTS.md`]: "# oc-demo\n",
       [`${DEMO}/LICENSE`]: "MIT License\n\nCopyright (c) 2026 Maintainer\n",
@@ -80,6 +95,9 @@ const DEMO = "packages/oc-demo",
           },
         },
       }),
+      "tools/package.json": JSON.stringify({
+        devDependencies: { "release-please": "17.6.0" },
+      }),
     },
     libraries: ["demo-kit"],
     plugins: ["oc-demo"],
@@ -101,6 +119,8 @@ const DEMO = "packages/oc-demo",
 export default Object.freeze({
   MANIFEST,
   MANIFEST_FILE,
+  RELEASE_ACTION,
+  RELEASE_WORKFLOW,
   VALID,
   withFile,
   withoutFile,

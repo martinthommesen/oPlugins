@@ -11,6 +11,7 @@ import {
 import LayoutError from "./layout-error.ts"
 import type { PlatformError } from "effect"
 import layoutRules from "./layout-rules.ts"
+import libraryFingerprints from "./library-fingerprints.ts"
 import readSnapshot from "./read-snapshot.ts"
 
 const FAILED = "The layout check failed.",
@@ -40,11 +41,12 @@ const FAILED = "The layout check failed.",
         `The layout check found ${String(problems.length)} problems. Fix each one, then run pnpm run check:layout again.`,
       ].join("\n"),
     ).pipe(Effect.andThen(LayoutError.make({ message: FAILED }))),
-  /* Check the repository at `root`. */
+  /* Check the repository at `root`, its plugins' fingerprints included. */
   check = Effect.fn("Layout.check")(function* check(root: string) {
-    const snapshot = yield* readSnapshot.read(root)
+    const snapshot = yield* readSnapshot.read(root),
+      stale = yield* libraryFingerprints.problems(snapshot)
 
-    yield* Arr.match(layoutRules.problems(snapshot), {
+    yield* Arr.match([...layoutRules.problems(snapshot), ...stale], {
       onEmpty: () => affirm("The layout check found no problems."),
       onNonEmpty: (problems) => announce(problems),
     })

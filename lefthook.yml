@@ -1,6 +1,7 @@
 # The Git hooks. `pnpm install` installs them through lefthook's install
 # script. The pre-commit hook fixes and formats the staged files, stages
-# the fixes, and then scans the staged changes for secrets.
+# the fixes, writes and stages each plugin's fingerprint of the libraries
+# bundled into it, and then scans the staged changes for secrets.
 pre-commit:
   # In order, stopping at the first failure: the scan sees the fixes.
   piped: true
@@ -16,6 +17,12 @@ pre-commit:
       # so a commit may leave it nothing to format.
       run: pnpm exec oxfmt --write --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
+    - name: fingerprints
+      # After the fixes, which can change a library's staged code. It writes
+      # the fingerprints from the staged files, exported to a temporary
+      # folder, so an edit that isn't staged never reaches them, and it
+      # stages the fingerprints and nothing else.
+      run: pnpm run --silent fingerprints:staged
     - name: gitleaks
       # `--verbose` shows each finding, and `--redact` hides its secret.
       run: |

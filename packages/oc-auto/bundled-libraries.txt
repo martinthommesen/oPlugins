@@ -1,0 +1,7 @@
+# The libraries bundled into oc-auto, each with a SHA-256 digest of
+# its source and build inputs. A change to this file is a change to
+# oc-auto, so release-please releases it for a fix or feat commit.
+# `pnpm run fingerprints` writes it; don't edit it by hand.
+host-failure e210eaf370a8b72d5e9d0c9929c1cc9bacde2cc6f24c25b6f97d9eb2ade714fb
+log-redaction 079825774749bd96dc4f84cd4f9f64ca3b067d0b7046ae14b8db16e606cbe9cd
+plugin-options 3fbf1629118177897c41e2cbe65c3aa19ec4ab1729e39179c2001b8b75ed2656

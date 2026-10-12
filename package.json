@@ -18,6 +18,8 @@
     "knip": "knip",
     "sherif": "sherif",
     "check:layout": "node --experimental-strip-types tools/check-layout.ts",
+    "fingerprints": "node --experimental-strip-types tools/fingerprints.ts",
+    "fingerprints:staged": "node --experimental-strip-types tools/fingerprints.ts --staged",
     "secrets": "gitleaks dir --no-banner --config .gitleaks.toml ."
   },
   "devDependencies": {

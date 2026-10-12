@@ -153,7 +153,10 @@ describe("401 recovery whose replay fails", () => {
           yield* Effect.yieldNow.pipe(Effect.repeat({ times: SETTLE_YIELDS }))
 
           // The caller still gets the untouched original, not the dropped replay.
-          expect(answered.status).toBe(UNAUTHORIZED)
+          expect([
+            answered.status,
+            yield* transformsSupport.bodyText(answered),
+          ]).toStrictEqual([UNAUTHORIZED, "unauthorized"])
           // Without the release, undici holds the abandoned connection open.
           expect(retainedReplay.released()).toBe(ONE)
         }),

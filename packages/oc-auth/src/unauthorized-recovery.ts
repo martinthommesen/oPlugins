@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Ref } from "effect"
+import { Effect, Exit, Option, Predicate, Ref } from "effect"
 import ActiveCredential from "./active-credential.ts"
 import AnthropicFetch from "./anthropic-fetch.ts"
 import type AnthropicFetchError from "./anthropic-fetch-error.ts"
@@ -87,19 +87,50 @@ const UNAUTHORIZED = 401,
   /* A refresh that kept the access token: replaying it would earn another 401. */
   logUnchanged = (kind: string): Effect.Effect<void> =>
     pluginLog.debug("unauthorized_recovery_unchanged", { kind }),
-  /* Send the request again with `credential`, recording the response. */
+  /*
+   * Release `original` and every response `attempt` opened, except the one
+   * recovery returned. Recovery that ended without a response, interrupted
+   * included, returned none of them.
+   */
+  releaseUnreturned = (
+    original: Response,
+    attempt: Attempt,
+    exit: Exit.Exit<Response>,
+  ): Effect.Effect<void> =>
+    Ref.get(attempt.opened).pipe(
+      Effect.flatMap((opened) =>
+        Effect.forEach(
+          [original, ...opened].filter(
+            (response) =>
+              !Option.exists(
+                Exit.getSuccess(exit),
+                (returned) => returned === response,
+              ),
+          ),
+          (response) => discard(response),
+          { discard: true },
+        ),
+      ),
+    ),
+  /*
+   * Send the request again with `credential`, recording the response. Only
+   * the send can be interrupted, so a response that arrived is recorded.
+   */
   replay = Effect.fn("UnauthorizedRecovery.replay")(function* replay(
     attempt: Attempt,
     credential: ClaudeCodeCredential,
   ) {
     const builder = yield* RequestTransforms,
       fetch = yield* AnthropicFetch,
-      request = yield* builder.replay(attempt.state.snapshot, credential),
-      response = yield* fetch.send(request)
+      request = yield* builder.replay(attempt.state.snapshot, credential)
 
-    yield* Ref.update(attempt.opened, (opened) => [...opened, response])
-
-    return response
+    return yield* Effect.uninterruptibleMask((restore) =>
+      restore(fetch.send(request)).pipe(
+        Effect.tap((response) =>
+          Ref.update(attempt.opened, (opened) => [...opened, response]),
+        ),
+      ),
+    )
   }),
   /* Use `next` from now on, and replay with it unless it is the same token. */
   retryWith = Effect.fn("UnauthorizedRecovery.retryWith")(function* retryWith(
@@ -187,7 +218,7 @@ const UNAUTHORIZED = 401,
    * best-effort, and nothing escapes it: a credential error the user has to
    * act on becomes a 401 carrying its message; an aborted turn or any other
    * failure surfaces as the original 401. Every response it opened but does
-   * not return is released.
+   * not return is released, however it ends.
    */
   unauthorized = Effect.fn("UnauthorizedRecovery.recover")(
     function* unauthorized(original: Response, state: RequestState) {
@@ -195,36 +226,31 @@ const UNAUTHORIZED = 401,
         return original
       }
 
-      const opened = yield* Ref.make<readonly Response[]>([]),
-        recording: Attempt = { opened, state },
-        resolved = yield* tryRecovery(recording, original).pipe(
-          Effect.catchTags({
-            AnthropicFetchError: (failure: { readonly message: string }) =>
-              asOriginal(original, failure.message),
-            ClaudeAuthRefreshExhaustedError: asAuthenticationError,
-            ClaudeAuthTerminalError: asAuthenticationError,
-          }),
-          Effect.catchDefect((defect) =>
-            asOriginal(
-              original,
-              Option.liftPredicate(defect, Predicate.isError).pipe(
-                Option.map(
-                  (error: { readonly message: string }) => error.message,
-                ),
-                Option.getOrElse(() => "unexpected failure"),
+      const recording: Attempt = {
+        opened: yield* Ref.make<readonly Response[]>([]),
+        state,
+      }
+
+      return yield* tryRecovery(recording, original).pipe(
+        Effect.catchTags({
+          AnthropicFetchError: (failure: { readonly message: string }) =>
+            asOriginal(original, failure.message),
+          ClaudeAuthRefreshExhaustedError: asAuthenticationError,
+          ClaudeAuthTerminalError: asAuthenticationError,
+        }),
+        Effect.catchDefect((defect) =>
+          asOriginal(
+            original,
+            Option.liftPredicate(defect, Predicate.isError).pipe(
+              Option.map(
+                (error: { readonly message: string }) => error.message,
               ),
+              Option.getOrElse(() => "unexpected failure"),
             ),
           ),
         ),
-        toRelease = [original, ...(yield* Ref.get(opened))]
-
-      yield* Effect.forEach(
-        toRelease.filter((response) => response !== resolved),
-        (response) => discard(response),
-        { discard: true },
+        Effect.onExit((exit) => releaseUnreturned(original, recording, exit)),
       )
-
-      return resolved
     },
   )
 

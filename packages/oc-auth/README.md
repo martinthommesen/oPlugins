@@ -332,16 +332,27 @@ credential store.
 Warnings carry metadata only, such as credential store names, counts, and status
 codes, never a token, a message, or a path. Each of these events is a warning:
 
-| Event                      | Meaning                                                                                                                                             |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `refresh_writeback_failed` | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires             |
-| `refresh_lock_degraded`    | The refresh lock directory or a lock file is unusable, so OpenCode doesn't take turns refreshing the `lock` store. Overlap can sign Claude Code out |
-| `refresh_lease_unwritten`  | A refresh lock lease couldn't be written, so the plugin doesn't refresh under it. `lease` names the write, `lock` the store as lock files do        |
-| `credential_temp_kept`     | A temp file holding refreshed tokens couldn't be deleted from the Claude Code config directory. Later write-backs retry once it's an hour old       |
-| `credential_sync_failed`   | The Claude Code config directory couldn't be synced after a write-back, so a crash could undo the write. The write-back itself succeeded            |
-| `credential_sweep_failed`  | Leftover `.credentials.json.*.tmp` files holding tokens couldn't be listed or removed in the Claude Code config directory. `step` says which        |
-| `keychain_list_failed`     | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                           |
-| `credential_reload_failed` | The newly selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch                            |
+| Event                                    | Meaning                                                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `refresh_writeback_failed`               | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires                      |
+| `refresh_lock_degraded`                  | The refresh lock directory or a lock file is unusable, so OpenCode doesn't take turns refreshing the `lock` store. Overlap can sign Claude Code out          |
+| `refresh_lease_unwritten`                | A refresh lock lease couldn't be written, so the plugin doesn't refresh under it. `lease` names the write, `lock` the store as lock files do                 |
+| `credential_temp_kept`                   | A temp file holding refreshed tokens couldn't be deleted from the Claude Code config directory. Later write-backs retry once it's an hour old                |
+| `credential_sync_failed`                 | The Claude Code config directory couldn't be synced after a write-back, so a crash could undo the write. The write-back itself succeeded                     |
+| `credential_sweep_failed`                | Leftover `.credentials.json.*.tmp` files holding tokens couldn't be listed or removed in the Claude Code config directory. `step` says which                 |
+| `keychain_list_failed`                   | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                                    |
+| `credential_reload_failed`               | The newly selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch                                     |
+| `unauthorized_recovery_send_failed`      | After a 401, the request couldn't be sent again, so OpenCode reports the original 401. `errorName` is the class of the error, such as `TypeError`            |
+| `unauthorized_recovery_unexpected_error` | Recovery from a 401 failed with an error the plugin didn't expect, so OpenCode reports the original 401. `errorName` is the class of the error               |
+| `request_body_not_json`                  | A request body wasn't the JSON the plugin expects, so it went out without tool aliases, and Anthropic's billing validator may reject it. `bytes` is its size |
+| `account_file_unreadable`                | An account file (`.claude.json`) exists but couldn't be read, so its account is labeled without an email                                                     |
+| `account_file_malformed`                 | An account file (`.claude.json`) isn't valid JSON, or names its account in an unexpected shape, so the account is labeled without an email                   |
+
+`request_body_not_json` is logged for every request that goes out without tool
+aliases. The account file warnings are logged each time the plugin reads the
+file, which is once per account when the plugin loads. A missing `.claude.json`,
+or one that names no signed-in account or no email, is no warning. Neither is a
+turn cancelled, or recovery interrupted, during recovery from a 401.
 
 Debug records add the details, such as error messages and config paths. OpenCode
 keeps them only when it logs at debug level (its `--log-level` flag). They pass

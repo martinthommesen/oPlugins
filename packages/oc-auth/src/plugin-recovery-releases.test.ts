@@ -1,6 +1,7 @@
 import { Effect, Fiber, Latch, Match, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
 import type { Vitest } from "@effect/vitest"
 import fakeHost from "./fake-host.test-support.ts"
@@ -131,6 +132,12 @@ describe("401 recovery that is interrupted", () => {
             ONE,
             ONE,
           ])
+          // Interruption is no failure to warn about.
+          expect(
+            (yield* (yield* CapturedLogs).records).filter((record) =>
+              record.message.startsWith("unauthorized_recovery_"),
+            ),
+          ).toStrictEqual([])
         }),
     )
   })

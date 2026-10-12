@@ -1,7 +1,8 @@
-import type { Layer, Scope } from "effect"
+import { Effect, Layer } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
-import { Effect } from "effect"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import RequestTransforms from "./request-transforms.ts"
+import type { Scope } from "effect"
 import type { Vitest } from "@effect/vitest"
 import support from "./request-transforms.test-support.ts"
 
@@ -12,8 +13,17 @@ interface Tests {
   >
 }
 
+/** The `it` of a `test.layer` block that also captures the log. */
+interface LoggedTests {
+  readonly effect: Vitest.Test<
+    Layer.Success<ReturnType<typeof support.layer>> | CapturedLogs | Scope.Scope
+  >
+}
+
 const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
   FOUR_ASSERTIONS = 4,
+  /** A body that is no JSON, so its tool names cannot be aliased. */
+  MALFORMED_BODY = "not json",
   MESSAGES_URL = "https://api.anthropic.com/v1/messages",
   MODEL_BODY = JSON.stringify({
     messages: [],
@@ -23,6 +33,8 @@ const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
   THREE_ASSERTIONS = 3,
   TOOLS_BODY = JSON.stringify({ tools: [{ name: "shell" }] }),
   TWO_ASSERTIONS = 2,
+  /* The transforms, with every record they log captured. */
+  logged = Layer.mergeAll(support.layer(), CapturedLogs.layer),
   /* A POST to the Messages endpoint carrying `body`. */
   messagesPost = (
     body: string,
@@ -53,7 +65,16 @@ const BODY = JSON.stringify({ messages: [{ content: "hi", role: "user" }] }),
     const api = yield* RequestTransforms
 
     return yield* api.request(event, { access: "access" })
-  })
+  }),
+  /* The warnings logged so far, as each record's event and fields. */
+  warnings = CapturedLogs.pipe(
+    Effect.flatMap((logs) => logs.records),
+    Effect.map((records) =>
+      records
+        .filter((record) => record.level === "Warn")
+        .map((record) => [record.message, record.annotations]),
+    ),
+  )
 
 describe("outbound request replays", () => {
   test.layer(support.layer())((it: Tests) => {
@@ -197,6 +218,40 @@ describe("outbound request tool aliases", () => {
         expect(yield* support.bodyText(transformed.request)).toBe(
           '{"tools":[{"name":"mcp_Shell"}]}',
         )
+      }),
+    )
+  })
+})
+
+describe("outbound request bodies sent without aliases", () => {
+  test.layer(logged)((it: LoggedTests) => {
+    it.effect("warns with the size of a body it cannot alias", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const transformed = yield* transform(
+          postEvent(MALFORMED_BODY, "claude-sonnet-4-5"),
+        )
+
+        expect(yield* support.bodyText(transformed.request)).toBe(
+          MALFORMED_BODY,
+        )
+        // Metadata only: the body's size, never its content.
+        expect(yield* warnings).toStrictEqual([
+          ["request_body_not_json", { bytes: MALFORMED_BODY.length }],
+        ])
+      }),
+    )
+  })
+
+  test.layer(logged)((it: LoggedTests) => {
+    it.effect("stays quiet about a body it aliases", () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        yield* transform(postEvent(TOOLS_BODY, "claude-sonnet-4-5"))
+
+        expect(yield* warnings).toStrictEqual([])
       }),
     )
   })

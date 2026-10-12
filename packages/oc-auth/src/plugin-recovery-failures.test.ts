@@ -2,6 +2,7 @@ import { Effect, Match, Struct } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import AnthropicFetchError from "./anthropic-fetch-error.ts"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import CredentialRefresh from "./credential-refresh.ts"
 import PluginRig from "./plugin-rig.test-support.ts"
 import type { Vitest } from "@effect/vitest"
@@ -18,7 +19,9 @@ interface Tests {
 
 type Script = typeof PluginRig.quiet
 
-const FIRST_CALL = 1,
+/* Why undici's `fetch failed`, which it keeps as the error's cause. */
+const CONNECTION_REFUSED = new Error("connect ECONNREFUSED"),
+  FIRST_CALL = 1,
   ONE = 1,
   RETRY_AFTER_MS = 12_300,
   SETTLE_YIELDS = 20,
@@ -34,10 +37,10 @@ const FIRST_CALL = 1,
     scenario.ours("first"),
     answering(() => Effect.die(new Error("unexpected"))),
   ),
-  /* A replay that fails before any response. */
+  /* A replay that fails before any response, as undici reports it. */
   failingFetch = Effect.fail(
     AnthropicFetchError.make({
-      cause: new TypeError("fetch failed"),
+      cause: new TypeError("fetch failed", { cause: CONNECTION_REFUSED }),
       message: "the replayed request failed",
     }),
   ),
@@ -46,6 +49,24 @@ const FIRST_CALL = 1,
     answering(
       () => Effect.succeed(scenario.adopted("second")),
       () => failingFetch,
+    ),
+  ),
+  /* The fields of each debug record of a failed recovery. */
+  failureDetails = CapturedLogs.pipe(
+    Effect.flatMap((logs) => logs.named("unauthorized_recovery_failed")),
+    Effect.map((records) => records.map((record) => record.annotations)),
+  ),
+  /* The warnings recovery logged, as each record's event and fields. */
+  recoveryWarnings = CapturedLogs.pipe(
+    Effect.flatMap((logs) => logs.records),
+    Effect.map((records) =>
+      records
+        .filter(
+          (record) =>
+            record.level === "Warn" &&
+            record.message.startsWith("unauthorized_recovery_"),
+        )
+        .map((record) => [record.message, record.annotations]),
     ),
   ),
   /* The adopted credential is rejected too; its body is left unread. */
@@ -121,6 +142,10 @@ describe("401 recovery while refresh is unavailable", () => {
           answered.status,
           yield* transformsSupport.bodyText(answered),
         ]).toStrictEqual([UNAUTHORIZED, "unauthorized"])
+        // Metadata only: the kind of failure, and the error's class name.
+        expect(yield* recoveryWarnings).toStrictEqual([
+          ["unauthorized_recovery_unexpected_error", { errorName: "Error" }],
+        ])
       }),
     )
   })
@@ -137,6 +162,16 @@ describe("401 recovery whose replay fails", () => {
 
         expect(yield* (yield* PluginRig).sent).toHaveLength(ONE)
         expect(answered.status).toBe(UNAUTHORIZED)
+        expect(yield* recoveryWarnings).toStrictEqual([
+          ["unauthorized_recovery_send_failed", { errorName: "TypeError" }],
+        ])
+        // The debug record names why the send failed, not only that it did.
+        expect(yield* failureDetails).toStrictEqual([
+          {
+            cause: ["TypeError: fetch failed", "Error: connect ECONNREFUSED"],
+            error: "the replayed request failed",
+          },
+        ])
       }),
     )
   })

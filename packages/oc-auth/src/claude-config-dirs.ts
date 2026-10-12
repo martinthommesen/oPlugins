@@ -4,24 +4,86 @@ import pluginLog from "./plugin-log.ts"
 import sources from "./claude-code-sources.ts"
 
 const ACCOUNT_FILE = ".claude.json",
-  /** The part of `.claude.json` that names the signed-in account. */
-  AccountFile = Schema.fromJsonString(
-    Schema.Struct({
-      oauthAccount: Schema.Struct({ emailAddress: Schema.NonEmptyString }),
-    }),
-  ),
+  /** An account's email; absent or null when Claude Code recorded none. */
+  EmailAddress = Schema.optionalKey(Schema.NullOr(Schema.String)),
   NONE = 0,
-  /* The email the `.claude.json` at `path` names, or none. */
+  /** The signed-in account `.claude.json` records, or null. */
+  OAuthAccount = Schema.NullOr(Schema.Struct({ emailAddress: EmailAddress })),
+  /*
+   * The part of `.claude.json` that names the signed-in account. A file
+   * without the account, or without its email, is valid: Claude Code keeps
+   * the file before anyone signs in.
+   */
+  UserConfigFile = Schema.fromJsonString(
+    Schema.Struct({ oauthAccount: Schema.optionalKey(OAuthAccount) }),
+  ),
+  /*
+   * Warn that the `.claude.json` at `path` is not the JSON Claude Code
+   * writes, so its account is labeled without an email. The parser's
+   * message quotes the file, so the debug record names only the path.
+   */
+  accountFileMalformed = (path: string): Effect.Effect<Option.Option<string>> =>
+    pluginLog
+      .warning("account_file_malformed", {})
+      .pipe(
+        Effect.andThen(pluginLog.debug("account_file_malformed", { path })),
+        Effect.as(Option.none()),
+      ),
+  /*
+   * Warn that the `.claude.json` at `path` exists but could not be read, so
+   * its account is labeled without an email.
+   */
+  accountFileUnreadable = (
+    path: string,
+    failure: { readonly message: string },
+  ): Effect.Effect<Option.Option<string>> =>
+    pluginLog.warning("account_file_unreadable", {}).pipe(
+      Effect.andThen(
+        pluginLog.debug("account_file_unreadable", {
+          error: failure.message,
+          path,
+        }),
+      ),
+      Effect.as(Option.none()),
+    ),
+  /* The email `text`, a `.claude.json`, names, or none when it names none. */
+  decodeEmail = (
+    text: string,
+  ): Effect.Effect<Option.Option<string>, Schema.SchemaError> =>
+    Schema.decodeEffect(UserConfigFile)(text).pipe(
+      Effect.map((file) =>
+        Option.fromNullishOr(file.oauthAccount).pipe(
+          Option.flatMap((account) =>
+            Option.fromNullishOr(account.emailAddress),
+          ),
+          Option.filter((email) => email !== ""),
+        ),
+      ),
+    ),
+  /*
+   * The email the `.claude.json` at `path` names, or none. A missing file
+   * is no failure; one that cannot be read or parsed is warned about.
+   */
   emailAt = Effect.fn("ClaudeConfigDirs.emailAt")(
     function* emailAt(path: string) {
       const fs = yield* FileSystem.FileSystem,
         text = yield* fs.readFileString(path)
 
-      return Schema.decodeOption(AccountFile)(text).pipe(
-        Option.map((file) => file.oauthAccount.emailAddress),
-      )
+      return yield* decodeEmail(text)
     },
-    Effect.orElseSucceed(() => Option.none<string>()),
+    (effect, path) =>
+      effect.pipe(
+        Effect.catchReason(
+          "PlatformError",
+          "NotFound",
+          () => Effect.succeedNone,
+        ),
+        Effect.catchTags({
+          PlatformError: (failure: { readonly message: string }) =>
+            accountFileUnreadable(path, failure),
+          SchemaError: () => accountFileMalformed(path),
+        }),
+      ),
   ),
   /* Whether `dir` is a directory holding a `.claude.json`. */
   holdsAccountFile = Effect.fn("ClaudeConfigDirs.isConfigDir")(

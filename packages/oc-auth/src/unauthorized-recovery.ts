@@ -1,4 +1,4 @@
-import { Effect, Exit, Option, Predicate, Ref } from "effect"
+import { Effect, Exit, Option, Ref } from "effect"
 import ActiveCredential from "./active-credential.ts"
 import AnthropicFetch from "./anthropic-fetch.ts"
 import type AnthropicFetchError from "./anthropic-fetch-error.ts"
@@ -6,8 +6,8 @@ import CredentialRefresh from "./credential-refresh.ts"
 import type RequestStates from "./request-states.ts"
 import RequestTransforms from "./request-transforms.ts"
 import claudeCodeCredential from "./claude-code-credential.ts"
-import pluginLog from "./plugin-log.ts"
 import pluginResponses from "./plugin-responses.ts"
+import recoveryLog from "./unauthorized-recovery-log.ts"
 
 type RequestState = Option.Option.Value<
   Effect.Success<ReturnType<RequestStates["Service"]["lookup"]>>
@@ -58,31 +58,28 @@ const UNAUTHORIZED = 401,
   asAuthenticationError = (failure: {
     readonly message: string
   }): Effect.Effect<Response> =>
-    pluginLog
-      .debug("unauthorized_recovery_failed", { error: failure.message })
+    recoveryLog
+      .authenticationFailed(failure.message)
       .pipe(Effect.as(pluginResponses.authenticationError(failure.message))),
   /* The original 401 for a turn its caller cancelled, which is no failure. */
   asCancelled = (original: Response): Effect.Effect<Response> =>
-    pluginLog
-      .debug("unauthorized_recovery_cancelled", {})
-      .pipe(Effect.as(original)),
+    recoveryLog.cancelled.pipe(Effect.as(original)),
   /*
    * Any other failure surfaces as the original 401, which the SDK already
-   * knows how to report. One after the turn was cancelled is the
-   * cancellation's doing, such as the replay it aborted, not a failure.
+   * knows how to report, once `report` logged why. One after the turn was
+   * cancelled is the cancellation's doing, such as the replay it aborted,
+   * not a failure, so it is not reported.
    */
   asOriginal = (
     original: Response,
     turn: AbortSignal,
-    message: string,
+    report: Effect.Effect<void>,
   ): Effect.Effect<Response> => {
     if (turn.aborted) {
       return asCancelled(original)
     }
 
-    return pluginLog
-      .debug("unauthorized_recovery_failed", { error: message })
-      .pipe(Effect.as(original))
+    return report.pipe(Effect.as(original))
   },
   /* Release a response this plugin drops, so its connection is reclaimed now. */
   discard = (response: Response): Effect.Effect<void> =>
@@ -99,9 +96,6 @@ const UNAUTHORIZED = 401,
           ),
       }),
     ),
-  /* A refresh that kept the access token: replaying it would earn another 401. */
-  logUnchanged = (kind: string): Effect.Effect<void> =>
-    pluginLog.debug("unauthorized_recovery_unchanged", { kind }),
   /* The original 401, once the caller cancels the turn. */
   onceCancelled = (
     original: Response,
@@ -178,7 +172,7 @@ const UNAUTHORIZED = 401,
     yield* active.swap(rejected.credential, next)
 
     if (next.access === rejected.credential.access) {
-      yield* logUnchanged("refreshed")
+      yield* recoveryLog.unchanged("refreshed")
 
       return rejected.response
     }
@@ -193,7 +187,7 @@ const UNAUTHORIZED = 401,
       Transient: ({ retryAfterMs }) =>
         Effect.succeed(pluginResponses.retryableRefresh(retryAfterMs)),
       Unchanged: () =>
-        logUnchanged("unchanged").pipe(Effect.as(rejected.response)),
+        recoveryLog.unchanged("unchanged").pipe(Effect.as(rejected.response)),
     }),
   /*
    * The replay with an adopted credential, unless it was rejected as well;
@@ -251,9 +245,10 @@ const UNAUTHORIZED = 401,
   /*
    * Recover from a 401 on a request this plugin sent. Recovery is
    * best-effort, and nothing escapes it: a credential error the user has to
-   * act on becomes a 401 carrying its message; any other failure surfaces as
-   * the original 401. Cancelling the turn stops recovery wherever it is, and
-   * the caller gets the original 401; a refresh other callers share runs on.
+   * act on becomes a 401 carrying its message; any other failure is warned
+   * about and surfaces as the original 401. Cancelling the turn stops
+   * recovery wherever it is, and the caller gets the original 401 with no
+   * warning; a refresh other callers share runs on.
    * Every response recovery opened but does not return is released, however
    * it ends.
    */
@@ -271,22 +266,20 @@ const UNAUTHORIZED = 401,
 
       return yield* tryRecovery(recording, original).pipe(
         Effect.catchTags({
-          AnthropicFetchError: (failure: { readonly message: string }) =>
-            asOriginal(original, turn, failure.message),
+          AnthropicFetchError: (failure: {
+            readonly cause: unknown
+            readonly message: string
+          }) =>
+            asOriginal(
+              original,
+              turn,
+              recoveryLog.sendFailed(failure.cause, failure.message),
+            ),
           ClaudeAuthRefreshExhaustedError: asAuthenticationError,
           ClaudeAuthTerminalError: asAuthenticationError,
         }),
         Effect.catchDefect((defect) =>
-          asOriginal(
-            original,
-            turn,
-            Option.liftPredicate(defect, Predicate.isError).pipe(
-              Option.map(
-                (error: { readonly message: string }) => error.message,
-              ),
-              Option.getOrElse(() => "unexpected failure"),
-            ),
-          ),
+          asOriginal(original, turn, recoveryLog.unexpectedError(defect)),
         ),
         Effect.raceFirst(onceCancelled(original, turn)),
         Effect.onExit((exit) => releaseUnreturned(original, recording, exit)),

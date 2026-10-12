@@ -112,10 +112,21 @@ const ONE = 1,
       () => duringReplay.reach.pipe(Effect.andThen(Effect.never)),
     ),
   ),
-  /* Failures recovery reported, and the requests it replayed. */
+  /*
+   * Failures recovery reported, as a warning or a debug record, and the
+   * requests it replayed.
+   */
   reported = Effect.all([
     CapturedLogs.pipe(
-      Effect.flatMap((logs) => logs.named("unauthorized_recovery_failed")),
+      Effect.flatMap((logs) => logs.records),
+      Effect.map((records) =>
+        records.filter(
+          (record) =>
+            record.message.startsWith("unauthorized_recovery_") &&
+            (record.level === "Warn" ||
+              record.message === "unauthorized_recovery_failed"),
+        ),
+      ),
     ),
     PluginRig.pipe(Effect.flatMap((rig) => rig.sent)),
   ]),

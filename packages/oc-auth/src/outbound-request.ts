@@ -35,7 +35,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
   /*
    * `body` with its tool names aliased. A body that is not the expected JSON
    * is sent without aliases, and the billing validator may reject it over
-   * its tool names.
+   * its tool names, so each such request is warned about, with its size.
    */
   aliasBody = Effect.fn("OutboundRequest.aliasBody")(function* aliasBody(
     body: Uint8Array<ArrayBuffer>,
@@ -43,7 +43,7 @@ const NO_ALIASES: OriginalByAlias = Object.freeze({}),
     return yield* Option.match(requestBodyAliases.alias(body), {
       onNone: () =>
         pluginLog
-          .debug("request_body_not_json", { bytes: body.byteLength })
+          .warning("request_body_not_json", { bytes: body.byteLength })
           .pipe(
             Effect.as<AliasedBody>({
               body,

@@ -61,9 +61,12 @@ records why.
   `fix(log-redaction): redact cookies`. A `chore:` repair releases nothing.
 - On each push to `main`, `release.yml` runs the layout check, which checks the
   fingerprints, on the commit that triggered it, and release-please runs only
-  when it passes. release-please reads the head of `main`, so when `main` has
-  moved past the checked commit, the run skips release-please and leaves the
-  release to the run for the newer push.
+  when it passes. release-please reads the head of `main`, so before each
+  release-please attempt the run checks that `main` is still the checked commit,
+  and skips release-please and leaves the release to the run for the newer push
+  when it isn't. A push in the seconds between that check and release-please
+  reading `main` can still reach release-please unchecked; if it left a
+  fingerprint stale, its own run's check fails, and a repair commit fixes it.
 - `tools/package.json` pins release-please at the version the release action
   bundles, and the tools' tests plan releases with it offline, against a fake
   GitHub. The release-please job in `release.yml` records the action's commit

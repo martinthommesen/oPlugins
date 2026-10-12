@@ -66,8 +66,13 @@ jobs:
       oc_browser_release_created: ${{ steps.release-please.outputs.oc_browser_release_created }}
     steps:
       # release-please reads the head of main, not the commit the fingerprints
-      # job checked. When main has moved on, the run for the newer push
-      # checks it and runs release-please, so this run skips it.
+      # job checked. Before each attempt, this job checks that main still
+      # points at that commit, and skips release-please when main has moved
+      # on: the run for the newer push checks that push. A push in the
+      # seconds between a check and release-please reading main still
+      # reaches release-please unchecked. If that push left a fingerprint
+      # stale, its own run's check fails, which calls for the repair commit
+      # the README's Releasing section describes.
       - name: Check that main is still the checked commit
         id: head
         shell: bash
@@ -91,8 +96,23 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Run release-please (attempt 2)
+      - name: Check that main is still the checked commit (before attempt 2)
+        id: head-2
         if: steps.release-please-1.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$head" == "$GITHUB_SHA" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main is at $head, past $GITHUB_SHA, which this run checked, so this run skips release-please and leaves the release to the run for $head."
+          fi
+
+      - name: Run release-please (attempt 2)
+        if: steps.release-please-1.outcome == 'failure' && steps.head-2.outputs.current == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please-2
         continue-on-error: true
@@ -100,8 +120,23 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Run release-please (attempt 3)
+      - name: Check that main is still the checked commit (before attempt 3)
+        id: head-3
         if: steps.release-please-1.outcome == 'failure' && steps.release-please-2.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$head" == "$GITHUB_SHA" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main is at $head, past $GITHUB_SHA, which this run checked, so this run skips release-please and leaves the release to the run for $head."
+          fi
+
+      - name: Run release-please (attempt 3)
+        if: steps.release-please-1.outcome == 'failure' && steps.release-please-2.outcome == 'failure' && steps.head-3.outputs.current == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please-3
         with:

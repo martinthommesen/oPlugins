@@ -390,10 +390,18 @@ offline test to test a model outside the catalog, with a model definition
 written for the test.
 
 Run `pnpm run test:headless` for the live read-tool test with your Claude Code
-account. It sends a model request and uses subscription usage. To test
-near-expiry refresh and write-back as well, set
+account. It reads your Claude Code accounts and copies the first one's access
+token, without its refresh token, into the sandbox. It sends a model request,
+which uses subscription usage, and writes nothing outside the sandbox. The copy
+can't refresh, so the test never spends your account's refresh token: if the
+access token expires within five minutes, or Anthropic rejects it, the test
+fails and says why. Run `claude`, then try again.
+
+To test near-expiry refresh and write-back, set
 `OC_AUTH_HEADLESS_REFRESH_CONFIG_DIR` to a disposable Claude Code config
-directory. Its refresh token rotates, and the new credentials stay there.
+directory. The live test then reads only that directory's credentials file, and
+makes it expire so the plugin refreshes it. Its refresh token rotates at
+Anthropic, and the new credentials stay in that directory.
 
 On macOS, `OC_AUTH_LIVE_KEYCHAIN=1 pnpm test` also tests Keychain write-back
 against the real `security` tool. It adds throwaway items named

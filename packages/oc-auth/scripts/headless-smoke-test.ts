@@ -152,11 +152,19 @@ const NPM_NAME = "@martinthommesen/oc-auth",
     yield* checks.autoImport(target)
     yield* checks.accountLabel(target)
     yield* checks.nativePricing(layout.models)
-    yield* checks.toolRoundTrip(target, {
-      model: config.model,
-      sentinel: marker,
-      smoke: layout.smoke,
-    })
+    yield* checks
+      .toolRoundTrip(target, {
+        model: config.model,
+        sentinel: marker,
+        smoke: layout.smoke,
+      })
+      .pipe(
+        Effect.catchTag(
+          "HostTestError",
+          (failure: { readonly message: string }) =>
+            Effect.fail(credentials.explain(store, failure)),
+        ),
+      )
     yield* conclude(config, store, mock)
   }).pipe(Effect.scoped)
 

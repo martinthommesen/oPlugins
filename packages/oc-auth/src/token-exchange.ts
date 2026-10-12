@@ -14,8 +14,8 @@ import policy from "./refresh-backoff-policy.ts"
 /*
  * What one refresh-token exchange came to. `Transient` keeps the refresh
  * token usable and may carry the endpoint's `retry-after`; `Terminal` means
- * the refresh token itself was rejected. A network failure is `Transient`
- * with status 0.
+ * the endpoint answered with an OAuth error code the backoff policy treats
+ * as final. A network failure is `Transient` with status 0.
  */
 type RefreshOutcome =
   | {

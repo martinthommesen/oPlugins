@@ -47,7 +47,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm test
-        # dist is what consumers get, and nothing else loads it before publish.
+        # The tests import src, not dist, which is what consumers get. Check
+        # that dist loads on this OS before the host test installs it.
       - run: pnpm run verify:dist
       - run: pnpm run test:host
         env:
@@ -89,7 +90,8 @@ jobs:
       - run: pnpm test
         env:
           OC_AUTH_LIVE_KEYCHAIN: ${{ runner.os == 'macOS' && '1' || '' }}
-        # dist is what consumers get, and nothing else loads it before publish.
+        # The tests import src, not dist, which is what consumers get. Check
+        # that dist loads on this OS before the host test installs it.
       - run: pnpm run verify:dist
       - run: pnpm run test:host
         env:
@@ -118,7 +120,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm test
-        # dist is what consumers get, and nothing else loads it before publish.
+        # The tests import src, not dist, which is what consumers get. Check
+        # that dist loads on this OS before the host test installs it.
       - run: pnpm run verify:dist
       - run: pnpm run test:host
         env:
@@ -147,7 +150,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm test
-        # dist is what consumers get, and nothing else loads it before publish.
+        # The tests import src, not dist, which is what consumers get. Check
+        # that dist loads on this OS before the host test installs it.
       - run: pnpm run verify:dist
       - run: pnpm run test:host
         env:

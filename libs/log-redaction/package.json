@@ -2,7 +2,7 @@
   "name": "@oc-lib/log-redaction",
   "version": "0.1.0",
   "private": true,
-  "description": "Log redaction: a log record's fields with every secret removed.",
+  "description": "Log redaction: a log record's fields with known secrets hidden.",
   "license": "MIT",
   "type": "module",
   "exports": {

@@ -114,10 +114,10 @@ The lint policy forces a shape that is unusual but uniform:
 
 Plugins run inside the OpenCode server, so blocking one stalls every session.
 All I/O goes through Effect services, never `node:` modules: `FileSystem`,
-`Path`, `ChildProcessSpawner` (`effect/unstable/process`), `HttpClient`,
-`Crypto`, `Encoding`, `Clock`/`DateTime` (time), `Random`. Environment variables
-and process facts come from a service that tests replace with `ConfigProvider`
-or a test layer.
+`Path`, `ChildProcessSpawner` (`effect/process`), `HttpClient`, `Crypto`,
+`Encoding`, `Clock`/`DateTime` (time), `Random`. Environment variables and
+process facts come from a service that tests replace with `ConfigProvider` or a
+test layer.
 
 Long-lived state lives in `Ref`s owned by a service's layer, so it ends with the
 plugin's scope.

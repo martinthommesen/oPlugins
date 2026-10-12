@@ -40,8 +40,10 @@ const FIRST = 0,
       })
     }),
   /*
-   * Logs a reviewer's decision. The info record carries metadata only; the
-   * rationale is model output, so it goes to a debug record, redacted.
+   * Logs a reviewer's decision. The info record carries metadata only. The
+   * rationale is model output that can quote the conversation, so it goes
+   * only to a debug record. Redaction hides recognized tokens in it, not
+   * other sensitive text.
    */
   logReviewed = (reviewed: Reviewed): Effect.Effect<void> => {
     const rationale = Effect.logDebug("auto_review_rationale").pipe(

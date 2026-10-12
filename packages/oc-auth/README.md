@@ -248,14 +248,20 @@ OpenCode retries. Its `retry-after` header is the cooldown left, in whole
 seconds. When another OpenCode process is waiting out that cooldown, the 429
 comes back at once.
 
-Only an OAuth error that rejects the refresh token, such as `invalid_grant`,
-fails for good and asks you to sign in to Claude Code again. The plugin retries
-every other failure with a growing cooldown. After ten failures in a row for one
-store, it reports the error and names the last cause: an HTTP status, a network
-error, or credentials it couldn't read. It keeps retrying at the longest
-cooldown, so it recovers once the cause clears. With the default
-`refreshCooldownMs`, the report comes after about eight minutes at most, and
-closer to six with typical jitter.
+A refresh fails for good, and asks you to sign in to Claude Code again, only
+when the token endpoint answers with one of these OAuth error codes:
+`invalid_grant`, `invalid_client`, `unauthorized_client`,
+`unsupported_grant_type`, or `invalid_scope`. The plugin retries every other
+failure with a growing cooldown, unknown error codes included. After ten
+failures in a row for one store, it reports the error and names the last cause:
+an HTTP status, a network error, or credentials it couldn't read. It keeps
+retrying at the longest cooldown, so it recovers once the cause clears.
+
+The report comes after the tenth failure, not after a fixed time. With the
+default `refreshCooldownMs`, the cooldowns between the ten failures add up to
+about eight minutes at most. The time each refresh request takes, the token
+endpoint's `retry-after` hints, and gaps between your model requests add to the
+wait, because the plugin refreshes only when a request needs it.
 
 When recovery from a 401 ends in either kind of error, the response carries the
 plugin's message, so OpenCode shows what to do instead of a bare 401.
@@ -332,21 +338,21 @@ credential store.
 Warnings carry metadata only, such as credential store names, counts, and status
 codes, never a token, a message, or a path. Each of these events is a warning:
 
-| Event                                    | Meaning                                                                                                                                                      |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `refresh_writeback_failed`               | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires                      |
-| `refresh_lock_degraded`                  | The refresh lock directory or a lock file is unusable, so OpenCode doesn't take turns refreshing the `lock` store. Overlap can sign Claude Code out          |
-| `refresh_lease_unwritten`                | A refresh lock lease couldn't be written, so the plugin doesn't refresh under it. `lease` names the write, `lock` the store as lock files do                 |
-| `credential_temp_kept`                   | A temp file holding refreshed tokens couldn't be deleted from the Claude Code config directory. Later write-backs retry once it's an hour old                |
-| `credential_sync_failed`                 | The Claude Code config directory couldn't be synced after a write-back, so a crash could undo the write. The write-back itself succeeded                     |
-| `credential_sweep_failed`                | Leftover `.credentials.json.*.tmp` files holding tokens couldn't be listed or removed in the Claude Code config directory. `step` says which                 |
-| `keychain_list_failed`                   | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                                    |
-| `credential_reload_failed`               | The newly selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch                                     |
-| `unauthorized_recovery_send_failed`      | After a 401, the request couldn't be sent again, so OpenCode reports the original 401. `errorName` is the class of the error, such as `TypeError`            |
-| `unauthorized_recovery_unexpected_error` | Recovery from a 401 failed with an error the plugin didn't expect, so OpenCode reports the original 401. `errorName` is the class of the error               |
-| `request_body_not_json`                  | A request body wasn't the JSON the plugin expects, so it went out without tool aliases, and Anthropic's billing validator may reject it. `bytes` is its size |
-| `account_file_unreadable`                | An account file (`.claude.json`) exists but couldn't be read, so its account is labeled without an email                                                     |
-| `account_file_malformed`                 | An account file (`.claude.json`) isn't valid JSON, or names its account in an unexpected shape, so the account is labeled without an email                   |
+| Event                                    | Meaning                                                                                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refresh_writeback_failed`               | The refreshed tokens couldn't be saved back to the credential store, so Claude Code has to sign in again once its current token expires                       |
+| `refresh_lock_degraded`                  | The refresh lock directory or a lock file is unusable, so OpenCode doesn't take turns refreshing the `lock` store. Overlap can sign Claude Code out           |
+| `refresh_lease_unwritten`                | A refresh lock lease couldn't be written, so the plugin doesn't refresh under it. `lease` names the write, `lock` the store as lock files do                  |
+| `credential_temp_kept`                   | A temp file holding refreshed tokens couldn't be deleted from the Claude Code config directory. Later write-backs retry once it's an hour old                 |
+| `credential_sync_failed`                 | The Claude Code config directory couldn't be synced after a write-back, so a crash could undo the write. The write-back itself succeeded                      |
+| `credential_sweep_failed`                | Leftover `.credentials.json.*.tmp` files holding tokens couldn't be listed or removed in the Claude Code config directory. `step` says which                  |
+| `keychain_list_failed`                   | The Keychain items couldn't be listed, so only the primary Claude Code account is offered                                                                     |
+| `credential_reload_failed`               | The selected Anthropic credential couldn't be loaded, so no Claude Code credential is in use until the next switch or the next reconnect to OpenCode's events |
+| `unauthorized_recovery_send_failed`      | After a 401, the request couldn't be sent again, so OpenCode reports the original 401. `errorName` is the class of the error, such as `TypeError`             |
+| `unauthorized_recovery_unexpected_error` | Recovery from a 401 failed with an error the plugin didn't expect, so OpenCode reports the original 401. `errorName` is the class of the error                |
+| `request_body_not_json`                  | A request body wasn't the JSON the plugin expects, so it went out without tool aliases, and Anthropic's billing validator may reject it. `bytes` is its size  |
+| `account_file_unreadable`                | An account file (`.claude.json`) exists but couldn't be read, so its account is labeled without an email                                                      |
+| `account_file_malformed`                 | An account file (`.claude.json`) isn't valid JSON, or names its account in an unexpected shape, so the account is labeled without an email                    |
 
 `request_body_not_json` is logged for every request that goes out without tool
 aliases. The account file warnings are logged each time the plugin reads the
@@ -356,12 +362,14 @@ turn cancelled, or recovery interrupted, during recovery from a 401.
 
 Debug records add the details, such as error messages and config paths. OpenCode
 keeps them only when it logs at debug level (its `--log-level` flag). They pass
-through redaction first: values under keys such as `accessToken`,
-`refreshToken`, `account`, and `x-api-key`, and any Anthropic token
-(`sk-ant-...`) or JWT inside a string, are redacted. Structure nested more than
-four levels deep is replaced with a placeholder. Keychain item names and config
-paths aren't redacted, so review debug records before you share them. No record
-carries a prompt, a request or response body, or model output.
+through redaction first. It replaces values under a fixed list of field names,
+such as `accessToken`, `refreshToken`, `account`, and `x-api-key`, matched
+exactly, case included. It cuts each Anthropic token (`sk-ant-...`) or JWT
+inside a string to its first eight characters. Structure nested more than four
+levels deep is replaced with a placeholder. Redaction doesn't find every secret:
+Keychain item names, config paths, and tokens in other formats pass through, so
+review debug records before you share them. No record carries a prompt, a
+request or response body, or model output.
 
 ## Development
 
@@ -375,6 +383,8 @@ pnpm run check
 The root `AGENTS.md` lists every check and the shared lint and compiler policy.
 
 ### Verify host compatibility
+
+Run the commands in this section in `packages/oc-auth`.
 
 Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.27. The
 test installs that CLI and the packed plugin in a temporary directory, loads the

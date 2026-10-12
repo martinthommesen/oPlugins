@@ -72,8 +72,10 @@ Where this guide is silent, follow the
 A log record's message is a stable `snake_case` event name, such as
 `refresh_writeback_failed`. Its details go in annotations. A record at info
 level or above carries metadata only, such as counts, durations, and IDs.
-Content, such as an error message, goes only in debug records, after the
-`@oc-lib/log-redaction` library has redacted it.
+Content, such as an error message, goes only in debug records, through the
+`@oc-lib/log-redaction` library. Redaction hides known secrets, not every
+sensitive value, so log only the content a record needs.
+[Its `AGENTS.md`](../libs/log-redaction/AGENTS.md) says what it hides.
 
 ## Commits and pull requests
 

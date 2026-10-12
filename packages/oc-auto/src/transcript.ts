@@ -176,7 +176,8 @@ const CalledTool = Schema.Struct({ input: Schema.String, name: Schema.String }),
       }),
   /*
    * The action awaiting approval, as JSON, with the tool call that raised
-   * it. An action the reviewer would only see part of is not reviewed.
+   * it when the request names one. An action the reviewer would only see
+   * part of is not reviewed.
    */
   renderPlannedAction = Effect.fn("Transcript.renderPlannedAction")(
     function* renderPlannedAction(

@@ -1,8 +1,8 @@
 import { Schema } from "effect"
 
 /**
- * Token refresh failed too many times in a row, for reasons that say nothing
- * against the refresh token: the network, the token endpoint, or the
+ * Token refresh failed too many times in a row, with failures oc-auth
+ * doesn't treat as terminal: the network, the token endpoint, or the
  * credential store. Unlike `ClaudeAuthTerminalError`, nothing is latched, so
  * the next attempt after the cooldown goes out as usual.
  */

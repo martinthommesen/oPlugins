@@ -181,6 +181,8 @@ pnpm run check
 
 ### Verify host compatibility
 
+Run the commands in this section in `packages/oc-advisor`.
+
 Run `pnpm run test:host` to test the packed plugin against OpenCode 2.0.27. The
 test installs the pinned CLI and the packed plugin in a temporary directory,
 with their own config, data, cache, and state directories, and checks that the

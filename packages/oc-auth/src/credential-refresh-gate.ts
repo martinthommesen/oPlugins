@@ -13,7 +13,7 @@ type Refresh = ReturnType<
 >
 
 const NO_WAIT = 0,
-  /* The refresh token was rejected for good. */
+  /* A terminal failure, latched for its credential generation. */
   latched = ClaudeAuthTerminalError.make({
     message: ClaudeAuthTerminalError.text,
   }),
@@ -40,7 +40,7 @@ const NO_WAIT = 0,
     },
   ),
   /*
-   * The refresh token was rejected: adopt a credential Claude Code or another
+   * The refresh failed terminally: adopt a credential Claude Code or another
    * process wrote to the store meanwhile, else latch the failure for this
    * credential generation.
    */
@@ -87,5 +87,5 @@ const NO_WAIT = 0,
   /* Whether `result` carries a credential adopted from the store. */
   wasAdopted = RefreshResult.$is("Adopted")
 
-/** The checks that stop a refresh, and the latch for a rejected refresh token. */
+/** The checks that stop a refresh, and the latch for a terminal failure. */
 export default Object.freeze({ rejected, unlessBlocked, wasAdopted })

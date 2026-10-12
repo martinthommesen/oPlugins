@@ -12,7 +12,7 @@ type Fields = typeof redact extends (fields: infer Value) => object
  */
 type Metadata = Readonly<Record<string, boolean | number | string>>
 
-/* `fields` with every secret removed and absent values dropped. */
+/* `fields` with known secrets hidden and absent values dropped. */
 const annotationsOf = (fields: Fields): Fields =>
     Object.fromEntries(
       Object.entries(redact(fields)).filter(

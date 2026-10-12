@@ -21,8 +21,8 @@ one.
 _Avoid_: backup model
 
 **Planned action**:
-A permission prompt and the tool call that raised it, as the reviewer reads
-them.
+A permission prompt and, when the prompt names one, the tool call that
+raised it, as the reviewer reads them.
 _Avoid_: action (alone), request (alone)
 
 **Assessment**:

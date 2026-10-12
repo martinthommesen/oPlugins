@@ -53,13 +53,15 @@ The credentials a store holds between two rotations.
 _Avoid_: version, token hash, credential key
 
 **Transient failure**:
-A refresh failure that says nothing against the refresh token, such as a
-network error or a rate limit.
+A refresh failure that isn't terminal, such as a network error, a rate
+limit, or an unknown OAuth error code.
 _Avoid_: soft failure, retryable error
 
 **Terminal failure**:
-A refresh that failed because the refresh token is no longer valid, so the
-user must sign in to Claude Code again.
+A refresh the token endpoint refused with an OAuth error code oc-auth
+treats as final: `invalid_grant`, `invalid_client`, `unauthorized_client`,
+`unsupported_grant_type`, or `invalid_scope`. The user must sign in to
+Claude Code again.
 _Avoid_: hard failure, fatal error
 
 **Cooldown**:

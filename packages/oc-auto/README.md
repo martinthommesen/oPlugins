@@ -109,14 +109,18 @@ that says the reviewer has no tools.
 
 The reviewer sees user messages, the agent's messages and tool calls,
 conversation summaries, and the planned action. The planned action is the
-permission request and the exact tool call that raised it. Tool outputs are left
-out. Each transcript entry quotes its text apart from its speaker label, so a
-label inside the text stays part of that entry's text.
+permission request's action, metadata, and resources, with the exact tool call
+that raised it when the request names one. For a request that names no tool
+call, the planned action holds only the permission request's fields, and the
+reviewer still sees the transcript. Tool outputs are left out. Each transcript
+entry quotes its text apart from its speaker label, so a label inside the text
+stays part of that entry's text.
 
 For a subagent, the reviewer also sees the user's messages from the root
 session, and the subagent's own user messages are labeled as coming from the
-delegating agent. If the plugin can't identify the root session or the tool call
-that raised the request, it asks you instead.
+delegating agent. If the plugin can't identify the root session, or a request
+names the tool call that raised it and the plugin can't find that call, it asks
+you instead.
 
 The transcript has a 48,000-character budget. The oldest agent entries are left
 out first, and agent text, summaries, and tool inputs in the transcript can be
@@ -173,7 +177,9 @@ or the conversation:
 | `auto_review_failure_reason` | Debug   | The `reason` the prompt shows                                                                                     |
 
 Debug records pass through redaction first, and OpenCode keeps them only when it
-logs at debug level (its `--log-level` flag).
+logs at debug level (its `--log-level` flag). Redaction hides recognized tokens,
+not every sensitive value. The rationale is model output and can quote the
+conversation, so review debug records before you share them.
 
 ## Limitations
 
@@ -211,10 +217,12 @@ pnpm run check
 The root `AGENTS.md` lists every check and the shared lint and compiler policy.
 
 To take an upstream update of the vendored Codex policy, follow
-`src/vendor/codex/UPSTREAM.md`, then run `pnpm run vendor:codex` to regenerate
-`policy.ts`.
+`src/vendor/codex/UPSTREAM.md`, then run `pnpm run vendor:codex` in
+`packages/oc-auto` to regenerate `policy.ts`.
 
 ### Verify host compatibility
+
+Run the commands in this section in `packages/oc-auto`.
 
 Run `pnpm run test:host` to test the packed plugin against the OpenCode version
 oc-auto is built against, 2.0.27. The test installs that CLI and the packed

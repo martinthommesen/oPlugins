@@ -139,7 +139,7 @@ class RefreshBackoff extends Context.Service<
     readonly failureKind: (
       key: string,
     ) => Effect.Effect<Option.Option<RefreshFailureKind>>
-    /** Record a terminal refresh failure (dead refresh token). No cooldown. */
+    /** Record a terminal refresh failure. No cooldown. */
     readonly noteTerminal: (key: string) => Effect.Effect<void>
     /** Record a transient refresh failure and return the cooldown applied. */
     readonly noteTransient: (

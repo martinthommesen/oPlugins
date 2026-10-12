@@ -3,12 +3,13 @@ import { Option, Schema } from "effect"
 /*
  * The token endpoint (`platform.claude.com/v1/oauth/token`) may rate-limit
  * refreshes with HTTP 429 `rate_limit_error`, which leaves the refresh token
- * valid. This module tells such a transient failure from a dead refresh token
- * (`invalid_grant`), and picks a cooldown so a rate-limited account is not
- * asked again before the limit is likely to have reset.
+ * valid. This module tells such a transient failure from a terminal one,
+ * marked by an OAuth error code in `TerminalOAuthError`, and picks a cooldown
+ * so a rate-limited account is not asked again before the limit is likely
+ * to have reset.
  */
 
-/** Whether a refresh failure says anything against the refresh token itself. */
+/** Whether a refresh failure is final for its credential generation. */
 type RefreshFailureKind = "terminal" | "transient"
 
 /** What one backoff computation depends on. */
@@ -32,19 +33,24 @@ const DOUBLING = 2,
    * OAuth errors count as transient, so without this ceiling a permanent
    * failure with an unfamiliar code, such as a lapsed subscription, would
    * retry behind a synthetic 429 and never reach the user. Retries go on
-   * past the ceiling. With the default base cooldown it is reached after
-   * about eight minutes at worst (15 + 30 + 7 × 60 seconds), sooner with
-   * jitter.
+   * past the ceiling. It counts failures, not time: with the default base
+   * cooldown, the cooldowns before it add up to about eight minutes at worst
+   * (15 + 30 + 7 × 60 seconds), less with jitter, but the refresh requests,
+   * `retry-after` hints, and gaps between the model requests that trigger
+   * refreshes add to the wait.
    */
   MAX_CONSECUTIVE_TRANSIENT = 10,
   /** Hard ceiling for a single cooldown, regardless of consecutive failures. */
   MAX_COOLDOWN_MS = 60_000,
   NO_WAIT = 0,
   /*
-   * OAuth token-endpoint error codes that mean the refresh token itself is no
-   * longer usable. Everything else is transient, including rate limits, 5xx
-   * responses, network errors, and unknown codes, so a recoverable blip never
-   * becomes a hard "re-authenticate" error.
+   * OAuth token-endpoint error codes (RFC 6749, section 5.2) that end
+   * refreshing until the user signs in again, because sending the same
+   * request again gets the same answer. Not each one rejects the refresh
+   * token: `invalid_client` and `unsupported_grant_type` reject the client
+   * and the request. Everything else is transient, including rate limits,
+   * 5xx responses, network errors, `invalid_request`, and unknown codes, so a
+   * recoverable blip never becomes a hard "re-authenticate" error.
    */
   TerminalOAuthError = Schema.Literals([
     "invalid_grant",

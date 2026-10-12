@@ -1,8 +1,9 @@
 import { Schema } from "effect"
 
 /**
- * The refresh token was rejected for good. The failure stays latched for that
- * credential generation until the user re-authenticates with `claude`.
+ * A refresh failed with an OAuth error code oc-auth treats as final. The
+ * failure stays latched for that credential generation until the user
+ * re-authenticates with `claude`.
  */
 // oxlint-disable-next-line unicorn/throw-new-error -- `Schema.TaggedError` builds a class; nothing is thrown here.
 class ClaudeAuthTerminalError extends Schema.TaggedError<ClaudeAuthTerminalError>()(

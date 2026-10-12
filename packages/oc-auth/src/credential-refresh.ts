@@ -170,7 +170,7 @@ const aboutCredential = (
       Effect.uninterruptible,
     ),
   /*
-   * After the leader's refresh token was rejected: a joiner of the same
+   * After the leader's refresh failed terminally: a joiner of the same
    * credential generation fails too, and one holding a newer generation gets
    * none, so it asks again with its own refresh token.
    */
@@ -202,8 +202,8 @@ const aboutCredential = (
   }),
   /*
    * Join the refresh in flight for the store of `subject`, or lead one.
-   * A joiner that has to ask again, after the leader's refresh token was
-   * rejected, joins whichever refresh another such joiner started first.
+   * A joiner that has to ask again, after the leader's refresh failed
+   * terminally, joins whichever refresh another such joiner started first.
    * Only the wait for the result can be interrupted.
    */
   shareRefresh = Effect.fn("CredentialRefresh.shareRefresh")(

@@ -1,6 +1,6 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import type { Duration, PlatformError } from "effect"
-import { Effect, Option, Stream } from "effect"
+import { Effect, Match, Option, Stream } from "effect"
 import Environment from "./environment.ts"
 import KeychainSecurityError from "./keychain-security-error.ts"
 
@@ -51,8 +51,9 @@ const EXIT_DENIED = 128,
         }),
     }),
   /*
-   * The failure of `run`. The message names the subcommand but never its
-   * arguments, which can carry a credential blob.
+   * The failure of `run`. The message names the subcommand and adds only
+   * what `security` wrote to stderr, never the arguments, which can carry a
+   * credential blob.
    */
   failure = (
     run: SecurityRun,
@@ -69,6 +70,28 @@ const EXIT_DENIED = 128,
         .join(": "),
       stderr,
     }),
+  /*
+   * The failure type of a process failure, from the operation that failed:
+   * the process could not start, ended without an exit status, or its
+   * output or input broke. Only the operation's name is read. The platform
+   * error's message and cause quote the whole command line, and a write too
+   * long for interactive mode passes the credentials, hex-encoded, as an
+   * argument.
+   */
+  processFailureType = (method: string): string =>
+    Match.value(method).pipe(
+      Match.when("spawn", () => "start_failed"),
+      Match.when("exitCode", () => "no_exit_status"),
+      Match.when(
+        (operation) => operation.startsWith("fromReadable"),
+        () => "output_failed",
+      ),
+      Match.when(
+        (operation) => operation.startsWith("fromWritable"),
+        () => "input_failed",
+      ),
+      Match.orElse(() => "process_failed"),
+    ),
   /* Run `security` once and collect its stdout; a non-zero exit fails. */
   runOnce = Effect.fn("KeychainSecurity.runOnce")(function* runOnce(
     run: SecurityRun,
@@ -95,8 +118,9 @@ const EXIT_DENIED = 128,
   }, Effect.scoped),
   /*
    * Run the macOS `security` tool without blocking the plugin. A timeout
-   * kills it; a process that could not start or was killed by a signal has
-   * no exit status to classify.
+   * kills it. A process that could not start, was killed by a signal, or
+   * whose output broke has no exit status to classify, so it fails with the
+   * kind of process failure alone.
    */
   security = (
     run: SecurityRun,
@@ -108,8 +132,12 @@ const EXIT_DENIED = 128,
     runOnce(run).pipe(
       Effect.timeout(run.timeout),
       Effect.catchTags({
-        PlatformError: (cause: { readonly message: string }) =>
-          Effect.fail(failure(run, "exit_unknown", cause.message)),
+        PlatformError: (cause: {
+          readonly reason: { readonly method: string }
+        }) =>
+          Effect.fail(
+            failure(run, processFailureType(cause.reason.method), ""),
+          ),
         TimeoutError: () => Effect.fail(failure(run, "timeout", "")),
       }),
     )

@@ -97,6 +97,13 @@ describe("a failed consultation's record", () => {
       )
     },
   )
+  test.layer(arrange({ generate: Effect.fail(failures.THROTTLED) }))(
+    (it: Tests) => {
+      it.effect("names the category of the provider's failure", () =>
+        consultationFails("rate_limited"),
+      )
+    },
+  )
   test.layer(arrange({ generate: Effect.fail(failures.SECRET) }))(
     (it: Tests) => {
       it.effect("falls back to unknown for an unstructured failure", () =>
@@ -108,10 +115,10 @@ describe("a failed consultation's record", () => {
 
 describe("a failed availability check's record", () => {
   test.layer(
-    arrange({ parent: Effect.fail(failures.UNAVAILABLE), subagents: false }),
+    arrange({ parent: Effect.fail(failures.NOT_FOUND), subagents: false }),
   )((it: Tests) => {
     it.effect("names the category of the host's failure", () =>
-      checkFails("unavailable"),
+      checkFails("not_found"),
     )
   })
   test.layer(

@@ -159,8 +159,8 @@ the cause, and the prompt says what to do about it:
 | `unknown`          | Nothing structured names the cause; the prompt names the step that failed |
 
 A failed call to OpenCode has a `category` too: `not_found`, `unauthorized`,
-`unavailable`, `conflict`, `invalid_request`, or `unknown` when OpenCode's error
-names none of those.
+`unavailable`, `rate_limited`, `conflict`, `invalid_request`, or `unknown` when
+OpenCode's error names none of those.
 
 ### Logs
 

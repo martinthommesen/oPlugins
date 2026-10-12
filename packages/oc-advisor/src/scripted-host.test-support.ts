@@ -9,7 +9,7 @@ import SessionRecord from "./session-record.test-support.ts"
 import support from "./advisor.test-support.ts"
 
 /** What a scripted host call fails with: text, or a structured failure. */
-type Failure = string | { readonly _tag: string; readonly message: string }
+type Failure = string | { readonly _tag: string }
 
 type FakeSession = Parameters<
   typeof Host.fromPlugin<Failure>

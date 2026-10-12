@@ -112,7 +112,7 @@ describe("a failed host call's record", () => {
 
         const review = yield* failedReview({
           respond: host.assessing("allow"),
-          session: Effect.fail(host.hostFailure("SessionNotFoundError")),
+          session: Effect.fail(host.SESSION_NOT_FOUND),
           signedIn: true,
         })
 

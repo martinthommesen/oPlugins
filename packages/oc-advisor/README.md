@@ -161,14 +161,15 @@ the text of OpenCode's errors. Each of these events is a warning:
 
 `category` says why a call to OpenCode failed, as far as OpenCode's error says:
 
-| Category          | OpenCode's error                                                 |
-| ----------------- | ---------------------------------------------------------------- |
-| `not_found`       | The session, message, agent, provider, or location doesn't exist |
-| `unauthorized`    | The call was refused                                             |
-| `unavailable`     | A service OpenCode needs is unavailable                          |
-| `conflict`        | The session is busy, or the call conflicts with its state        |
-| `invalid_request` | OpenCode rejected the call as invalid                            |
-| `unknown`         | The error names none of the causes above                         |
+| Category          | OpenCode's error                                                                |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `not_found`       | The session, its agent, or its directory doesn't exist                          |
+| `unauthorized`    | The provider connection couldn't be authorized, or the provider refused it      |
+| `unavailable`     | No model is available, an instruction source is unavailable, or the provider is |
+| `rate_limited`    | The provider is limiting requests, or the quota ran out                         |
+| `conflict`        | The call conflicts with the session's state                                     |
+| `invalid_request` | The provider rejected the request as invalid                                    |
+| `unknown`         | The error names none of the causes above                                        |
 
 ## Development
 

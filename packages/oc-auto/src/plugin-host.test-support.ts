@@ -25,7 +25,7 @@ interface Script {
 }
 
 /** What a host call fails with: text, or a structured failure. */
-type HostFailure = string | { readonly _tag: string; readonly message: string }
+type HostFailure = string | { readonly _tag: string }
 
 const FIRST = 0,
   HTTP_OK = 200,
@@ -80,6 +80,13 @@ const FIRST = 0,
       type: "assistant",
     },
   ],
+  /*
+   * The host's failure to find the root session, as OpenCode 2.0.27 raises
+   * it: `Session.NotFoundError` (`packages/core/src/session/error.ts`).
+   */
+  SESSION_NOT_FOUND = Schema.TaggedStruct("Session.NotFoundError", {
+    sessionID: Schema.String,
+  }).make({ sessionID: SESSION_ID }),
   /* The reviewer backend answering with a stream whose text is `text`. */
   answerWith = (text: string): Script["respond"] =>
     Effect.sync(
@@ -118,11 +125,6 @@ const FIRST = 0,
     Schema.Array(SessionMessage.Info),
   ),
   decodeSession = Schema.decodeUnknownEffect(Session.Info),
-  /* A structured host failure tagged `tag` that quotes the conversation. */
-  hostFailure = (tag: string): HostFailure =>
-    Schema.TaggedStruct(tag, { message: Schema.String }).make({
-      message: SECRET,
-    }),
   /*
    * A host whose session API reads the root session, whose OpenAI
    * connection follows `script`, and which records each permission hook in
@@ -203,9 +205,9 @@ const FIRST = 0,
 /** A fake host and reviewer backend for setup's registered permission hook. */
 export default Object.freeze({
   SECRET,
+  SESSION_NOT_FOUND,
   askToPush,
   assessing,
-  hostFailure,
   /** The reviewer backend limiting requests, in the provider's words. */
   rateLimited: Effect.sync(
     () => new Response(SECRET, { status: HTTP_TOO_MANY_REQUESTS }),

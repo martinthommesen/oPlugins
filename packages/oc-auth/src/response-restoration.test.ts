@@ -152,6 +152,34 @@ describe("response restoration of whole bodies", () => {
   )
 })
 
+describe("response restoration framed by content type", () => {
+  it.effect("rewrites a JSON body with a blank line between tokens", () =>
+    Effect.gen(function* run() {
+      expect.hasAssertions()
+
+      // A blank line also ends an SSE event, but a JSON body has no events.
+      const spaced = toolUseBody("mcp_Shell").replace("{", "{\n\n")
+
+      expect(
+        yield* restoredText(new Response(spaced, { headers: JSON_HEADERS })),
+      ).toBe(toolUseBody("shell"))
+    }),
+  )
+
+  it.effect("finds the events of a body without a content type", () =>
+    Effect.gen(function* run() {
+      expect.hasAssertions()
+
+      const text = yield* restoredText(
+        yield* support.streamed(SPLIT_EVENTS, {}),
+      )
+
+      expect(text).toMatch(/"name":"shell"/u)
+      expect(text).toMatch(/"text":"done"/u)
+    }),
+  )
+})
+
 describe("response restoration pass-through", () => {
   it.effect("leaves responses without aliases untouched", () =>
     Effect.gen(function* run() {

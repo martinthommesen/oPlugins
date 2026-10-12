@@ -17,18 +17,34 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
   DATA_FIELD = "data:",
   /** Just past a line end that ends a blank line: the end of an SSE event. */
   EVENT_END = /(?<=(?:\r\n|\n|\r(?!\n)){2})/u,
+  EVENT_STREAM = "event-stream",
+  JSON_TYPE = "json",
   /** Just past any line end, so each line keeps its own. */
   LINE_END = /(?<=\n|\r(?!\n))/u,
   LINE_TERMINATOR = /(?:\r\n|\n|\r)$/u,
   NOT_FOUND = -1,
   START = 0,
-  TEXTUAL_TYPES = ["event-stream", "json"],
+  TEXTUAL_TYPES = [EVENT_STREAM, JSON_TYPE],
   TEXT_PREFIX = "text/",
   VALUE_SPACE = /^ /u,
   /* `line` without its line end. */
   bareLine = (line: string): string => line.replace(LINE_TERMINATOR, ""),
+  /* The bytes of `body`, as they arrive. */
+  bytesOf = (
+    body: ReadableStream<Uint8Array>,
+  ): Stream.Stream<Uint8Array, unknown> =>
+    Stream.fromReadableStream({
+      evaluate: () => body,
+      onError: (cause) => cause,
+    }),
   /* Whether `line` is a `data` field, part of its event's payload. */
   carriesData = (line: string): boolean => line.startsWith(DATA_FIELD),
+  /* The lowercased content type of `response`, when it has one. */
+  contentType = (response: Response): Option.Option<string> =>
+    Option.fromNullishOr(response.headers.get("content-type")).pipe(
+      Option.filter((type) => type !== ""),
+      Option.map((type) => type.toLowerCase()),
+    ),
   /*
    * An event's `lines` with its payload replaced by `data`, written on the
    * line its payload started on, with that line's own line end.
@@ -81,16 +97,12 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
    * binary body a proxy returned must pass through untouched.
    */
   isTextualBody = (response: Response): boolean =>
-    Option.fromNullishOr(response.headers.get("content-type")).pipe(
-      Option.filter((type) => type !== ""),
-      Option.map((type) => type.toLowerCase()),
-      Option.match({
-        onNone: () => true,
-        onSome: (type) =>
-          TEXTUAL_TYPES.some((textual) => type.includes(textual)) ||
-          type.startsWith(TEXT_PREFIX),
-      }),
-    ),
+    Option.match(contentType(response), {
+      onNone: () => true,
+      onSome: (type) =>
+        TEXTUAL_TYPES.some((textual) => type.includes(textual)) ||
+        type.startsWith(TEXT_PREFIX),
+    }),
   /*
    * Index just past the last SSE event boundary in `buffer`, or none.
    *
@@ -126,24 +138,41 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
       eventsRestored(text, originalByAlias),
     ),
   /*
+   * A JSON body read whole, with its tool names restored. A blank line in
+   * it is only whitespace between tokens, never the end of an event. The
+   * caller reads such a body whole anyway, so holding it costs one more
+   * copy.
+   */
+  messageRestored = (
+    body: ReadableStream<Uint8Array>,
+    originalByAlias: OriginalByAlias,
+  ): Stream.Stream<string, unknown> =>
+    bytesOf(body).pipe(
+      Stream.decodeText,
+      Stream.mkString,
+      Effect.map((text) =>
+        Option.getOrElse(
+          responseToolNames.inMessage(text, originalByAlias),
+          () => text,
+        ),
+      ),
+      Stream.fromEffect,
+    ),
+  /*
    * `body` as text with the original tool names restored, flushed on SSE
    * event boundaries so each event is rewritten whole and passes on as soon
-   * as it is complete. A body without event boundaries, such as a
-   * non-streaming JSON response, is rewritten whole when the stream ends.
-   * The caller reads such a body whole anyway, so holding it costs one more
-   * copy.
+   * as it is complete. Whatever follows the last boundary when the body ends
+   * is rewritten by `restoreTail`.
    */
   namesRestored = (
     body: ReadableStream<Uint8Array>,
     originalByAlias: OriginalByAlias,
+    restoreTail: (text: string, aliases: OriginalByAlias) => string,
   ): Stream.Stream<string, unknown> =>
     Stream.suspend(() => {
       const decoder = new TextDecoder()
 
-      return Stream.fromReadableStream({
-        evaluate: () => body,
-        onError: (cause) => cause,
-      }).pipe(
+      return bytesOf(body).pipe(
         Stream.mapAccum(
           () => "",
           (pending: string, chunk: Uint8Array) => {
@@ -167,11 +196,34 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
               Arr.filter(
                 [`${pending}${decoder.decode()}`],
                 (rest) => rest !== "",
-              ).map((rest) => lastRestored(rest, originalByAlias)),
+              ).map((rest) => restoreTail(rest, originalByAlias)),
           },
         ),
       )
     }),
+  /*
+   * `body` with its tool names restored, framed by `response`'s content
+   * type: an event stream event by event, and a JSON body whole. A body of
+   * any other type, or of none, counts as events when it has blank lines
+   * and as a whole JSON body otherwise.
+   */
+  restorationOf = (
+    response: Response,
+    body: ReadableStream<Uint8Array>,
+    originalByAlias: OriginalByAlias,
+  ): Stream.Stream<string, unknown> => {
+    const type = Option.getOrElse(contentType(response), () => "")
+
+    if (type.includes(EVENT_STREAM)) {
+      return namesRestored(body, originalByAlias, eventsRestored)
+    }
+
+    if (type.includes(JSON_TYPE)) {
+      return messageRestored(body, originalByAlias)
+    }
+
+    return namesRestored(body, originalByAlias, lastRestored)
+  },
   /*
    * Restore original tool names in the response body so OpenCode sees the
    * tools it registered. A response with nothing to restore, or with a body
@@ -190,7 +242,7 @@ const BLANK_LINES = ["\r\n\r\n", "\n\n", "\r\r"],
       Option.match({
         onNone: () => Effect.succeed(response),
         onSome: (body) =>
-          namesRestored(body, originalByAlias).pipe(
+          restorationOf(response, body, originalByAlias).pipe(
             Stream.encodeText,
             Stream.toReadableStreamEffect(),
             Effect.map((restored) => {

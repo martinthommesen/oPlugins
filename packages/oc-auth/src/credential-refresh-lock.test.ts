@@ -1,7 +1,9 @@
 import { Effect, Fiber, Option, Ref } from "effect"
 import type { Layer, Scope } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
+import CapturedLogs from "@oc-lib/captured-logs/captured-logs.ts"
 import type { Vitest } from "@effect/vitest"
+import faults from "./refresh-lock-faults.test-support.ts"
 import refreshLayer from "./credential-refresh-layer.test-support.ts"
 import support from "./credential-refresh.test-support.ts"
 
@@ -19,7 +21,10 @@ type Refresh = Effect.Success<ReturnType<typeof support.refresh>>
 type Asked = Readonly<Parameters<typeof support.refresh>[typeof FIRST]>
 
 const COOLDOWN_MS = 20_000,
+  /** The lease write that extends the lock: the first one publishes it. */
+  EXTENSION_WRITE = 2,
   FIRST = 0,
+  NO_BYTES = 0,
   NO_EXCHANGES = 0,
   ONE_EXCHANGE = 1,
   /* Each refresh's access token, for comparing outcomes. */
@@ -86,13 +91,29 @@ const COOLDOWN_MS = 20_000,
   lostLease = refreshLayer(lockedBy(support.heldLock(false)))(fixtureTokens),
   /* What the store holds after Claude Code rotated it. */
   newerTokens = Option.some(support.tokens("rotated-access")),
+  /* An extension write that fails, as the lock holder writes its credential into the store. */
+  onFaultHolderWrites = (
+    rig: Effect.Success<typeof support.currentRig>,
+  ): Parameters<typeof faults.takeFaultyAnywhere>[typeof FIRST] =>
+    faults.failWrite(
+      EXTENSION_WRITE,
+      NO_BYTES,
+      Ref.set(rig.stored, holderTokens),
+    ),
   original = support.imported(support.account()),
   otherBusy = refreshLayer(lockedBy(support.busy))(fixtureTokens),
   otherCooling = lockedBy(
     support.cooldownUntil(support.BASE_TIME + COOLDOWN_MS),
   ),
   otherCoolingOld = refreshLayer(otherCooling)(fixtureTokens),
-  otherCoolingRotated = refreshLayer(otherCooling)(newerTokens)
+  otherCoolingRotated = refreshLayer(otherCooling)(newerTokens),
+  /* A real lock whose extension can't be written. */
+  realLockUnextended: Script["acquire"] = support.currentRig.pipe(
+    Effect.flatMap((rig) =>
+      faults.takeFaultyAnywhere(onFaultHolderWrites(rig)),
+    ),
+  ),
+  unwrittenExtension = refreshLayer(lockedBy(realLockUnextended))(fixtureTokens)
 
 test.layer(lostLease)("refresh after losing the lease", (it: Tests) => {
   it.effect(
@@ -112,6 +133,32 @@ test.layer(lostLease)("refresh after losing the lease", (it: Tests) => {
       }),
   )
 })
+
+test.layer(unwrittenExtension)(
+  "refresh after failing to extend the lease",
+  (it: Tests) => {
+    it.effect(
+      "waits for the lock holder's credential when the extension isn't written",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
+          yield* support.begin
+
+          const refreshed = yield* support.refresh(yield* original),
+            reported = yield* (yield* CapturedLogs).named(
+              "refresh_lease_unwritten",
+            )
+
+          expect(support.summary(refreshed).access).toStrictEqual(
+            Option.some("holder-access"),
+          )
+          // It must not spend a refresh token its lease doesn't cover.
+          expect(yield* exchangesSoFar).toHaveLength(NO_EXCHANGES)
+          expect(reported.map((record) => record.level)).toContain("Warn")
+        }),
+    )
+  },
+)
 
 test.layer(otherBusy)(
   "refresh while another process holds the lock",

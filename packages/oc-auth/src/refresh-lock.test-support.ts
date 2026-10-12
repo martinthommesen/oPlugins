@@ -279,6 +279,7 @@ export default Object.freeze({
     CapturedLogs.layer,
   ),
   leaseExpiry,
+  locks,
   prefix: PREFIX,
   requestTwice,
   sandbox,

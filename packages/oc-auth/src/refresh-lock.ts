@@ -14,6 +14,14 @@
  * serializes nothing, because refusing to refresh would be the worse failure.
  * Each such grant logs a `refresh_lock_degraded` warning, and the lock says
  * it is `degraded`.
+ *
+ * A lease counts only once it is written. When a ticket's lease can't be
+ * written, `refresh_lease_unwritten` is logged, and the lock acts as if the
+ * claim were lost rather than degrade: other processes may hold tickets in
+ * the same directory, and a claim they may never see would let two of them
+ * refresh at once. A failed first lease withdraws the ticket and reports the
+ * lock busy, a failed extension reports the lock lost, and a failed cooldown
+ * lease makes no cooldown claim, so release expires the lease as usual.
  */
 import {
   Clock,
@@ -45,6 +53,8 @@ type Claims = Effect.Success<ReturnType<typeof ticketFiles.scan>>
 /** Where and for whom one acquisition takes tickets. */
 interface Plan {
   readonly dir: string
+  /** The path-free name of the store in warnings. */
+  readonly lock: string
   readonly owner: string
   readonly prefix: string
   readonly source: string
@@ -110,6 +120,7 @@ const DEGRADED_LOCK = {
         Result.succeed({
           dir: plan.dir,
           file,
+          lock: plan.lock,
           owner: plan.owner,
           path: target,
           prefix: plan.prefix,
@@ -151,16 +162,16 @@ const DEGRADED_LOCK = {
     })
   }),
   /*
-   * The file name prefix of the tickets of `source`. A digest stands in for
-   * `source`, which can hold a path.
+   * The name of the store `source` keys, as its ticket file names and
+   * warnings carry it. A digest stands in for `source`, which can hold a path.
    */
-  lockPrefix = Effect.fn("RefreshLock.lockPrefix")(function* lockPrefix(
+  lockName = Effect.fn("RefreshLock.lockName")(function* lockName(
     source: string,
   ) {
     const crypto = yield* Crypto.Crypto,
       digest = yield* crypto.digest("SHA-256", encoder.encode(source))
 
-    return `oc-auth-refresh-${Hex.encode(digest).slice(START, PREFIX_HEX_LENGTH)}-`
+    return Hex.encode(digest).slice(START, PREFIX_HEX_LENGTH)
   }),
   /*
    * Take the ticket after the highest of the expired tickets and `floor`, or
@@ -200,8 +211,8 @@ const DEGRADED_LOCK = {
   ) {
     const crypto = yield* Crypto.Crypto,
       fs = yield* FileSystem.FileSystem,
-      owner = yield* crypto.randomUUIDv4,
-      prefix = yield* lockPrefix(source)
+      lock = yield* lockName(source),
+      owner = yield* crypto.randomUUIDv4
 
     /*
      * Owner-only, because in a shared lock directory any local user could
@@ -212,7 +223,10 @@ const DEGRADED_LOCK = {
       .makeDirectory(dir, { mode: PRIVATE_DIRECTORY, recursive: true })
       .pipe(Effect.ignore)
 
-    return yield* race({ dir, owner, prefix, source, ttlMs }, NO_TICKET)
+    return yield* race(
+      { dir, lock, owner, prefix: `oc-auth-refresh-${lock}-`, source, ttlMs },
+      NO_TICKET,
+    )
   }),
   /* Acquire the lock, releasing a held one when the scope closes. */
   takeLock = (

@@ -5,9 +5,15 @@ import type { Effect } from "effect"
 interface HeldLock {
   /** True when the lock serializes nothing because coordination is unavailable. */
   readonly degraded: boolean
-  /** Lease the lock for `ms` from now as a cooldown claim, which outlives `release`. */
+  /**
+   * Lease the lock for `ms` from now as a cooldown claim, which outlives
+   * `release`. A lease that can't be written makes no claim.
+   */
   readonly defer: (ms: number) => Effect.Effect<void>
-  /** Lease the lock for `ms` from now; false when it no longer belongs to this process. */
+  /**
+   * Lease the lock for `ms` from now; false when it no longer belongs to this
+   * process or the lease can't be written.
+   */
   readonly extend: (ms: number) => Effect.Effect<boolean>
   /** Close the ticket, ending its lease unless `defer` made it a cooldown claim. */
   readonly release: Effect.Effect<void>

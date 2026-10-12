@@ -1,8 +1,9 @@
-import { Clock, Effect, Exit, Option, Ref, Schema, Scope } from "effect"
+import { Clock, Effect, Exit, Option, Ref, Scope } from "effect"
 import type { FileSystem, Path } from "effect"
-import Environment from "./environment.ts"
+import type Environment from "./environment.ts"
 import LockAttempt from "./refresh-lock-attempt.ts"
 import type RefreshLockClaim from "./refresh-lock-claim.ts"
+import leases from "./refresh-lock-lease.ts"
 import pluginLog from "./plugin-log.ts"
 import ticketFiles from "./refresh-lock-ticket-files.ts"
 import tickets from "./refresh-lock-tickets.ts"
@@ -11,6 +12,8 @@ import tickets from "./refresh-lock-tickets.ts"
 interface Ticket {
   readonly dir: string
   readonly file: FileSystem.File
+  /** The path-free name of the store in warnings. */
+  readonly lock: string
   readonly owner: string
   readonly path: string
   readonly prefix: string
@@ -25,25 +28,8 @@ type Claims = readonly (typeof RefreshLockClaim.Type)[]
 
 type Requirements = Environment | FileSystem.FileSystem | Path.Path
 
-/*
- * Fixed payload width. A lease is rewritten in place, so a constant length
- * keeps a concurrent reader from observing a truncated or half-overwritten
- * claim and falling back to the mtime heuristic. JSON parsing ignores the pad.
- */
-const LEASE_BYTES = 256,
-  /** The lease a ticket carries, as JSON in this field order. */
-  LeaseRecord = Schema.fromJsonString(
-    Schema.Struct({
-      cooldown: Schema.Boolean,
-      expiresAt: Schema.Finite,
-      owner: Schema.String,
-      pid: Schema.Finite,
-    }),
-  ),
-  RELEASED = 0,
-  START = 0n,
-  /* This process's lease is still the one on disk and has not expired. */
-  checkLease = Effect.fn("RefreshLock.checkLease")(function* checkLease(
+/* This process's lease is still the one on disk and has not expired. */
+const checkLease = Effect.fn("RefreshLock.checkLease")(function* checkLease(
     held: Ticket,
   ) {
     const lease = yield* ticketFiles.readLease(held.path),
@@ -75,48 +61,6 @@ const LEASE_BYTES = 256,
       return yield* checkOrder(held)
     },
   ),
-  encoder = new TextEncoder(),
-  /* Rewrite the lease on `held` in place to end at `expiresAt`. */
-  inscribe = Effect.fn("RefreshLock.writeLease")(function* inscribe(
-    held: Ticket,
-    expiresAt: number,
-    cooldown: boolean,
-  ) {
-    const environment = yield* Environment,
-      // The fields are plain values, so encoding them cannot fail.
-      payload = yield* Schema.encodeEffect(LeaseRecord)({
-        cooldown,
-        expiresAt,
-        owner: held.owner,
-        pid: environment.process.pid,
-      }).pipe(Effect.orDie),
-      payloadBytes = encoder.encode(payload.padEnd(LEASE_BYTES, " "))
-
-    /*
-     * A failed write leaves the previous lease in force, and a scan reads a
-     * fresh ticket, which has no lease yet, by its mtime.
-     */
-    yield* held.file.seek(START, "start").pipe(
-      Effect.andThen(held.file.writeAll(payloadBytes)),
-      Effect.catchTag(
-        "PlatformError",
-        (failure: { readonly message: string }) =>
-          pluginLog.debug("refresh_lock_error", {
-            error: failure.message,
-            source: held.source,
-          }),
-      ),
-    )
-  }),
-  /* Lease `held` for `ms` from now. */
-  lease = (
-    held: Ticket,
-    ms: number,
-    cooldown: boolean,
-  ): Effect.Effect<void, never, Environment> =>
-    Clock.currentTimeMillis.pipe(
-      Effect.flatMap((now) => inscribe(held, now + ms, cooldown)),
-    ),
   /* Log that `held` no longer belongs to this process. */
   lost = (held: Ticket): Effect.Effect<void> =>
     pluginLog.debug("refresh_lock_lost", {
@@ -126,7 +70,8 @@ const LEASE_BYTES = 256,
   /*
    * Lease `held` for `ms` as a cooldown claim, if it is still ours. Reviving
    * a lease this process no longer holds would republish a claim a successor
-   * has moved past.
+   * has moved past. Only a written lease makes a cooldown claim: after a
+   * failed write, release expires the lease as usual.
    */
   postpone = Effect.fn("RefreshLock.defer")(function* postpone(
     held: Ticket,
@@ -139,11 +84,14 @@ const LEASE_BYTES = 256,
       return
     }
 
+    if (!(yield* leases.write(held, "cooldown", ms))) {
+      return
+    }
+
     yield* Ref.set(deferred, true)
-    yield* lease(held, ms, true)
     yield* pluginLog.debug("refresh_lock_deferred", { ms, source: held.source })
   }),
-  /* Lease `held` for `ms` from now, if it is still ours. */
+  /* Lease `held` for `ms` from now, if it is still ours and the lease is written. */
   prolong = Effect.fn("RefreshLock.extend")(function* prolong(
     held: Ticket,
     ms: number,
@@ -152,7 +100,9 @@ const LEASE_BYTES = 256,
       return yield* lost(held).pipe(Effect.as(false))
     }
 
-    yield* lease(held, ms, false)
+    if (!(yield* leases.write(held, "extension", ms))) {
+      return false
+    }
 
     // This process just wrote the lease, so only the order needs a new look.
     if (!(yield* checkOrder(held))) {
@@ -163,29 +113,11 @@ const LEASE_BYTES = 256,
 
     return true
   }),
-  /* Publish the first lease on `held`, then scan again; none when the scan fails. */
-  publish = Effect.fn("RefreshLock.publish")(function* publish(held: Ticket) {
-    yield* lease(held, held.ttlMs, false)
-
-    return yield* ticketFiles.scan(held.dir, held.prefix, held.ttlMs).pipe(
-      Effect.map((claims: Claims) => Option.some(claims)),
-      Effect.catchTag(
-        "PlatformError",
-        (failure: { readonly message: string }) =>
-          pluginLog
-            .debug("refresh_lock_error", {
-              error: failure.message,
-              source: held.source,
-            })
-            .pipe(Effect.as(Option.none())),
-      ),
-    )
-  }),
   /* Expire the lease on `held` and close its ticket. */
   quit = (held: Ticket): Effect.Effect<void, never, Environment> =>
-    inscribe(held, RELEASED, false).pipe(
-      Effect.andThen(Scope.close(held.scope, Exit.void)),
-    ),
+    leases
+      .expire(held)
+      .pipe(Effect.andThen(Scope.close(held.scope, Exit.void))),
   /* Close the ticket of `held` once, expiring its lease unless it was deferred. */
   release = Effect.fn("RefreshLock.release")(function* release(
     held: Ticket,
@@ -209,6 +141,11 @@ const LEASE_BYTES = 256,
 
     yield* quit(held)
   }),
+  /* Withdraw the claim on `held` and report the lock busy. */
+  stepAside = (
+    held: Ticket,
+  ): Effect.Effect<ReturnType<typeof LockAttempt.Busy>, never, Environment> =>
+    quit(held).pipe(Effect.as(LockAttempt.Busy())),
   /*
    * Remove the expired tombstones `settled` lists. The ticket `held` now keeps
    * the numbering monotonic, so no ticket number becomes reusable. Only the
@@ -245,38 +182,67 @@ const LEASE_BYTES = 256,
         ),
       },
     })
+  }),
+  /*
+   * Scan again now the first lease on `held` is published, and hand back the
+   * lock, or withdraw and report busy when another process committed
+   * meanwhile.
+   *
+   * A higher ticket proves another process committed after this caller's first
+   * scan; a live lower one means a delayed process recreated a ticket a sweep
+   * removed. Either makes this claim withdraw before the refresh goes on. A
+   * failed scan skips the sweep rather than sweep from the earlier scan.
+   */
+  win = Effect.fn("RefreshLock.win")(function* win(held: Ticket) {
+    const fresh = yield* ticketFiles
+        .scan(held.dir, held.prefix, held.ttlMs)
+        .pipe(
+          Effect.map((claims: Claims) => Option.some(claims)),
+          Effect.catchTag(
+            "PlatformError",
+            (failure: { readonly message: string }) =>
+              pluginLog
+                .debug("refresh_lock_error", {
+                  error: failure.message,
+                  source: held.source,
+                })
+                .pipe(Effect.as(Option.none())),
+          ),
+        ),
+      now = yield* Clock.currentTimeMillis
+
+    if (
+      Option.exists(fresh, (claims: Claims) =>
+        tickets.superseded(claims, held.ticket, now),
+      )
+    ) {
+      return yield* stepAside(held)
+    }
+
+    yield* sweep(
+      held,
+      Option.getOrElse(fresh, () => []),
+      now,
+    )
+    yield* pluginLog.debug("refresh_lock_acquired", {
+      source: held.source,
+      ticket: held.ticket.toString(),
+    })
+
+    return yield* toLock(held)
   })
 
 /*
- * Publish the lease on a freshly created ticket and hand back the lock, or
- * withdraw and report busy when another process committed meanwhile.
- *
- * A higher ticket proves another process committed after this caller's first
- * scan; a live lower one means a delayed process recreated a ticket a sweep
- * removed. Either makes this claim withdraw before the refresh goes on. A
- * failed scan skips the sweep rather than sweep from the earlier scan.
+ * Publish the first lease on a freshly created ticket and hand back the lock.
+ * A ticket whose first lease could not be written is no claim other processes
+ * can rely on, so it is withdrawn and the lock reported busy: the caller waits
+ * for another process's result, as when the lock is lost, rather than refresh
+ * under a claim nobody may see.
  */
 export default Effect.fn("RefreshLock.commit")(function* commit(held: Ticket) {
-  const fresh = yield* publish(held),
-    now = yield* Clock.currentTimeMillis
-
-  if (
-    Option.exists(fresh, (claims: Claims) =>
-      tickets.superseded(claims, held.ticket, now),
-    )
-  ) {
-    return yield* quit(held).pipe(Effect.as(LockAttempt.Busy()))
+  if (!(yield* leases.write(held, "initial", held.ttlMs))) {
+    return yield* stepAside(held)
   }
 
-  yield* sweep(
-    held,
-    Option.getOrElse(fresh, () => []),
-    now,
-  )
-  yield* pluginLog.debug("refresh_lock_acquired", {
-    source: held.source,
-    ticket: held.ticket.toString(),
-  })
-
-  return yield* toLock(held)
+  return yield* win(held)
 })

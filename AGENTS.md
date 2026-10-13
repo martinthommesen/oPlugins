@@ -6,6 +6,23 @@ library under `libs/`, and `tools/` holds the repository's own checks. Each
 package's `AGENTS.md` and `README.md` describe what it does. `docs/adr/` records
 the decisions behind this layout.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in local Markdown under `.scratch/`. Before reading or writing
+tickets, read `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage roles as local status values. Before triaging, read
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses multi-context domain docs. Before exploring the codebase, read
+`docs/agents/domain.md`.
+
 # Learning more about Effect
 
 This repository uses the Effect TypeScript library.

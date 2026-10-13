@@ -24,6 +24,7 @@ sherif, and the layout check. `pnpm run secrets` scans for secrets with gitleaks
 | oc-auth    | `@martinthommesen/oc-auth`    | Not yet   |
 | oc-auto    | `@martinthommesen/oc-auto`    | Not yet   |
 | oc-browser | `@martinthommesen/oc-browser` | Not yet   |
+| oc-usage   | `@martinthommesen/oc-usage`   | Not yet   |
 
 Each plugin lives in `packages/<plugin name>`.
 

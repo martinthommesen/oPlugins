@@ -157,3 +157,33 @@ jobs:
         env:
           OC_BROWSER_HEADLESS_HOST_VERSION: ${{ matrix.host }}
       - run: pnpm pack --dry-run
+
+  oc-usage:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        host: ["oldest", "target"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/oc-usage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm test
+        # The tests import src, not dist, which is what consumers get. Check
+        # that dist loads on this OS before the host test installs it.
+      - run: pnpm run verify:dist
+      - run: pnpm run test:host
+        env:
+          OC_USAGE_HEADLESS_HOST_VERSION: ${{ matrix.host }}
+      - run: pnpm pack --dry-run

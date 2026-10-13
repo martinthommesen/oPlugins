@@ -1,0 +1,6 @@
+# The libraries bundled into oc-usage, each with a SHA-256 digest of
+# its source and build inputs. A change to this file is a change to
+# oc-usage, so release-please releases it for a fix or feat commit.
+# `pnpm run fingerprints` writes it; don't edit it by hand.
+host-failure 520a9190841529fedfd4439147abc9eeb91350760cfe5f8b0ef2a120cc98f39b
+plugin-options 3fbf1629118177897c41e2cbe65c3aa19ec4ab1729e39179c2001b8b75ed2656

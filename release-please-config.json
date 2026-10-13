@@ -20,6 +20,10 @@
     "packages/oc-browser": {
       "component": "oc-browser",
       "package-name": "@martinthommesen/oc-browser"
+    },
+    "packages/oc-usage": {
+      "component": "oc-usage",
+      "package-name": "@martinthommesen/oc-usage"
     }
   }
 }

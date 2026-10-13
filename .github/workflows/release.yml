@@ -25,7 +25,7 @@ permissions:
 # token. It can only be configured once a package exists on npm, so each
 # package's publish step stays off until its repository variable
 # (OC_ADVISOR_NPM_PUBLISH, OC_AUTH_NPM_PUBLISH, OC_AUTO_NPM_PUBLISH,
-# OC_BROWSER_NPM_PUBLISH) is set to `true`.
+# OC_BROWSER_NPM_PUBLISH, OC_USAGE_NPM_PUBLISH) is set to `true`.
 jobs:
   # The layout check fails when a plugin's fingerprint is stale, which keeps
   # release-please from missing a plugin a library change is bundled into.
@@ -64,6 +64,7 @@ jobs:
       oc_auth_release_created: ${{ steps.release-please.outputs.oc_auth_release_created }}
       oc_auto_release_created: ${{ steps.release-please.outputs.oc_auto_release_created }}
       oc_browser_release_created: ${{ steps.release-please.outputs.oc_browser_release_created }}
+      oc_usage_release_created: ${{ steps.release-please.outputs.oc_usage_release_created }}
     steps:
       # release-please reads the head of main, not the commit the fingerprints
       # job checked. Before each attempt, this job checks that main still
@@ -151,22 +152,26 @@ jobs:
           oc_auth="${{ steps.release-please-1.outputs['packages/oc-auth--release_created'] }}"
           oc_auto="${{ steps.release-please-1.outputs['packages/oc-auto--release_created'] }}"
           oc_browser="${{ steps.release-please-1.outputs['packages/oc-browser--release_created'] }}"
+          oc_usage="${{ steps.release-please-1.outputs['packages/oc-usage--release_created'] }}"
           if [[ "${{ steps.release-please-2.outcome }}" == "success" ]]; then
             oc_advisor="${{ steps.release-please-2.outputs['packages/oc-advisor--release_created'] }}"
             oc_auth="${{ steps.release-please-2.outputs['packages/oc-auth--release_created'] }}"
             oc_auto="${{ steps.release-please-2.outputs['packages/oc-auto--release_created'] }}"
             oc_browser="${{ steps.release-please-2.outputs['packages/oc-browser--release_created'] }}"
+            oc_usage="${{ steps.release-please-2.outputs['packages/oc-usage--release_created'] }}"
           fi
           if [[ "${{ steps.release-please-3.outcome }}" == "success" ]]; then
             oc_advisor="${{ steps.release-please-3.outputs['packages/oc-advisor--release_created'] }}"
             oc_auth="${{ steps.release-please-3.outputs['packages/oc-auth--release_created'] }}"
             oc_auto="${{ steps.release-please-3.outputs['packages/oc-auto--release_created'] }}"
             oc_browser="${{ steps.release-please-3.outputs['packages/oc-browser--release_created'] }}"
+            oc_usage="${{ steps.release-please-3.outputs['packages/oc-usage--release_created'] }}"
           fi
           echo "oc_advisor_release_created=$oc_advisor" >> "$GITHUB_OUTPUT"
           echo "oc_auth_release_created=$oc_auth" >> "$GITHUB_OUTPUT"
           echo "oc_auto_release_created=$oc_auto" >> "$GITHUB_OUTPUT"
           echo "oc_browser_release_created=$oc_browser" >> "$GITHUB_OUTPUT"
+          echo "oc_usage_release_created=$oc_usage" >> "$GITHUB_OUTPUT"
 
   oc-advisor:
     needs: release-please
@@ -243,3 +248,22 @@ jobs:
       - run: pnpm run check
       - run: pnpm --filter @martinthommesen/oc-browser publish --access public --provenance --no-git-checks --ignore-scripts
         if: vars.OC_BROWSER_NPM_PUBLISH == 'true'
+
+  oc-usage:
+    needs: release-please
+    if: needs.release-please.outputs.oc_usage_release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm --filter @martinthommesen/oc-usage publish --access public --provenance --no-git-checks --ignore-scripts
+        if: vars.OC_USAGE_NPM_PUBLISH == 'true'

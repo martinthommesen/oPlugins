@@ -1,0 +1,69 @@
+{
+  "name": "@martinthommesen/oc-usage",
+  "version": "0.1.0",
+  "description": "oc-usage: an OpenCode v2 plugin that shows Claude and ChatGPT subscription usage limits.",
+  "keywords": [
+    "chatgpt",
+    "claude",
+    "codex",
+    "opencode",
+    "plugin",
+    "usage"
+  ],
+  "license": "MIT",
+  "author": "Martin Lammetun Thommesen <267603464+martinthommesen@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martinthommesen/oc-plugins.git",
+    "directory": "packages/oc-usage"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:host": "pnpm run build && node --experimental-strip-types scripts/test-host.ts",
+    "verify:dist": "node -e \"import('./dist/index.js').then(m => { if (!m.default?.id) { throw new Error('dist/index.js does not export a plugin') } }); if (!require('node:fs').existsSync('./dist/tui.js')) { throw new Error('dist/tui.js is missing') }\"",
+    "prepublishOnly": "pnpm run --workspace-root lint && pnpm run typecheck && pnpm run lint:effect && pnpm run build && pnpm test && pnpm run verify:dist && pnpm pack --dry-run",
+    "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@oc-lib/captured-logs": "workspace:*",
+    "@oc-lib/host-failure": "workspace:*",
+    "@oc-lib/host-test": "workspace:*",
+    "@oc-lib/plugin-options": "workspace:*",
+    "@opencode/plugin": "catalog:",
+    "@opencode/theme": "catalog:",
+    "@opentui/solid": "catalog:",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "solid-js": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@opentui/solid": ">=0.5.17",
+    "effect": "^4.0.1",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "opencode": ">=2.0.27"
+  }
+}

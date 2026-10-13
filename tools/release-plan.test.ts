@@ -76,6 +76,7 @@ describe("release-please's plan for a library fix", () => {
           "oc-auth 0.2.0",
           "oc-auto 0.2.0",
           "oc-browser 0.2.0",
+          "oc-usage 0.2.0",
         ])
       }),
     )
@@ -183,14 +184,17 @@ describe("release-please's version bump for a library change", () => {
         expect(yield* releasePlan.plan(base, [fix])).toStrictEqual([
           "oc-advisor 1.2.4",
           "oc-auto 1.2.4",
+          "oc-usage 1.2.4",
         ])
         expect(yield* releasePlan.plan(base, [feature, fix])).toStrictEqual([
           "oc-advisor 1.3.0",
           "oc-auto 1.3.0",
+          "oc-usage 1.3.0",
         ])
         expect(yield* releasePlan.plan(base, [breaking])).toStrictEqual([
           "oc-advisor 2.0.0, breaking",
           "oc-auto 2.0.0, breaking",
+          "oc-usage 2.0.0, breaking",
         ])
       }),
     )

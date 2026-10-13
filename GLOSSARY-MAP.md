@@ -11,6 +11,8 @@
   permission prompts before they reach the user
 - [oc-browser](./packages/oc-browser/GLOSSARY.md): letting an OpenCode agent
   work in the user's own Chrome profile
+- [oc-usage](./packages/oc-usage/GLOSSARY.md): showing how much of the user's
+  Claude and ChatGPT subscription usage limits is used
 
 ## Relationships
 
@@ -24,3 +26,6 @@
   own, never the shared **host**, so oc-browser always names it in full. In
   oc-browser, "extension" means its Chrome extension, one part of the plugin,
   never the plugin itself.
+- **oc-auth → oc-usage**: oc-usage measures the **Claude Code account** that
+  oc-auth imports as the **Anthropic connection**, and reads it through the
+  host, never from Claude Code's credential stores.

@@ -1,6 +1,6 @@
 {
   "name": "@martinthommesen/oc-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "oc-browser: an OpenCode v2 plugin and Chrome extension that let OpenCode drive the browser.",
   "keywords": [
     "browser",

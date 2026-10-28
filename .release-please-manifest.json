@@ -1,7 +1,7 @@
 {
   "packages/oc-advisor": "0.1.0",
   "packages/oc-auth": "0.1.0",
-  "packages/oc-auto": "0.1.0",
+  "packages/oc-auto": "0.2.0",
   "packages/oc-browser": "0.1.0",
   "packages/oc-usage": "0.1.0"
 }

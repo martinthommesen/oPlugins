@@ -1,6 +1,6 @@
 {
   "name": "@martinthommesen/oc-auto",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCode v2 plugin that routes permission prompts through a reviewer model before asking the user.",
   "keywords": [
     "auto-review",

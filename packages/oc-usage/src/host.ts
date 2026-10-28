@@ -36,7 +36,7 @@ interface SignIn {
    * another credential that isn't an OAuth sign-in.
    */
   readonly access: Effect.Effect<Option.Option<Access>, HostError>
-  /** Tells the connection's account apart from every other's. */
+  /** The unambiguous stored connection key, not an account or credential generation. */
   readonly identity: string
 }
 
@@ -51,7 +51,6 @@ interface Interface {
 const ConnectionKey = Schema.Union([
     Schema.Struct({
       id: Schema.String,
-      label: Schema.String,
       type: Schema.Literal("credential"),
     }),
     Schema.Struct({ name: Schema.String, type: Schema.Literal("env") }),
@@ -87,15 +86,15 @@ const ConnectionKey = Schema.Union([
     token: Redacted.make(oauth.access),
   }),
   /*
-   * A connection's identity: a stored credential's ID and label, which
-   * changes with the account, or an environment variable's name.
+   * Labels are mutable display text. Only the stored ID or environment
+   * variable identifies this connection; resolved access identifies its generation.
    */
   identityOf = (key: typeof ConnectionKey.Type): string =>
     Match.value(key).pipe(
       Match.discriminators("type")({
         credential: (credential) =>
-          `credential:${credential.id}:${credential.label}`,
-        env: (variable) => `env:${variable.name}`,
+          JSON.stringify(["credential", credential.id]),
+        env: (variable) => JSON.stringify(["env", variable.name]),
       }),
       Match.exhaustive,
     )
@@ -116,17 +115,15 @@ class Host extends Context.Service<Host, Interface>()(
         ) {
           const { connection } = context.integration,
             // The host reports a problem with the active connection as a defect.
-            active = yield* connection
-              .active(integrationId)
-              .pipe(
-                Effect.catchDefect(
-                  HostError.failing("integration.connection.active"),
-                ),
-              )
+            active = yield* Effect.suspend(() =>
+              connection.active(integrationId),
+            ).pipe(HostError.during("integration.connection.active"))
 
           if (Predicate.isNotUndefined(active)) {
             // The host's call fails with `unknown`, mapped to a `HostError` naming the call.
-            const access: SignIn["access"] = connection.resolve(active).pipe(
+            const access: SignIn["access"] = Effect.suspend(() =>
+              connection.resolve(active),
+            ).pipe(
               HostError.during("integration.connection.resolve"),
               Effect.flatMap(decodeOAuth),
               Effect.map((credential) =>

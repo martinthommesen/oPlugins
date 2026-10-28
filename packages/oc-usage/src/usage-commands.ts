@@ -1,6 +1,6 @@
 import { Boolean as Bool, Clock, Effect } from "effect"
-import type { Accessor } from "solid-js"
 import type { Plugin } from "@opencode/plugin/tui"
+import type UsageUnavailable from "./usage-unavailable-error.ts"
 import sidebarCommand from "./sidebar-command.ts"
 import usageClient from "./usage-client.ts"
 import usageText from "./usage-text.ts"
@@ -8,8 +8,6 @@ import usageText from "./usage-text.ts"
 type Context = Plugin.Context
 
 type Connection = Parameters<typeof usageClient.report>[typeof FIRST]
-
-type Report = Effect.Success<ReturnType<typeof usageClient.report>>
 
 type HostKeymapLayer = Context["keymap"]["layer"] extends (
   factory: () => infer Layer,
@@ -25,7 +23,6 @@ type AlertOptions = Parameters<Context["ui"]["dialog"]["alert"]>[typeof FIRST]
 
 type Toast = Parameters<Context["ui"]["toast"]["show"]>[typeof FIRST]
 
-/** A command this plugin adds, as it declares it. */
 interface Command {
   readonly group: string
   readonly id: string
@@ -35,13 +32,11 @@ interface Command {
   readonly title: string
 }
 
-/** What the commands act on. */
 interface Controls {
   readonly connection: Connection
-  /** Shows or hides the usage section in this CLI's sidebar. */
-  readonly show: (shown: boolean) => void | Effect.Effect<void>
-  /** Whether this CLI's sidebar shows the usage section. */
-  readonly shown: Accessor<boolean>
+  readonly reconcile: Effect.Effect<void, UsageUnavailable>
+  readonly run: (program: Effect.Effect<unknown>) => RunResult
+  readonly shown: () => boolean
   readonly ui: {
     readonly dialog: {
       readonly alert: (options: AlertOptions) => PromiseLike<void>
@@ -50,72 +45,133 @@ interface Controls {
   }
 }
 
+interface Invocation {
+  readonly controls: Controls
+  readonly stamp: string
+}
+
 const FIRST = 0,
   GROUP = "Usage",
-  /* Shows a toast. */
-  notify = (ui: Controls["ui"], toast: Toast): Effect.Effect<void> =>
+  current = (call: Invocation): boolean =>
+    usageClient.stamp(call.controls.connection) === call.stamp,
+  invocationOf = (controls: Controls): Invocation => ({
+    controls,
+    stamp: usageClient.stamp(controls.connection),
+  }),
+  notify = (call: Invocation, toast: Toast): Effect.Effect<void> =>
     Effect.sync(() => {
-      ui.toast.show(toast)
+      if (current(call)) {
+        call.controls.ui.toast.show(toast)
+      }
     }),
-  /* Shows every subscription's usage in a dialog, or why it can't. */
+  reconciledToast = (call: Invocation, saved: boolean): Effect.Effect<void> =>
+    Effect.sync(() => {
+      if (!current(call)) {
+        return
+      }
+
+      const shown = call.controls.shown()
+
+      if (shown !== saved) {
+        call.controls.ui.toast.show({
+          message: Bool.match(shown, {
+            onFalse: () =>
+              "Usage visibility changed while confirming the save. This window is currently hiding usage.",
+            onTrue: () =>
+              "Usage visibility changed while confirming the save. This window is currently showing usage.",
+          }),
+          variant: "warning",
+        })
+
+        return
+      }
+
+      call.controls.ui.toast.show({
+        message: Bool.match(shown, {
+          onFalse: () => "Usage is no longer in the sidebar.",
+          onTrue: () => "Usage is in the sidebar until /show-usage off.",
+        }),
+        variant: "success",
+      })
+    }),
   reportDialog = (controls: Controls): Effect.Effect<void> =>
-    Effect.all([
-      usageClient.report(controls.connection),
-      Clock.currentTimeMillis,
-    ]).pipe(
-      Effect.flatMap(([report, now]: readonly [Report, number]) =>
-        Effect.promise((): PromiseLike<void> =>
-          controls.ui.dialog.alert({
-            message: usageText.usageDialog(report, now),
-            title: "Subscription usage",
+    Effect.suspend(() => {
+      const call = invocationOf(controls)
+
+      return usageClient.report(controls.connection).pipe(
+        Effect.flatMap((report) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              Effect.suspend(() => {
+                if (!current(call)) {
+                  return Effect.void
+                }
+
+                return Effect.promise((): PromiseLike<void> =>
+                  controls.ui.dialog.alert({
+                    message: usageText.usageDialog(report, now),
+                    title: "Subscription usage",
+                  }),
+                )
+              }),
+            ),
+          ),
+        ),
+        Effect.catchTag(
+          "UsageUnavailable",
+          (failure: { readonly message: string }) =>
+            notify(call, { message: failure.message, variant: "error" }),
+        ),
+      )
+    }),
+  saveSidebar = (call: Invocation, shown: boolean): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      if (!current(call)) {
+        return Effect.void
+      }
+
+      return usageClient.setSidebar(call.controls.connection, shown).pipe(
+        Effect.tap(() =>
+          Effect.suspend(() => {
+            if (!current(call)) {
+              return Effect.void
+            }
+
+            return call.controls.reconcile
           }),
         ),
-      ),
-      Effect.catchTag(
-        "UsageUnavailable",
-        (failure: { readonly message: string }) =>
-          notify(controls.ui, { message: failure.message, variant: "error" }),
-      ),
-    ),
-  /* Saves whether the sidebar shows the usage section, and shows what was saved. */
-  saveSidebar = (controls: Controls, shown: boolean): Effect.Effect<void> =>
-    usageClient.setSidebar(controls.connection, shown).pipe(
-      Effect.tap((saved) =>
-        Effect.suspend(() => controls.show(saved) ?? Effect.void),
-      ),
-      Effect.flatMap((saved) =>
-        notify(controls.ui, {
-          message: Bool.match(saved, {
-            onFalse: () => "Usage is no longer in the sidebar.",
-            onTrue: () => "Usage is in the sidebar until /show-usage off.",
-          }),
-          variant: "success",
-        }),
-      ),
-      Effect.catchTag(
-        "UsageUnavailable",
-        (failure: { readonly message: string }) =>
-          notify(controls.ui, { message: failure.message, variant: "error" }),
-      ),
-    ),
-  /* Carries out `/show-usage` with the text after it. */
-  showUsage = (controls: Controls, input: string): Effect.Effect<void> =>
+        Effect.flatMap((saved) => reconciledToast(call, saved)),
+        Effect.catchTag(
+          "UsageUnavailable",
+          (failure: { readonly message: string }) =>
+            notify(call, { message: failure.message, variant: "error" }),
+        ),
+      )
+    }),
+  showUsage = (call: Invocation, input: string): Effect.Effect<void> =>
     sidebarCommand.SidebarRequest.$match(sidebarCommand.parse(input), {
       Invalid: (request) =>
-        notify(controls.ui, {
+        notify(call, {
           message: `/show-usage takes on or off, not "${request.input}".`,
           variant: "warning",
         }),
-      Set: ({ shown }) => saveSidebar(controls, shown),
-      Toggle: () => saveSidebar(controls, !controls.shown()),
+      Set: ({ shown }) => saveSidebar(call, shown),
+      Toggle: () =>
+        usageClient.sidebar(call.controls.connection).pipe(
+          Effect.flatMap((shown) => saveSidebar(call, !shown)),
+          Effect.catchTag(
+            "UsageUnavailable",
+            (failure: { readonly message: string }) =>
+              notify(call, { message: failure.message, variant: "error" }),
+          ),
+        ),
     }),
-  /* `/usage` and `/show-usage`, which the command palette offers too. */
   usageCommands = (controls: Controls): readonly Command[] => [
     {
       group: GROUP,
       id: "oc-usage.report",
       palette: true,
-      run: (): RunResult => Effect.runPromise(reportDialog(controls)),
+      run: (): RunResult => controls.run(reportDialog(controls)),
       slash: { name: "usage" },
       title: "Show subscription usage",
     },
@@ -124,11 +180,12 @@ const FIRST = 0,
       id: "oc-usage.sidebar",
       palette: true,
       run: (input?: string): RunResult =>
-        Effect.runPromise(showUsage(controls, input ?? "")),
+        controls.run(
+          Effect.suspend(() => showUsage(invocationOf(controls), input ?? "")),
+        ),
       slash: { arguments: true, name: "show-usage" },
       title: "Show or hide usage in the sidebar",
     },
   ]
 
-/** The CLI plugin's commands. */
 export default Object.freeze({ usageCommands })

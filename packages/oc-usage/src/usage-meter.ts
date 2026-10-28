@@ -7,10 +7,13 @@ import {
   Match,
   Option,
   Schema,
+  Tracer,
 } from "effect"
 import { FetchHttpClient, Headers, HttpClient } from "effect/http"
 import type { HttpClientError, HttpClientResponse } from "effect/http"
+import usageFetchScope from "./usage-fetch-scope.ts"
 import type usageReport from "./usage-report.ts"
+import usageTimeouts from "./usage-timeouts.ts"
 
 /** The usage a service reported. */
 interface Reading {
@@ -56,20 +59,28 @@ const DEFAULT_RATE_LIMIT_MINUTES = 10,
   HTTP_SUCCESS_START = 200,
   HTTP_TOO_MANY_REQUESTS = 429,
   HTTP_UNAUTHORIZED = 401,
+  JsonMediaType = Schema.String.check(
+    Schema.isPattern(
+      /^\s*(?:application\/json|[^/;\s]+\/[^;\s]+\+json)\s*(?:;.*)?$/iu,
+    ),
+  ),
   MAX_MILLIS_DIVISOR = 1000,
   MAX_RETRY_SECONDS = Number.MAX_SAFE_INTEGER / MAX_MILLIS_DIVISOR,
   NO_SECONDS = 0,
   REQUEST_TIMEOUT_SECONDS = 15,
   /** A `retry-after` header in seconds; its date form falls back to the default wait. */
-  RetryAfter = Schema.FiniteFromString.check(
+  RetryBounds = Schema.FiniteFromString.check(
     Schema.isGreaterThanOrEqualTo(NO_SECONDS),
     Schema.isLessThanOrEqualTo(MAX_RETRY_SECONDS),
+  ),
+  RetryHeader = Schema.String.check(Schema.isPattern(/^[0-9]+$/u)).pipe(
+    Schema.decodeTo(RetryBounds),
   ),
   UsageOutcome = Data.taggedEnum<Outcome>(),
   /* Whether the response's body is JSON, as the services' own errors are. */
   answersJson = (response: HttpClientResponse.HttpClientResponse): boolean =>
     Headers.get(response.headers, "content-type").pipe(
-      Option.exists((type) => type.includes("json")),
+      Option.exists((type) => Schema.is(JsonMediaType)(type)),
     ),
   /* The outcome of a successful response: its reading, or a problem when it can't be read. */
   bodyOutcome = (
@@ -81,13 +92,13 @@ const DEFAULT_RATE_LIMIT_MINUTES = 10,
         Option.match(request.read(body), {
           onNone: () =>
             UsageOutcome.Unreachable({
-              problem: `${request.service} answered with usage that oc-usage can't read.`,
+              problem: `${request.service} answered with usage that oc-usage can't read. Update oc-usage; if it persists, report the service name and plugin version.`,
             }),
           onSome: (reading) => UsageOutcome.Read({ reading }),
         }),
       ),
     ),
-  decodeRetryAfter = Schema.decodeUnknownOption(RetryAfter),
+  decodeRetryAfter = Schema.decodeUnknownOption(RetryHeader),
   logHttpFailure = (
     failure: { readonly reason: { readonly _tag: string } },
     service: string,
@@ -101,6 +112,23 @@ const DEFAULT_RATE_LIMIT_MINUTES = 10,
       Effect.annotateLogs({ category, service }),
     )
   },
+  observe = (service: string, outcome: Outcome): Effect.Effect<void> =>
+    UsageOutcome.$match(outcome, {
+      Ineligible: () => Effect.void,
+      Limited: ({ wait }) =>
+        Effect.logWarning("usage_request_limited").pipe(
+          Effect.annotateLogs({ service, waitMillis: Duration.toMillis(wait) }),
+        ),
+      Read: () => Effect.void,
+      Rejected: ({ problem }) =>
+        Effect.logWarning("usage_request_failed").pipe(
+          Effect.annotateLogs({ problem }),
+        ),
+      Unreachable: ({ problem }) =>
+        Effect.logWarning("usage_request_failed").pipe(
+          Effect.annotateLogs({ problem }),
+        ),
+    }),
   /* How long a rate-limited response asks oc-usage to wait. */
   retryWait = (
     response: HttpClientResponse.HttpClientResponse,
@@ -143,7 +171,7 @@ const DEFAULT_RATE_LIMIT_MINUTES = 10,
       Match.orElse((status) =>
         Effect.succeed(
           UsageOutcome.Unreachable({
-            problem: `${request.service} answered with HTTP ${status}.`,
+            problem: `${request.service} answered with HTTP ${status}. Retry /usage later; if it persists, check usage_request_failed in OpenCode's server log.`,
           }),
         ),
       ),
@@ -163,7 +191,8 @@ class UsageMeter extends Context.Service<UsageMeter, Interface>()(
   public static readonly layer = Layer.effect(
     UsageMeter,
     Effect.gen(function* makeUsageMeter() {
-      const client = yield* HttpClient.HttpClient
+      const client = yield* HttpClient.HttpClient,
+        transport = yield* FetchHttpClient.Fetch
 
       return UsageMeter.of({
         measure: (request) =>
@@ -172,12 +201,14 @@ class UsageMeter extends Context.Service<UsageMeter, Interface>()(
               redirect: "error",
             }),
             Effect.flatMap((response) => statusOutcome(request, response)),
+            (response) => usageFetchScope.wrap(response, transport),
+            Effect.provideService(Tracer.DisablePropagation, true),
             Effect.timeoutOrElse({
-              duration: Duration.seconds(REQUEST_TIMEOUT_SECONDS),
+              duration: usageTimeouts.http,
               orElse: () =>
                 Effect.succeed(
                   UsageOutcome.Unreachable({
-                    problem: `${request.service} didn't answer within ${REQUEST_TIMEOUT_SECONDS} seconds.`,
+                    problem: `${request.service} didn't answer within ${REQUEST_TIMEOUT_SECONDS} seconds. Retry /usage later; if it persists, check the service and OpenCode's server log.`,
                   }),
                 ),
             }),
@@ -187,24 +218,10 @@ class UsageMeter extends Context.Service<UsageMeter, Interface>()(
             ),
             Effect.orElseSucceed(() =>
               UsageOutcome.Unreachable({
-                problem: `oc-usage couldn't reach ${request.service}.`,
+                problem: `oc-usage couldn't reach ${request.service}. Retry /usage later; if it persists, check your network and OpenCode's server log.`,
               }),
             ),
-            Effect.tap((outcome) =>
-              UsageOutcome.$match(outcome, {
-                Ineligible: () => Effect.void,
-                Limited: () => Effect.void,
-                Read: () => Effect.void,
-                Rejected: ({ problem }) =>
-                  Effect.logWarning("usage_request_failed").pipe(
-                    Effect.annotateLogs({ problem }),
-                  ),
-                Unreachable: ({ problem }) =>
-                  Effect.logWarning("usage_request_failed").pipe(
-                    Effect.annotateLogs({ problem }),
-                  ),
-              }),
-            ),
+            Effect.tap((outcome) => observe(request.service, outcome)),
             Effect.withSpan("UsageMeter.measure"),
           ),
       })

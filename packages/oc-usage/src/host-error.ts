@@ -26,34 +26,15 @@ class HostError extends Schema.TaggedError<HostError>()("HostError", {
           operation,
         }),
       ).pipe(
-        Effect.tapError(
-          (failure: {
-            readonly category: string
-            readonly operation: string
-          }) =>
-            Effect.logWarning("usage_host_failed").pipe(
-              Effect.annotateLogs({
-                category: failure.category,
-                operation: failure.operation,
-              }),
-            ),
+        Effect.catchDefect((cause) =>
+          Effect.fail(
+            HostError.make({
+              category: hostFailure.categorize(cause),
+              cause,
+              operation,
+            }),
+          ),
         ),
-      )
-
-  /*
-   * Fails with a `HostError` that names the operation and the category of
-   * `cause`, a problem the host reported as a defect.
-   */
-  public static readonly failing =
-    (operation: string) =>
-    (cause: unknown): Effect.Effect<never, HostError> =>
-      Effect.fail(
-        HostError.make({
-          category: hostFailure.categorize(cause),
-          cause,
-          operation,
-        }),
-      ).pipe(
         Effect.tapError(
           (failure: {
             readonly category: string

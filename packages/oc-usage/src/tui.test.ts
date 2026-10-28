@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect"
 import { describe, expect, it } from "@effect/vitest"
+import type { Scope } from "effect"
 import cliHost from "./cli-host.test-support.ts"
 import tuiPlugin from "./tui.ts"
 import usageReport from "./usage-report.ts"
@@ -48,39 +49,36 @@ const FIRST = 0,
   /** The sidebar section for `UNCONNECTED`. */
   UNCONNECTED_LINES = ["Usage", "Connect Claude or ChatGPT with /connect."],
   /* A fake CLI host over `server`, with the CLI plugin set up on it. */
-  setUp = (server: Server): ReturnType<typeof cliHost.make> =>
-    cliHost.make(server, (host) => tuiPlugin.setup(host)),
+  setUp = (
+    server: Server,
+  ): Effect.Effect<ReturnType<typeof cliHost.make>, never, Scope.Scope> =>
+    cliHost.scoped(server, (host) => tuiPlugin.setup(host)),
   settle = Effect.sleep(SETTLE)
 
 describe("the CLI plugin's commands", () => {
-  it(
-    "adds /usage and /show-usage to the palette and the prompt",
-    {
-      timeout: 5000,
-    },
-    () => {
+  it.live("adds /usage and /show-usage to the palette and the prompt", () =>
+    Effect.gen(function* run() {
       expect.hasAssertions()
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false))
       expect(tuiPlugin.id).toBe("martinthommesen.oc-usage.cli")
-      expect(setUp(cliHost.answering(UNCONNECTED, false)).layers).toMatchObject(
-        [
-          {
-            commands: [
-              {
-                id: "oc-usage.report",
-                palette: true,
-                slash: { name: "usage" },
-              },
-              {
-                id: "oc-usage.sidebar",
-                palette: true,
-                slash: { arguments: true, name: "show-usage" },
-              },
-            ],
-            mode: "global",
-          },
-        ],
-      )
-    },
+      expect(fake.layers).toMatchObject([
+        {
+          commands: [
+            {
+              id: "oc-usage.report",
+              palette: true,
+              slash: { name: "usage" },
+            },
+            {
+              id: "oc-usage.sidebar",
+              palette: true,
+              slash: { arguments: true, name: "show-usage" },
+            },
+          ],
+          mode: "global",
+        },
+      ])
+    }).pipe(Effect.scoped),
   )
 })
 
@@ -89,10 +87,9 @@ describe("/usage", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false))
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false))
 
       yield* fake.run("oc-usage.report")
-
       expect(fake.alerts).toStrictEqual([
         {
           message: [
@@ -106,14 +103,17 @@ describe("/usage", () => {
         },
       ])
       expect(fake.toasts).toStrictEqual([])
-    }),
+    }).pipe(Effect.scoped),
   )
 
   it.live("says why when the server plugin doesn't answer", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp({ report: Effect.fail("unanswered"), shown: false })
+      const fake = yield* setUp({
+        report: Effect.fail("unanswered"),
+        shown: false,
+      })
 
       yield* fake.run("oc-usage.report")
 
@@ -125,7 +125,7 @@ describe("/usage", () => {
         },
       ])
       expect(fake.alerts).toStrictEqual([])
-    }),
+    }).pipe(Effect.scoped),
   )
 })
 
@@ -134,7 +134,7 @@ describe("/show-usage on and off", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false)),
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false)),
         frame = yield* fake.mount
 
       yield* settle
@@ -157,7 +157,7 @@ describe("/show-usage on and off", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false))
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false))
 
       yield* fake.run("oc-usage.sidebar", "ON")
       yield* fake.run("oc-usage.sidebar", "off")
@@ -169,7 +169,7 @@ describe("/show-usage on and off", () => {
         },
         { message: "Usage is no longer in the sidebar.", variant: "success" },
       ])
-    }),
+    }).pipe(Effect.scoped),
   )
 })
 
@@ -178,21 +178,21 @@ describe("/show-usage with anything else", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false))
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false))
 
       yield* settle
       yield* fake.run("oc-usage.sidebar")
       yield* fake.run("oc-usage.sidebar", "")
 
       expect(fake.saved).toStrictEqual([true, false])
-    }),
+    }).pipe(Effect.scoped),
   )
 
   it.live("only says what it takes otherwise", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false))
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false))
 
       yield* fake.run("oc-usage.sidebar", "maybe")
 
@@ -203,7 +203,7 @@ describe("/show-usage with anything else", () => {
           variant: "warning",
         },
       ])
-    }),
+    }).pipe(Effect.scoped),
   )
 })
 
@@ -212,7 +212,8 @@ describe("the saved sidebar setting", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const frame = yield* setUp(cliHost.answering(UNCONNECTED, true)).mount
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, true)),
+        frame = yield* fake.mount
 
       yield* settle
 
@@ -224,7 +225,7 @@ describe("the saved sidebar setting", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false)),
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false)),
         frame = yield* fake.mount
 
       yield* settle
@@ -246,7 +247,7 @@ describe("the plugin's unload", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp(cliHost.answering(UNCONNECTED, false)),
+      const fake = yield* setUp(cliHost.answering(UNCONNECTED, false)),
         frame = yield* fake.mount
 
       yield* settle
@@ -267,7 +268,8 @@ describe("the sidebar section", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const frame = yield* setUp(cliHost.answering(MEASURED, true)).mount
+      const fake = yield* setUp(cliHost.answering(MEASURED, true)),
+        frame = yield* fake.mount
 
       yield* settle
 
@@ -283,7 +285,7 @@ describe("the sidebar section", () => {
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const fake = setUp({ report: Effect.never, shown: true })
+      const fake = yield* setUp({ report: Effect.never, shown: true })
 
       yield* fake.mount
       yield* settle

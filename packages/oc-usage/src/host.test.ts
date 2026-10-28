@@ -18,7 +18,19 @@ type SignIn = Option.Option.Value<
 /* The host dying as it reads the active connection. */
 const DYING = Effect.die(new Error("connection unavailable")),
   EXPIRES = 0,
+  FIRST_KEY = {
+    id: "cred:a",
+    label: "b",
+    method: "oauth",
+    type: "credential",
+  } satisfies ConnectionInfo,
   /** A stored credential, as the host lists the active connection. */
+  SECOND_KEY = {
+    id: "cred",
+    label: "a:b",
+    method: "oauth",
+    type: "credential",
+  } satisfies ConnectionInfo,
   STORED = {
     id: "cred_1",
     label: "Claude Max: me@example.com",
@@ -78,21 +90,35 @@ const DYING = Effect.die(new Error("connection unavailable")),
     )
 
 describe("a stored OAuth connection", () => {
-  it.effect("is told apart by its ID and label, and grants its token", () =>
+  it.effect("distinguishes host-valid keys containing delimiters", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
 
-      const signIn = yield* storedSignIn(
-        Effect.succeed(oauth("token", { accountID: "acct-1" })),
-      )
+      const first = yield* connected(Effect.succeed(FIRST_KEY), UNUSED).pipe(
+          Effect.flatMap(Effect.fromOption),
+        ),
+        second = yield* connected(Effect.succeed(SECOND_KEY), UNUSED).pipe(
+          Effect.flatMap(Effect.fromOption),
+        )
 
-      expect(signIn.identity).toBe(
-        "credential:cred_1:Claude Max: me@example.com",
-      )
-      expect(yield* accessOf(signIn)).toStrictEqual(
-        Option.some(["token", Option.some("acct-1")]),
-      )
+      expect(first.identity).not.toBe(second.identity)
     }),
+  )
+  it.effect(
+    "has a connection key without display labels, and grants its token",
+    () =>
+      Effect.gen(function* run() {
+        expect.hasAssertions()
+
+        const signIn = yield* storedSignIn(
+          Effect.succeed(oauth("token", { accountID: "acct-1" })),
+        )
+
+        expect(signIn.identity).not.toContain(STORED.label)
+        expect(yield* accessOf(signIn)).toStrictEqual(
+          Option.some(["token", Option.some("acct-1")]),
+        )
+      }),
   )
 })
 
@@ -118,7 +144,7 @@ describe("a connection that isn't an OAuth sign-in", () => {
         Effect.undefined,
       ).pipe(Effect.flatMap(Effect.fromOption))
 
-      expect(signIn.identity).toBe("env:ANTHROPIC_API_KEY")
+      expect(signIn.identity).toContain("ANTHROPIC_API_KEY")
     }),
   )
 })

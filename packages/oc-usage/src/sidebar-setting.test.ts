@@ -40,12 +40,21 @@ describe("the sidebar setting", () => {
   it.effect("is off when the stored value can't be read", () =>
     Effect.gen(function* run() {
       expect.hasAssertions()
-      expect(
-        yield* withSetting(
-          hostFakes.memoryStorage([["sidebar", { shown: "yes" }]]),
-          (setting) => setting.shown,
-        ),
-      ).toBe(false)
+
+      const storage = hostFakes.memoryStorage([
+          ["sidebar", { shown: "PRIVATE_SENTINEL" }],
+        ]),
+        unreadable = yield* withSetting(storage, (setting) => setting.state),
+        verified = yield* withSetting(storage, (setting) =>
+          setting.save(true).pipe(Effect.andThen(setting.state)),
+        )
+
+      expect(unreadable).toStrictEqual({
+        problem:
+          "Your saved usage visibility couldn't be read. Run /show-usage on or off to replace it.",
+        shown: false,
+      })
+      expect(verified).toStrictEqual({ shown: true })
     }),
   )
 })

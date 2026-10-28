@@ -27,14 +27,13 @@ what to do to connect it. `/usage` and the usage section show it.
 _Avoid_: stats, status
 
 **Interval**:
-The least time between requests for the same connection identity to one
-subscription's service within a project. Changing identity triggers a new
-measurement immediately; a younger measurement for that identity is reused.
+The least time between usage requests for one connection identity to one
+subscription's service.
 _Avoid_: cooldown (oc-auth's term), poll rate, TTL
 
 **Connection identity**:
-What tells one connection's account apart from another's. A measurement
-belongs to the identity it was taken for, and never shows for another.
+The selected subscription sign-in that a measurement belongs to, distinct
+from its editable display name.
 _Avoid_: account key, cache key
 
 **Usage section**:

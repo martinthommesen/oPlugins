@@ -1,4 +1,5 @@
 import { Array as Arr, Match, Number as Num, Option } from "effect"
+import usageDisplay from "./usage-display.ts"
 import type usageReport from "./usage-report.ts"
 
 type Report = typeof usageReport.UsageReport.Type
@@ -90,7 +91,12 @@ const DAY_MS = 86_400_000,
   /* The subscription's plan, when its newest measurement named one. */
   planOf = (subscription: Subscription): Option.Option<string> =>
     Match.value(subscription.state).pipe(
-      Match.tag("Measured", (measured) => measured.plan),
+      Match.tag("Measured", (measured) =>
+        measured.plan.pipe(
+          Option.map((plan) => usageDisplay.label(plan)),
+          Option.filter((plan) => plan !== ""),
+        ),
+      ),
       Match.orElse(() => Option.none<string>()),
     ),
   /* The time left until a window resets, if it said when. */
@@ -106,7 +112,7 @@ const DAY_MS = 86_400_000,
       Option.getOrElse(() => ""),
     )
 
-    return `${window.label.padEnd(layout.width)}  ${percent(window.usedPercent).padStart(PERCENT_WIDTH)}${reset}`
+    return `${usageDisplay.label(window.label).padEnd(layout.width)}  ${percent(window.usedPercent).padStart(PERCENT_WIDTH)}${reset}`
   },
   /* The rows of a subscription's windows, lined up. */
   rows = (
@@ -116,7 +122,7 @@ const DAY_MS = 86_400_000,
   ): readonly string[] => {
     const width = Math.max(
       NO_WIDTH,
-      ...windows.map((window) => window.label.length),
+      ...windows.map((window) => usageDisplay.label(window.label).length),
     )
 
     return windows.map((window) => row(window, { reset, width }, now))
@@ -147,8 +153,8 @@ const DAY_MS = 86_400_000,
   /* The subscription's name, and its plan when known. */
   title = (subscription: Subscription): string =>
     Option.match(planOf(subscription), {
-      onNone: () => subscription.title,
-      onSome: (plan) => `${subscription.title} · ${plan}`,
+      onNone: () => usageDisplay.label(subscription.title),
+      onSome: (plan) => `${usageDisplay.label(subscription.title)} · ${plan}`,
     }),
   /* The `/usage` dialog's text for `report`, at the time `now`. */
   usageDialog = (report: Report, now: number): string =>

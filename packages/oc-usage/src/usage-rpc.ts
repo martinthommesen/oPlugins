@@ -1,5 +1,6 @@
 import type { Rpc } from "@opencode/plugin/rpc"
 import { Schema } from "effect"
+import sidebarState from "./sidebar-state.ts"
 import usageReport from "./usage-report.ts"
 
 /*
@@ -28,7 +29,10 @@ const NoInput = Schema.toStandardSchemaV1(Schema.Struct({})),
       /** Saves whether the sidebar shows the usage section. */
       setSidebar: { input: Sidebar, output: Sidebar },
       /** Whether the sidebar shows the usage section. */
-      sidebar: { input: NoInput, output: Sidebar },
+      sidebar: {
+        input: NoInput,
+        output: Schema.toStandardSchemaV1(sidebarState),
+      },
     },
   } satisfies Rpc.PortableDefinition
 

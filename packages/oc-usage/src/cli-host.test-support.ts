@@ -73,11 +73,11 @@ interface FakeCliHost {
     Scope.Scope
   >
   /** The signal of every report request, in order. */
-  readonly reportSignals: AbortSignal[]
+  readonly reportSignals: readonly AbortSignal[]
   /** Runs every command with the ID `id`, as the palette or the prompt would. */
   readonly run: (id: string, input?: string) => Effect.Effect<void>
   /** Every sidebar setting the plugin saved, in order. */
-  readonly saved: boolean[]
+  readonly saved: readonly boolean[]
   /** Every toast the plugin showed, in order. */
   readonly toasts: readonly Toast[]
 }
@@ -147,7 +147,10 @@ const FIRST = 0,
   /* A host over `server`, at no location of its own, recording to `record`. */
   hostOver = (server: Server, record: Recorder): Host => ({
     client: { rpc: () => clientOver(server, record) },
-    data: { location: { default: () => ({ directory: "/work" }) } },
+    data: {
+      location: { default: () => ({ directory: "/work" }) },
+      on: () => Fn.constVoid,
+    },
     keymap: {
       layer: (factory) => {
         record.layer(factory())
@@ -255,7 +258,18 @@ const FIRST = 0,
       saved,
       toasts: toasts.values,
     }
-  }
+  },
+  withHost = (
+    server: Server,
+    setUp: (host: Host) => () => void,
+  ): Effect.Effect<FakeCliHost, never, Scope.Scope> =>
+    Effect.acquireRelease(
+      Effect.sync(() => staged(server, setUp)),
+      (fake) =>
+        Effect.sync(() => {
+          fake.cleanup()
+        }),
+    )
 
-/** A fake CLI host for the CLI plugin's tests. */
-export default Object.freeze({ answering, make: staged })
+/** A fake CLI host for the CLI plugin's tests, with an owning-scope helper. */
+export default Object.freeze({ answering, make: staged, scoped: withHost })

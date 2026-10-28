@@ -79,7 +79,8 @@ describe("a successful usage answer", () => {
         expect.hasAssertions()
         expect(yield* measured).toStrictEqual(
           UsageMeter.Outcome.Unreachable({
-            problem: "Anthropic answered with usage that oc-usage can't read.",
+            problem:
+              "Anthropic answered with usage that oc-usage can't read. Update oc-usage; if it persists, report the service name and plugin version.",
           }),
         )
       }),
@@ -126,7 +127,8 @@ describe("a refused sign-in", () => {
         expect.hasAssertions()
         expect(yield* measured).toStrictEqual(
           UsageMeter.Outcome.Unreachable({
-            problem: "Anthropic answered with HTTP 403.",
+            problem:
+              "Anthropic answered with HTTP 403. Retry /usage later; if it persists, check usage_request_failed in OpenCode's server log.",
           }),
         )
       }),
@@ -204,7 +206,8 @@ describe("a service that can't answer", () => {
         expect.hasAssertions()
         expect(yield* measured).toStrictEqual(
           UsageMeter.Outcome.Unreachable({
-            problem: "Anthropic answered with HTTP 503.",
+            problem:
+              "Anthropic answered with HTTP 503. Retry /usage later; if it persists, check usage_request_failed in OpenCode's server log.",
           }),
         )
       }),
@@ -217,7 +220,8 @@ describe("a service that can't answer", () => {
         expect.hasAssertions()
         expect(yield* measured).toStrictEqual(
           UsageMeter.Outcome.Unreachable({
-            problem: "oc-usage couldn't reach Anthropic.",
+            problem:
+              "oc-usage couldn't reach Anthropic. Retry /usage later; if it persists, check your network and OpenCode's server log.",
           }),
         )
       }),
@@ -235,7 +239,8 @@ describe("a service that can't answer", () => {
 
         expect(yield* Fiber.join(waiting)).toStrictEqual(
           UsageMeter.Outcome.Unreachable({
-            problem: "Anthropic didn't answer within 15 seconds.",
+            problem:
+              "Anthropic didn't answer within 15 seconds. Retry /usage later; if it persists, check the service and OpenCode's server log.",
           }),
         )
       }),

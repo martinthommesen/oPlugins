@@ -2,9 +2,11 @@ import { Deferred, Effect, Fiber, Match, Option } from "effect"
 import { describe, expect, it as test } from "@effect/vitest"
 import type { Scope } from "effect"
 import Script from "./tracker.test-support.ts"
+import { TestClock } from "effect/testing"
 import UsageMeter from "./usage-meter.ts"
 import type UsageTracker from "./usage-tracker.ts"
 import type { Vitest } from "@effect/vitest"
+import usageReport from "./usage-report.ts"
 
 /** The `it` of a `test.layer` block: `it.effect`, given its services. */
 interface Tests {
@@ -83,21 +85,28 @@ const B_PERCENT = 50,
 
 describe("an abandoned refresh", () => {
   test.layer(Script.layer)((it: Tests) => {
-    it.effect("releases the lock without caching the interrupted attempt", () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
+    it.effect(
+      "releases the lock without a partial measurement, preserving the sent request's wait",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
 
-        const armed = yield* holding,
-          first = yield* Effect.forkChild(Script.states)
+          const armed = yield* holding,
+            first = yield* Effect.forkChild(Script.states)
 
-        yield* Deferred.await(armed.started)
-        yield* Fiber.interrupt(first)
-        yield* Script.answer("Anthropic", Effect.succeed(READ))
-        expect(claudeWindows(yield* Script.states)).toStrictEqual(
-          Option.some(Script.READING.windows),
-        )
-        expect(yield* Script.countOf("Anthropic")).toBe(TWICE)
-      }),
+          yield* Deferred.await(armed.started)
+          yield* Fiber.interrupt(first)
+          yield* Script.answer("Anthropic", Effect.succeed(READ))
+          expect(claudeWindows(yield* Script.states)).toStrictEqual(
+            Option.none(),
+          )
+          expect(yield* Script.countOf("Anthropic")).toBe(ONCE)
+          yield* TestClock.adjust("3 minutes")
+          expect(claudeWindows(yield* Script.states)).toStrictEqual(
+            Option.some(Script.READING.windows),
+          )
+          expect(yield* Script.countOf("Anthropic")).toBe(TWICE)
+        }),
     )
   })
 })
@@ -118,6 +127,7 @@ describe("reports that overlap", () => {
           yield* Fiber.join(first),
         )
         expect(yield* Script.countOf("Anthropic")).toBe(ONCE)
+        expect(yield* Script.countOf("ChatGPT")).toBe(ONCE)
       }),
     )
   })
@@ -125,27 +135,32 @@ describe("reports that overlap", () => {
 
 describe("a connection that changes account during a request", () => {
   test.layer(Script.layer)((it: Tests) => {
-    it.effect("reports the new account's usage, never the old one's", () =>
-      Effect.gen(function* run() {
-        expect.hasAssertions()
+    it.effect(
+      "discards the old response and reports the newly selected account",
+      () =>
+        Effect.gen(function* run() {
+          expect.hasAssertions()
 
-        const armed = yield* holding,
-          first = yield* Effect.forkChild(Script.states),
-          second = yield* reportAfter(armed, switchedToB)
+          const armed = yield* holding,
+            first = yield* Effect.forkChild(Script.states),
+            second = yield* reportAfter(armed, switchedToB)
 
-        yield* Deferred.succeed(armed.release, true)
+          yield* Deferred.succeed(armed.release, true)
 
-        expect(claudeWindows(yield* Fiber.join(first))).toStrictEqual(
-          Option.some(Script.READING.windows),
-        )
-        expect(claudeWindows(yield* Fiber.join(second))).toStrictEqual(
-          Option.some(READING_B.windows),
-        )
-        expect(claudeWindows(yield* Script.states)).toStrictEqual(
-          Option.some(READING_B.windows),
-        )
-        expect(yield* Script.countOf("Anthropic")).toBe(TWICE)
-      }),
+          expect((yield* Fiber.join(first))[FIRST]).toStrictEqual(
+            usageReport.Failed.make({
+              problem:
+                "The sign-in changed during the usage request. Its old result was discarded; retry /usage.",
+            }),
+          )
+          expect(claudeWindows(yield* Fiber.join(second))).toStrictEqual(
+            Option.some(READING_B.windows),
+          )
+          expect(claudeWindows(yield* Script.states)).toStrictEqual(
+            Option.some(READING_B.windows),
+          )
+          expect(yield* Script.countOf("Anthropic")).toBe(TWICE)
+        }),
     )
   })
 })

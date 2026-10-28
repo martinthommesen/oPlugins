@@ -4,6 +4,7 @@ import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
 import SidebarSetting from "./sidebar-setting.ts"
 import type UsageRpc from "./usage-rpc.ts"
 import UsageTracker from "./usage-tracker.ts"
+import type sidebarState from "./sidebar-state.ts"
 import usageReport from "./usage-report.ts"
 
 type Registration = RpcRegistration<typeof UsageRpc>
@@ -20,7 +21,7 @@ interface Handlers {
   /** Saves the sidebar setting, and tells every CLI. */
   readonly setSidebar: (input: Sidebar) => Effect.Effect<Sidebar>
   /** The sidebar setting. */
-  readonly sidebar: () => Effect.Effect<Sidebar>
+  readonly sidebar: () => Effect.Effect<typeof sidebarState.Type>
 }
 
 /*
@@ -68,7 +69,7 @@ const announce = Effect.fn("UsageRpc.announce")(function* announce(
             Effect.andThen(announce(registered, shown)),
             Effect.as({ shown }),
           ),
-      sidebar: () => setting.shown.pipe(Effect.map((shown) => ({ shown }))),
+      sidebar: () => setting.state,
     }
   }
 

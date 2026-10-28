@@ -124,12 +124,21 @@ describe("optional Codex limits", () => {
     () => {
       expect.hasAssertions()
       expect(
-        codexUsage
-          .read(
-            '{"additional_rate_limits":[{"id":"codex-spark"}],"plan_type":"prolite"}',
-          )
-          .pipe(Option.map((reading) => reading.plan)),
-      ).toStrictEqual(Option.some(Option.some("Pro Lite")))
+        codexUsage.read(
+          '{"additional_rate_limits":[{"id":"codex-spark"}],"plan_type":"prolite","rate_limit":{"primary_window":{"limit_window_seconds":18000,"used_percent":12}}}',
+        ),
+      ).toStrictEqual(
+        Option.some({
+          plan: Option.some("Pro Lite"),
+          windows: [
+            {
+              label: "5-hour",
+              resetsAt: Option.none(),
+              usedPercent: Option.some(FIVE_HOUR_USED),
+            },
+          ],
+        }),
+      )
     },
   )
 

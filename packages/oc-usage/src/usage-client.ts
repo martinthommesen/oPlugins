@@ -1,8 +1,9 @@
 import { Effect, Option, Schema } from "effect"
+import type { Duration } from "effect"
 import UsageUnavailable from "./usage-unavailable-error.ts"
+import sidebarState from "./sidebar-state.ts"
 import usageReport from "./usage-report.ts"
-
-type ReportJson = typeof usageReport.UsageReport.Encoded
+import usageTimeouts from "./usage-timeouts.ts"
 
 /** Whether the sidebar shows the usage section, as the RPC carries it. */
 interface Sidebar {
@@ -27,29 +28,32 @@ interface UsageClient {
   readonly report: (
     input: Readonly<Record<string, never>>,
     options: CallOptions,
-  ) => PromiseLike<ReportJson>
+  ) => PromiseLike<Schema.Json>
   readonly setSidebar: (
     input: Sidebar,
     options: CallOptions,
-  ) => PromiseLike<Sidebar>
+  ) => PromiseLike<Schema.Json>
   readonly sidebar: (
     input: Readonly<Record<string, never>>,
     options: CallOptions,
-  ) => PromiseLike<Sidebar>
+  ) => PromiseLike<Schema.Json>
 }
 
 /** The RPC client, and the location its calls go to. */
 interface Connection {
   readonly client: UsageClient
   readonly location: CallOptions["location"]
+  readonly generation?: () => number
 }
 
 const NO_INPUT = {},
+  NO_REVISION = 0,
   SidebarAnswer = Schema.Struct({ shown: Schema.Boolean }),
   /* A call of the RPC, which fails with why the server plugin didn't answer. */
   called = <Value>(
     call: (signal: AbortSignal) => PromiseLike<Value>,
     operation: string,
+    duration: Duration.Duration,
   ): Effect.Effect<Value, UsageUnavailable> =>
     Effect.tryPromise({
       catch: () =>
@@ -58,23 +62,56 @@ const NO_INPUT = {},
         }),
       try: call,
     }).pipe(
+      Effect.timeoutOrElse({
+        duration,
+        orElse: () =>
+          Effect.fail(
+            UsageUnavailable.make({
+              message: `OpenCode didn't finish ${operation} before its deadline. Retry and check the server. A visibility change may already have been saved.`,
+            }),
+          ),
+      }),
       Effect.tapError(() =>
         Effect.logWarning("usage_rpc_failed").pipe(
           Effect.annotateLogs({ operation }),
         ),
       ),
     ),
-  decodeReport = Schema.decodeEffect(usageReport.UsageReport),
-  decodeSidebar = Schema.decodeUnknownEffect(SidebarAnswer),
+  connectionStamp = (connection: Connection): string =>
+    JSON.stringify([
+      connection.location.directory,
+      Option.fromUndefinedOr(connection.generation).pipe(
+        Option.map((generation) => generation()),
+        Option.getOrElse(() => NO_REVISION),
+      ),
+    ]),
+  decodeReport = Schema.decodeUnknownEffect(usageReport.UsageReport),
+  decodeSidebar = Schema.decodeUnknownEffect(sidebarState),
   decodeSidebarOption = Schema.decodeUnknownOption(SidebarAnswer),
+  ensureCurrent = (
+    connection: Connection,
+    before: string,
+  ): Effect.Effect<void, UsageUnavailable> => {
+    if (connectionStamp(connection) !== before) {
+      return Effect.fail(
+        UsageUnavailable.make({
+          message:
+            "The location or sign-in changed during this request. Its old result was discarded; retry /usage.",
+        }),
+      )
+    }
+
+    return Effect.void
+  },
   /* Turns an answer this version can't read into an unavailable report. */
-  illegible = (): Effect.Effect<never, UsageUnavailable> =>
-    Effect.fail(
-      UsageUnavailable.make({
-        message:
-          "oc-usage's server plugin answered in a form this CLI can't read. Restart OpenCode, so both run the same version.",
-      }),
-    ),
+  illegible = Effect.fnUntraced(function* unreadable() {
+    yield* Effect.logWarning("usage_rpc_unreadable")
+
+    return yield* UsageUnavailable.make({
+      message:
+        "oc-usage's server plugin answered in a form this CLI can't read. Restart OpenCode, so both run the same version.",
+    })
+  }),
   /* Calls `apply` with each change of the sidebar setting; the returned function stops it. */
   onSidebarChange = (
     connection: Connection,
@@ -89,54 +126,85 @@ const NO_INPUT = {},
         Effect.runFork(Effect.logWarning("usage_sidebar_event_unreadable"))
       }
     }),
+  readVisibility = (
+    answer: typeof sidebarState.Type,
+  ): Effect.Effect<boolean, UsageUnavailable> =>
+    Option.match(Option.fromUndefinedOr(answer.problem), {
+      onNone: () => Effect.succeed(answer.shown),
+      onSome: (message) => Effect.fail(UsageUnavailable.make({ message })),
+    }),
   /* Every subscription's usage, from the server plugin. */
   report = (
     connection: Connection,
   ): Effect.Effect<typeof usageReport.UsageReport.Type, UsageUnavailable> =>
-    called(
-      (signal) =>
-        connection.client.report(NO_INPUT, {
-          location: connection.location,
-          signal,
-        }),
-      "read usage",
-    ).pipe(
-      Effect.flatMap(decodeReport),
-      Effect.catchTag("SchemaError", illegible),
-    ),
+    Effect.suspend(() => {
+      const before = connectionStamp(connection),
+        { location } = connection
+
+      return called(
+        (signal) =>
+          connection.client.report(NO_INPUT, {
+            location,
+            signal,
+          }),
+        "read usage",
+        usageTimeouts.rpc,
+      ).pipe(
+        Effect.flatMap(decodeReport),
+        Effect.catchTag("SchemaError", illegible),
+        Effect.tap(() => ensureCurrent(connection, before)),
+      )
+    }),
   /* Saves whether the sidebar shows the usage section, and returns what was saved. */
   setSidebar = (
     connection: Connection,
     shown: boolean,
   ): Effect.Effect<boolean, UsageUnavailable> =>
-    called(
-      (signal) =>
-        connection.client.setSidebar(
-          { shown },
-          { location: connection.location, signal },
-        ),
-      "save sidebar visibility",
-    ).pipe(
-      Effect.flatMap(decodeSidebar),
-      Effect.map((sidebar) => sidebar.shown),
-      Effect.catchTag("SchemaError", illegible),
-    ),
+    Effect.suspend(() => {
+      const before = connectionStamp(connection),
+        { location } = connection
+
+      return called(
+        (signal) =>
+          connection.client.setSidebar({ shown }, { location, signal }),
+        "save sidebar visibility",
+        usageTimeouts.setting,
+      ).pipe(
+        Effect.flatMap(decodeSidebar),
+        Effect.flatMap(readVisibility),
+        Effect.catchTag("SchemaError", illegible),
+        Effect.tap(() => ensureCurrent(connection, before)),
+      )
+    }),
   /* Whether the sidebar shows the usage section, as saved. */
   sidebar = (
     connection: Connection,
   ): Effect.Effect<boolean, UsageUnavailable> =>
-    called(
-      (signal) =>
-        connection.client.sidebar(NO_INPUT, {
-          location: connection.location,
-          signal,
-        }),
-      "read sidebar visibility",
-    ).pipe(
-      Effect.flatMap(decodeSidebar),
-      Effect.map((answer) => answer.shown),
-      Effect.catchTag("SchemaError", illegible),
-    )
+    Effect.suspend(() => {
+      const before = connectionStamp(connection),
+        { location } = connection
+
+      return called(
+        (signal) =>
+          connection.client.sidebar(NO_INPUT, {
+            location,
+            signal,
+          }),
+        "read sidebar visibility",
+        usageTimeouts.setting,
+      ).pipe(
+        Effect.flatMap(decodeSidebar),
+        Effect.flatMap(readVisibility),
+        Effect.catchTag("SchemaError", illegible),
+        Effect.tap(() => ensureCurrent(connection, before)),
+      )
+    })
 
 /** The server plugin's RPC, as the CLI plugin calls it, with every answer decoded. */
-export default Object.freeze({ onSidebarChange, report, setSidebar, sidebar })
+export default Object.freeze({
+  onSidebarChange,
+  report,
+  setSidebar,
+  sidebar,
+  stamp: connectionStamp,
+})

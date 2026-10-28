@@ -8,12 +8,11 @@ import {
   Result,
   Schema,
   String as Str,
-  pipe,
 } from "effect"
-import { Base64Url } from "effect/encoding"
 import type { Effect } from "effect"
 import type Host from "./host.ts"
 import type UsageMeter from "./usage-meter.ts"
+import usageAccount from "./usage-account.ts"
 
 type SignIn = Option.Option.Value<
   Effect.Success<ReturnType<Host["Service"]["signIn"]>>
@@ -29,23 +28,14 @@ type LimitWindow = Reading["windows"][number]
 
 /*
  * The ChatGPT subscription's Codex usage limits, through OpenCode's own
- * "Sign in with ChatGPT" OpenAI connection. The endpoint is the one the
+ * OpenAI OAuth connection with a Codex-compatible bearer token. The endpoint is the one the
  * Codex CLI reads. It isn't documented, so its answer is decoded
  * leniently, and a window is named by its length, never its position.
  */
-const AuthClaim = Schema.Struct({
-    chatgpt_account_id: Schema.optionalKey(Schema.NonEmptyString),
-  }),
-  /** The claims of the access token that can name the ChatGPT account. */
-  Claims = Schema.Struct({
-    chatgpt_account_id: Schema.optionalKey(Schema.NonEmptyString),
-    "https://api.openai.com/auth": Schema.optionalKey(AuthClaim),
-  }),
-  DAY_SECONDS = 86_400,
+const DAY_SECONDS = 86_400,
   FIRST = 0,
   HOUR_SECONDS = 3600,
   INTERVAL_MINUTES = 1,
-  JWT_PAYLOAD_SEGMENT = 1,
   /** One usage window, as the backend reports it. */
   LimitWindowResponse = Schema.Struct({
     limit_window_seconds: Schema.Finite.check(Schema.isGreaterThan(FIRST)),
@@ -82,7 +72,6 @@ const AuthClaim = Schema.Struct({
     rate_limit: Schema.optionalKey(RateLimit),
   }),
   WEEK_SECONDS = 604_800,
-  decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Claims)),
   decodeSpecific = Schema.decodeUnknownOption(
     Schema.fromJsonString(SpecificLimits),
   ),
@@ -102,27 +91,11 @@ const AuthClaim = Schema.Struct({
         (length) => length % HOUR_SECONDS === NO_REMAINDER,
         (length) => `${length / HOUR_SECONDS}-hour`,
       ),
-      Match.orElse((length) => `${Math.round(length / MINUTE_SECONDS)}-minute`),
-    ),
-  hasAccountId = Option.filter(Schema.is(Schema.NonEmptyString)),
-  /* The ChatGPT account an access token's claims name, if any. */
-  jwtAccountId = (token: string): Option.Option<string> =>
-    pipe(
-      Arr.get(token.split("."), JWT_PAYLOAD_SEGMENT),
-      Option.flatMap((segment) =>
-        Result.getSuccess(Base64Url.decodeString(segment)),
+      Match.when(
+        (length) => length % MINUTE_SECONDS === NO_REMAINDER,
+        (length) => `${length / MINUTE_SECONDS}-minute`,
       ),
-      Option.flatMap(decodeClaims),
-      Option.flatMap((claims) =>
-        Option.firstSomeOf([
-          Option.fromUndefinedOr(claims.chatgpt_account_id),
-          Option.fromUndefinedOr(claims["https://api.openai.com/auth"]).pipe(
-            Option.flatMap((auth) =>
-              Option.fromUndefinedOr(auth.chatgpt_account_id),
-            ),
-          ),
-        ]),
-      ),
+      Match.orElse((length) => `${length}-second`),
     ),
   /* One of a rate limit's windows, named by its length after `prefix`. */
   limitWindow = (
@@ -150,24 +123,19 @@ const AuthClaim = Schema.Struct({
   prepare = (
     access: Access,
   ): Result.Result<Readonly<Record<string, string>>, string> =>
-    Option.match(
-      Option.orElse(hasAccountId(access.accountId), () =>
-        jwtAccountId(Redacted.value(access.token)),
-      ),
-      {
-        onNone: () =>
-          Result.fail(
-            "The ChatGPT sign-in doesn't name a ChatGPT account. Reconnect OpenAI with /connect.",
-          ),
-        onSome: (accountId) =>
-          Result.succeed({
-            accept: "application/json",
-            authorization: `Bearer ${Redacted.value(access.token)}`,
-            "chatgpt-account-id": accountId,
-            originator: "opencode",
-          }),
-      },
-    ),
+    Option.match(usageAccount.named(access), {
+      onNone: () =>
+        Result.fail(
+          "The ChatGPT sign-in doesn't name a ChatGPT account. Reconnect OpenAI with /connect.",
+        ),
+      onSome: (accountId) =>
+        Result.succeed({
+          accept: "application/json",
+          authorization: `Bearer ${Redacted.value(access.token)}`,
+          "chatgpt-account-id": accountId,
+          originator: "opencode",
+        }),
+    }),
   /* A rate limit's windows, shortest first. */
   rateWindows = (
     prefix: string,
@@ -214,14 +182,16 @@ const AuthClaim = Schema.Struct({
 
 /** The Codex limits of a ChatGPT subscription: where they come from, and how to read them. */
 export default Object.freeze({
-  hint: "Run /connect, choose OpenAI, and sign in with ChatGPT.",
+  account: usageAccount.named,
+  hint: "Use /connect to select an OpenAI sign-in with a Codex-compatible ChatGPT bearer token. Native token-sharing compatibility is unverified.",
   ineligible:
     "OpenAI is connected with an API key, which has no ChatGPT usage limits.",
   integrationId: "openai",
   interval: Duration.minutes(INTERVAL_MINUTES),
   prepare,
   read: usageReading,
-  reconnect: "Reconnect OpenAI with /connect.",
+  reconnect:
+    "Reconnect OpenAI with a Codex-compatible OAuth sign-in using /connect; native token-sharing compatibility is unverified.",
   service: "ChatGPT",
   title: "Codex",
   url: USAGE_URL,

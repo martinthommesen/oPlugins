@@ -142,7 +142,8 @@ describe("a connection that can't be measured", () => {
 
         expect(yield* claudeState).toStrictEqual(
           usageReport.Failed.make({
-            problem: "OpenCode couldn't renew the Anthropic sign-in.",
+            problem:
+              "OpenCode couldn't read or renew the Anthropic sign-in. Retry /usage; if it persists, check usage_connection_failed or reconnect.",
           }),
         )
       }),
@@ -180,7 +181,8 @@ describe("a host that can't read one connection", () => {
 
         expect(yield* Script.states).toStrictEqual([
           usageReport.Failed.make({
-            problem: "OpenCode couldn't read the Anthropic connection.",
+            problem:
+              "OpenCode couldn't read or renew the Anthropic sign-in. Retry /usage; if it persists, check usage_connection_failed or reconnect.",
           }),
           measured(Option.none()),
         ])

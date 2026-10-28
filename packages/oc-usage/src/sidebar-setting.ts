@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
+import type sidebarState from "./sidebar-state.ts"
 
 type Storage = Plugin.Context["storage"]
 
@@ -13,7 +14,7 @@ const STORAGE_KEY = "sidebar",
     (shown: boolean): Effect.Effect<void> =>
       storage.set(STORAGE_KEY, { shown }),
   /* The setting in `storage`. A value it can't read is off. */
-  shownIn = (storage: Storage): Effect.Effect<boolean> =>
+  stateIn = (storage: Storage): Effect.Effect<typeof sidebarState.Type> =>
     storage.get(STORAGE_KEY).pipe(
       Effect.map(decodeStored),
       Effect.tap((decoded) =>
@@ -22,8 +23,20 @@ const STORAGE_KEY = "sidebar",
           onSome: () => Effect.void,
         }),
       ),
-      Effect.map(Option.flatMap(Option.fromUndefinedOr)),
-      Effect.map(Option.exists((stored) => stored.shown)),
+      Effect.map(
+        Option.match({
+          onNone: () => ({
+            problem:
+              "Your saved usage visibility couldn't be read. Run /show-usage on or off to replace it.",
+            shown: false,
+          }),
+          onSome: (stored) => ({
+            shown: Option.fromUndefinedOr(stored).pipe(
+              Option.exists((value) => value.shown),
+            ),
+          }),
+        }),
+      ),
     )
 
 /**
@@ -38,15 +51,24 @@ class SidebarSetting extends Context.Service<
     readonly save: (shown: boolean) => Effect.Effect<void>
     /** Whether the sidebar shows the usage section; off until turned on. */
     readonly shown: Effect.Effect<boolean>
+    readonly state: Effect.Effect<typeof sidebarState.Type>
   }
 >()("@martinthommesen/oc-usage/sidebar-setting/SidebarSetting") {
   /* The setting in the plugin's durable storage. */
   public static readonly fromStorage = (
     storage: Storage,
   ): Layer.Layer<SidebarSetting> =>
-    Layer.succeed(
+    Layer.effect(
       SidebarSetting,
-      SidebarSetting.of({ save: saveIn(storage), shown: shownIn(storage) }),
+      Effect.sync(() => {
+        const state = stateIn(storage)
+
+        return SidebarSetting.of({
+          save: saveIn(storage),
+          shown: state.pipe(Effect.map((value) => value.shown)),
+          state,
+        })
+      }),
     )
 }
 

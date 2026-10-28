@@ -2,7 +2,6 @@ import {
   Boolean as Bool,
   Clock,
   Effect,
-  Fiber,
   Option,
   Result,
   Schedule,
@@ -15,7 +14,7 @@ import {
   insertNode,
   setProp,
 } from "@opentui/solid"
-import { createSignal, onCleanup } from "solid-js"
+import { createEffect, createSignal, onCleanup } from "solid-js"
 import type { DomNode } from "@opentui/solid"
 import type { JSX } from "solid-js"
 import type { Plugin } from "@opencode/plugin/tui"
@@ -41,6 +40,8 @@ type Color = Pick<Plugin.Context["theme"]["text"]["muted"], "intent">
 interface SectionProps {
   /** Every subscription's usage, from the server plugin. */
   readonly fetch: Effect.Effect<Report, UsageUnavailable>
+  readonly launch: (program: Effect.Effect<unknown>) => () => void
+  readonly stamp: () => string
   readonly theme: {
     readonly text: { readonly base: Color; readonly muted: Color }
   }
@@ -119,11 +120,6 @@ const FIRST = 0,
         now: NOT_YET,
         report: Option.none(),
       }),
-      running = Effect.runFork(
-        polling(props.fetch, (outcome, now) => {
-          setView((previous) => nextView(previous, outcome, now))
-        }),
-      ),
       toNode = (text: Line): DomNode =>
         line(text.text, () =>
           Bool.match(text.emphasis, {
@@ -132,8 +128,17 @@ const FIRST = 0,
           }),
         )
 
-    onCleanup(() => {
-      Effect.runFork(Fiber.interrupt(running))
+    createEffect(() => {
+      props.stamp()
+      setView({ failure: Option.none(), now: NOT_YET, report: Option.none() })
+
+      const stop = props.launch(
+        polling(props.fetch, (outcome, now) => {
+          setView((previous) => nextView(previous, outcome, now))
+        }),
+      )
+
+      onCleanup(stop)
     })
 
     return createDynamic(() => "box", {

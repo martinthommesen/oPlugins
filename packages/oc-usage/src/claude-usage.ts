@@ -101,6 +101,7 @@ const ANTHROPIC_BETA = "oauth-2025-04-20",
 
 /** The Claude subscription: where its usage comes from, and how to read it. */
 export default Object.freeze({
+  account: (): Option.Option<string> => Option.none(),
   hint: "Run /connect, choose Anthropic, and import your Claude Code subscription.",
   ineligible:
     "Anthropic is connected with an API key, which has no subscription usage limits.",

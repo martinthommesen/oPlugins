@@ -15,7 +15,10 @@ You need:
 - OpenCode 2.0.27 or newer.
 - For Claude: your Claude Code subscription imported as OpenCode's Anthropic
   connection, which [oc-auth](../oc-auth/README.md) does.
-- For ChatGPT: OpenAI connected with **Sign in with ChatGPT** in `/connect`.
+- For Codex: an OpenAI OAuth connection with a Codex-compatible bearer access
+  token and ChatGPT account ID. Compatibility with OpenCode's native
+  token-sharing **Sign in with ChatGPT** flow is unverified; see
+  **Limitations**.
 
 A subscription that isn't connected is left out of the sidebar, and `/usage`
 says how to connect it.
@@ -72,11 +75,14 @@ against; ChatGPT's own chat limits aren't among them.
 | `/show-usage off` | Hide it                                           |
 | `/show-usage`     | Show it if it's hidden, hide it if it's shown     |
 
-The setting lasts across restarts, and applies to every project and every
-OpenCode window: turning it on in one window shows it in the others. Right after
-OpenCode starts, the section can take a few seconds to appear, while OpenCode
-starts the plugin's server part. While the section is shown, it updates every
-minute.
+The setting lasts across restarts and applies to projects and windows using the
+same OpenCode server/profile, wherever its server plugin is enabled. Turning it
+on in one window shows it in the others. Right after OpenCode starts, the
+section can take a few seconds to appear, while OpenCode starts the plugin's
+server part. While the section is shown, it updates every minute. Unloading the
+CLI plugin cancels its commands and polling. If the saved setting cannot be
+restored, the CLI warns instead of claiming the section was shown;
+`/show-usage on` or `off` can replace an unreadable saved value.
 
 ## How it works
 
@@ -88,46 +94,76 @@ minute.
   ChatGPT's Codex usage endpoint, the one the Codex CLI reads. Neither is
   documented. Anthropic rate-limits clients that don't identify as Claude Code
   hard, so oc-usage sends Claude Code's user agent, as oc-auth does.
-- For the same connection identity in one project, it asks Anthropic at most
-  every 3 minutes and ChatGPT at most every minute. In between, `/usage` and the
-  sidebar show the newest measurement. The dialog always shows its age; the
-  sidebar shows the age when a refresh fails. When a service limits requests,
-  oc-usage uses numeric `Retry-After` seconds, or 10 minutes for absent,
-  malformed, unrepresentable, or HTTP-date values. Retry intervals are measured
-  from the request's start and never shorten the subscription's minimum
-  interval.
-- A request that fails, or takes more than 15 seconds, keeps the earlier
-  measurement and says why it couldn't be refreshed. When a service refuses the
-  sign-in, the earlier measurement is withdrawn. A request never follows a
-  redirect.
-- When you switch a connection to another account, oc-usage measures the new
-  account at once and never shows the old account's usage for it.
+- For the same connection identity in one loaded location, it asks Anthropic at
+  most every 3 minutes and ChatGPT at most every minute. In between, `/usage`
+  and the sidebar show the newest measurement. The dialog always shows its age;
+  the sidebar shows the age when a refresh fails. When a service limits
+  requests, oc-usage accepts decimal-integer `Retry-After` seconds, or waits 10
+  minutes for absent, malformed, unrepresentable, or HTTP-date values. Minimum
+  intervals begin at dispatch, after renewal; service-requested waits begin at
+  response receipt and never shorten that minimum. Switching A→B→A or
+  interrupting an attempt does not erase A's existing wait.
+- HTTP requests, including reading their bodies, have a 15-second budget and
+  never follow redirects. Credential lookup/renewal has a 45-second budget; each
+  subscription's report has a 75-second total budget including permit waiting
+  and post-request verification. The CLI report RPC has a 90-second budget;
+  visibility RPCs have 15 seconds per call. Background visibility restoration
+  retries separately while the CLI plugin remains loaded.
+- A failed usage request retains an earlier measurement only when the resolved
+  identity and token contents still match. Credential resolution failure,
+  changed access, or rejection withdraws an unverified earlier measurement.
+  Connection display labels do not affect identity or reset waits.
+- A newly selected connection or named ChatGPT account can be measured at once.
+  Replacing a token under the same identity withdraws its earlier measurement
+  but preserves the remaining wait, including a longer service-requested wait.
+  This conservative rule also applies to ordinary token renewal. After HTTP,
+  oc-usage rechecks the selected sign-in and discards a changed selection's
+  result. The CLI also clears retained reports on directory/credential changes.
 
 ## Limitations
 
 - Both endpoints are undocumented and may change or go away. oc-usage reads
   their answers leniently, and says so when it can't read one.
-- OpenCode runs a server plugin for each project you open, and each keeps its
-  own measurements. Several open projects each ask the services, at most at the
-  intervals above.
+- The Codex request format follows the Codex CLI's conventional OAuth bearer
+  token. Native OpenCode token-sharing sign-ins may use different token/account
+  semantics. Loading the plugin on OpenCode 2.0.27 does not establish that those
+  credentials work with the usage endpoint; no live subscription credentials are
+  used by its tests.
+- Each loaded location keeps independent, in-memory measurement and scheduling
+  history. Unload, reload, or server restart clears it. Separate directories or
+  server processes can each request usage; there is no cross-location global
+  rate limit.
+- Account selection uses OpenCode's metadata, falling back to access-token
+  claims. oc-usage cannot independently verify stale account metadata. It checks
+  the last resolved selection, not an atomic guarantee against changes after
+  that check.
 - An API key connection has no subscription usage limits, so `/usage` says so
   and the sidebar leaves it out.
 
 ## Troubleshooting
 
-| Problem                                                     | Action                                                                                                                                                                      |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/usage` says oc-usage's server plugin didn't answer        | Right after OpenCode starts, wait a moment and try again. If it keeps failing, check that oc-usage is in `plugins` in `opencode.jsonc`, then run `opencode service restart` |
-| Claude says Anthropic refused the sign-in                   | Run `claude` to sign in to Claude Code again. oc-auth picks up the new sign-in                                                                                              |
-| Codex says ChatGPT refused the sign-in, or names no account | Reconnect OpenAI with `/connect` and **Sign in with ChatGPT**                                                                                                               |
-| A subscription says the service is limiting usage requests  | Wait; oc-usage asks again once the service's wait is over                                                                                                                   |
+| Problem                                                     | Action                                                                                                                                                                                   |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/usage` says the RPC failed or timed out                   | Right after OpenCode starts, wait a moment and try again. If it keeps failing, check that oc-usage is in `plugins` in `opencode.jsonc`, inspect the server log, then restart the service |
+| Claude says Anthropic refused the sign-in                   | Run `claude` to sign in to Claude Code again. oc-auth picks up the new sign-in                                                                                                           |
+| Codex says ChatGPT refused the sign-in, or names no account | Check that the OpenAI OAuth connection supplies a Codex-compatible bearer token and account ID. Reconnect with a compatible method; native token-sharing compatibility is unverified     |
+| A subscription says the service is limiting usage requests  | Wait; oc-usage asks again once the service's wait is over                                                                                                                                |
 
-oc-usage writes to OpenCode's log, by default
+The server plugin writes to OpenCode's log, by default
 `~/.local/share/opencode/log/opencode.log`. `sidebar_change_unannounced` means a
 sidebar change was saved but couldn't be sent to other windows. They reread the
-saved setting every minute, even while hidden. `usage_rpc_failed` records the
-failed operation without response bodies or credentials. Exhausted sidebar
-restoration retries show a warning with recovery guidance.
+saved setting every minute, even while hidden. `usage_host_failed` and
+`usage_connection_failed` identify failed credential operations without their
+raw errors. `usage_http_failed`, `usage_request_failed`, and
+`usage_request_limited` describe transport, status, and wait failures without
+response bodies, request headers, or credentials.
+
+CLI-side events such as `usage_rpc_failed`, `usage_rpc_unreadable`, and
+`usage_sidebar_restore_failed` use the CLI's Effect console logger; they are not
+guaranteed to appear in the server log. RPC failures are not all startup
+failures: a saved visibility change can have succeeded even if its reply was
+lost. Exhausted restoration retries hide unverified visibility and warn with
+recovery guidance.
 
 ## Development
 

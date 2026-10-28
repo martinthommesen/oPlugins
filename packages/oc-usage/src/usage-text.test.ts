@@ -5,9 +5,13 @@ import usageText from "./usage-text.ts"
 
 type Report = Parameters<typeof usageText.usageDialog>[typeof FIRST]
 
-const CLAUDE_AGE_MS = 180_000,
+const BIDI_CODE = 8238,
+  BIDI_MARK = String.fromCodePoint(BIDI_CODE),
+  CLAUDE_AGE_MS = 180_000,
   CODEX_AGE_MS = 720_000,
   CODEX_LEFT_MS = 2_700_000,
+  ESCAPE_CODE = 27,
+  ESCAPE_MARK = String.fromCodePoint(ESCAPE_CODE),
   FIRST = 0,
   FIVE_HOUR_LEFT_MS = 8_040_000,
   FIVE_HOUR_USED = 34,
@@ -220,4 +224,42 @@ describe("the sidebar section before its first report", () => {
       ["  No answer."],
     )
   })
+})
+
+describe("service-provided names", () => {
+  it(
+    "keeps plan and model names on one line without terminal or bidi controls",
+    { timeout: 5000 },
+    () => {
+      expect.hasAssertions()
+
+      const report = usageReport.UsageReport.make({
+        subscriptions: [
+          {
+            state: usageReport.Measured.make({
+              measuredAt: NOW,
+              plan: Option.some(`Plus\n${BIDI_MARK}Team`),
+              problem: Option.none(),
+              windows: [
+                {
+                  label: `Spark\r\n\tDaily${ESCAPE_MARK}X`,
+                  resetsAt: Option.none(),
+                  usedPercent: Option.some(SONNET_USED),
+                },
+              ],
+            }),
+            title: "Codex",
+          },
+        ],
+      })
+
+      expect(usageText.usageDialog(report, NOW)).toBe(
+        "Codex · Plus Team\n  Spark Daily X    3%\n  Measured just now.",
+      )
+      expect(sidebarText(Option.some(report), Option.none())).toStrictEqual([
+        "* Codex · Plus Team",
+        "  Spark Daily X    3%",
+      ])
+    },
+  )
 })
